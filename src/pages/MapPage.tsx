@@ -569,7 +569,6 @@ export function MapPage() {
       }
     }
   };
-
   const generateGuidedTourRoute = (skipIds: string[]) => {
     // 1. Determine starting point coordinates
     let startLatVal = userLat;
@@ -608,7 +607,6 @@ export function MapPage() {
     }
     let currentLat = startLatVal;
     let currentLng = startLngVal;
-
     const remaining = [...targetStores];
     const sequencedRouteNodes: NavigationNode[] = [];
     
@@ -1437,7 +1435,6 @@ export function MapPage() {
                 </button>
               )}
             </div>
-
             {/* Testing / Mock Location Mode Toggle Button */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
               <label style={{ display: 'block', fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
@@ -1964,8 +1961,6 @@ export function MapPage() {
                   onChange={(e) => setChecklistSearchQuery(e.target.value)}
                   style={{ fontSize: '0.85rem', padding: '0.45rem 0.75rem' }}
                 />
-
-                {/* Scrollable Stall Checklist */}
                 <div style={{
                   flex: 1,
                   overflowY: 'auto',
