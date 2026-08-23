@@ -24,6 +24,7 @@ interface MapViewProps {
   showGraphMesh?: boolean;
   nodes?: NavigationNode[];
   edges?: NavigationEdge[];
+  onMapClick?: (lat: number, lng: number) => void;
 }
 
 export function MapView({
@@ -39,9 +40,15 @@ export function MapView({
   showGraphMesh = false,
   nodes = [],
   edges = [],
+  onMapClick,
 }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<L.Map | null>(null);
+
+  const onMapClickRef = useRef(onMapClick);
+  useEffect(() => {
+    onMapClickRef.current = onMapClick;
+  }, [onMapClick]);
   const [currentZoom, setCurrentZoom] = useState(zoom);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const routeLayerRef = useRef<L.FeatureGroup | null>(null);
@@ -62,6 +69,11 @@ export function MapView({
       zoom,
       zoomControl: true,
       attributionControl: false,
+    });
+
+    // Click listener for custom mock positioning
+    newMap.on('click', (e: L.LeafletMouseEvent) => {
+      onMapClickRef.current?.(e.latlng.lat, e.latlng.lng);
     });
 
     // Add scale bar control

@@ -9,7 +9,11 @@ import {
   Store,
   ArrowLeft,
   Bell,
+  Compass,
+  AlertTriangle,
+  CheckSquare,
 } from 'lucide-react';
+import { AdminModal } from '../components/admin/AdminModal';
 import { useAuth } from '../contexts/AuthContext';
 import { GPSPermissionBanner } from '../components/GPSPermissionBanner';
 import {
@@ -21,11 +25,64 @@ import {
 import { MapView } from '../components/MapView';
 import { MapView3D } from '../components/MapView3D';
 import { getCampusStoreLocation } from '../components/KalawanaSchool3DLayer';
-import { calculateShortestPath, calculateShortestPathWithSnapping, findClosestNode, getDistance, getHeading } from '../utils/dijkstra';
+import { calculateShortestPath, calculateShortestPathWithSnapping, findClosestNode, getDistance, getHeading, computeGraphPathDistance } from '../utils/dijkstra';
 import { DEFAULT_BUILDING_RECTANGLES, contourPathAroundBuildings, type BuildingRectangle } from '../utils/geometry';
 import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
 import { GPSKalmanFilter } from '../utils/gpsFilter';
+
+const DEFAULT_DEMO_STALLS: StoreType[] = [
+  {
+    id: 'demo-stall-1',
+    name: 'Stall #1 — Tech & AI Pavilion',
+    description: 'Robotics, AI, and smart technology showcase',
+    latitude: 6.535600,
+    longitude: 80.401200,
+    floor: '1',
+    is_active: true,
+    categories: { id: 'cat-tech', name: 'Technology', color: '#6366f1' }
+  },
+  {
+    id: 'demo-stall-2',
+    name: 'Stall #2 — Robotics & Drone Arena',
+    description: 'Autonomous drones and industrial robotics show',
+    latitude: 6.535800,
+    longitude: 80.401500,
+    floor: '1',
+    is_active: true,
+    categories: { id: 'cat-robotics', name: 'Robotics', color: '#06b6d4' }
+  },
+  {
+    id: 'demo-stall-3',
+    name: 'Stall #3 — Green Energy Expo',
+    description: 'Solar power, EVs, and clean energy solutions',
+    latitude: 6.535200,
+    longitude: 80.401400,
+    floor: '1',
+    is_active: true,
+    categories: { id: 'cat-energy', name: 'Green Energy', color: '#22c55e' }
+  },
+  {
+    id: 'demo-stall-4',
+    name: 'Stall #4 — Science & Innovation Lab',
+    description: 'Biotech, genetics, and chemistry experiments',
+    latitude: 6.535000,
+    longitude: 80.400800,
+    floor: '1',
+    is_active: true,
+    categories: { id: 'cat-science', name: 'Science & Biotech', color: '#ec4899' }
+  },
+  {
+    id: 'demo-stall-5',
+    name: 'Stall #5 — Main Food & Refreshments',
+    description: 'Beverages, snacks, and catering stalls',
+    latitude: 6.535700,
+    longitude: 80.400500,
+    floor: '1',
+    is_active: true,
+    categories: { id: 'cat-food', name: 'Food & Dining', color: '#f59e0b' }
+  }
+] as any[];
 
 export function MapPage() {
   const { profile } = useAuth();
@@ -84,6 +141,58 @@ export function MapPage() {
   const [mapTheme, setMapTheme] = useState<'dark' | 'streets' | 'light' | '3d'>('light');
   const [showMesh, setShowMesh] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
+
+  // Settings & Guided Tour states
+  const [exhibitionSettings, setExhibitionSettings] = useState({
+    entrance_latitude: 6.535472,
+    entrance_longitude: 80.401000,
+    entrance_threshold_meters: 20.0,
+    premises_center_latitude: 6.535472,
+    premises_center_longitude: 80.401000,
+    premises_radius_meters: 150.0,
+  });
+  const exhibitionSettingsRef = useRef(exhibitionSettings);
+  useEffect(() => {
+    exhibitionSettingsRef.current = exhibitionSettings;
+  }, [exhibitionSettings]);
+
+  const [isFarAway, setIsFarAway] = useState(false);
+  const [isNearEntrance, setIsNearEntrance] = useState(false);
+  const [showEntrancePrompt, setShowEntrancePrompt] = useState(false);
+  const [showChecklistPrompt, setShowChecklistPrompt] = useState(false);
+  const [checklistSearchQuery, setChecklistSearchQuery] = useState('');
+
+  // LocalStorage persistence for Visited History Tracker
+  const LOCAL_STORAGE_VISITED_KEY = 'exhibition_visited_stalls_v1';
+  const [visitedStallIds, setVisitedStallIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_VISITED_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_VISITED_KEY, JSON.stringify(visitedStallIds));
+    } catch (e) {
+      console.warn('Could not save visited stalls to localStorage:', e);
+    }
+  }, [visitedStallIds]);
+
+  const [guidedTourActive, setGuidedTourActive] = useState(false);
+
+  const [bypassBoundaryCheck, setBypassBoundaryCheckState] = useState(false);
+  const bypassBoundaryCheckRef = useRef(false);
+
+  const setBypassBoundaryCheck = useCallback((val: boolean) => {
+    bypassBoundaryCheckRef.current = val;
+    setBypassBoundaryCheckState(val);
+  }, []);
+
+  // Tracks if the user has been prompted about guided tours on startup
+  const hasPromptedRef = useRef(false);
 
   // Bottom sheet drag state (Google Maps style)
   const [navSheetExpanded, setNavSheetExpanded] = useState(false);
@@ -192,19 +301,44 @@ export function MapPage() {
         activeStores.unshift(kalawanaSchoolStore);
       }
 
-      // Kalawana landmark keeps its exact coord; real stores are mapped to campus buildings
-      const processedStores: StoreType[] = activeStores.map((store, index) => {
-        // Kalawana landmark already has correct coords — skip transformation
+      // If database has no custom active stores, populate fallback demo exhibition stalls
+      const realStores = activeStores.filter((s) => s.id !== 'kalawana-national-school-landmark');
+      const storesToProcess = realStores.length > 0 ? activeStores : [kalawanaSchoolStore, ...DEFAULT_DEMO_STALLS];
+
+      const processedStores: StoreType[] = storesToProcess.map((store, index) => {
         if (store.id === 'kalawana-national-school-landmark') return store;
-        // For real stores, use a stable index (subtract 1 to offset the landmark at slot 0)
         const storeIndex = Math.max(0, index - 1);
         const pos = getCampusStoreLocation(store, storeIndex);
-        return { ...store, latitude: pos.lat, longitude: pos.lng };
+        return { ...store, latitude: pos.lat || store.latitude, longitude: pos.lng || store.longitude };
       });
 
       setStores(processedStores);
       setNodes(navigationNodes);
       setEdges(navigationEdges);
+
+      // Fetch settings announcement row
+      const { data: settingsData } = await supabase
+        .from('announcements')
+        .select('message')
+        .eq('type', 'settings')
+        .eq('is_active', true)
+        .limit(1);
+
+      if (settingsData && settingsData.length > 0) {
+        try {
+          const parsed = JSON.parse(settingsData[0].message);
+          setExhibitionSettings({
+            entrance_latitude: parsed.entrance_latitude ?? 6.535472,
+            entrance_longitude: parsed.entrance_longitude ?? 80.401000,
+            entrance_threshold_meters: parsed.entrance_threshold_meters ?? 20.0,
+            premises_center_latitude: parsed.premises_center_latitude ?? 6.535472,
+            premises_center_longitude: parsed.premises_center_longitude ?? 80.401000,
+            premises_radius_meters: parsed.premises_radius_meters ?? 150.0,
+          });
+        } catch (jsonErr) {
+          console.warn('Error parsing settings JSON:', jsonErr);
+        }
+      }
 
       // Set default mock start node selection
       const entrances = navigationNodes.filter((n) => n.type === 'entrance');
@@ -284,6 +418,32 @@ export function MapPage() {
           setMapCenterLat(lat);
           setMapCenterLng(lng);
         }
+
+        // Proximity and Premises Bounds Checks
+        const currentSettings = exhibitionSettingsRef.current;
+        const distToCenter = getDistance(lat, lng, currentSettings.premises_center_latitude, currentSettings.premises_center_longitude);
+        const far = distToCenter > currentSettings.premises_radius_meters;
+        
+        if (bypassBoundaryCheckRef.current) {
+          setIsFarAway(false);
+        } else {
+          setIsFarAway(far);
+        }
+
+        if (!far || bypassBoundaryCheckRef.current) {
+          const distToEntrance = getDistance(lat, lng, currentSettings.entrance_latitude, currentSettings.entrance_longitude);
+          const near = distToEntrance <= currentSettings.entrance_threshold_meters;
+          setIsNearEntrance(near);
+
+          if (!hasPromptedRef.current) {
+            hasPromptedRef.current = true;
+            if (near) {
+              setShowEntrancePrompt(true);
+            } else {
+              setShowChecklistPrompt(true);
+            }
+          }
+        }
       },
       (error) => {
         console.warn('GPS location tracking error:', error.message);
@@ -293,6 +453,260 @@ export function MapPage() {
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   }
+
+  // Handle proximity checks in mock location mode
+  useEffect(() => {
+    if (mockMode && mockStartNodeId && nodes.length > 0) {
+      const node = nodes.find(n => n.id === mockStartNodeId);
+      if (node) {
+        setUserLat(node.latitude);
+        setUserLng(node.longitude);
+        const distToCenter = getDistance(node.latitude, node.longitude, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
+        const far = distToCenter > exhibitionSettings.premises_radius_meters;
+        
+        if (bypassBoundaryCheckRef.current) {
+          setIsFarAway(false);
+        } else {
+          setIsFarAway(far);
+        }
+
+        if (!far || bypassBoundaryCheckRef.current) {
+          const distToEntrance = getDistance(node.latitude, node.longitude, exhibitionSettings.entrance_latitude, exhibitionSettings.entrance_longitude);
+          const near = distToEntrance <= exhibitionSettings.entrance_threshold_meters;
+          setIsNearEntrance(near);
+
+          if (!hasPromptedRef.current) {
+            hasPromptedRef.current = true;
+            if (near) {
+              setShowEntrancePrompt(true);
+            } else {
+              setShowChecklistPrompt(true);
+            }
+          }
+        }
+      }
+    }
+  }, [mockMode, mockStartNodeId, nodes, exhibitionSettings, bypassBoundaryCheck]);
+
+  const handleMapClick = useCallback((lat: number, lng: number) => {
+    if (mockMode) {
+      setUserLat(lat);
+      setUserLng(lng);
+
+      // Trigger proximity/guided tour checks for this clicked location
+      const distToCenter = getDistance(lat, lng, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
+      const far = distToCenter > exhibitionSettings.premises_radius_meters;
+      
+      if (bypassBoundaryCheckRef.current) {
+        setIsFarAway(false);
+      } else {
+        setIsFarAway(far);
+      }
+
+      if (!far || bypassBoundaryCheckRef.current) {
+        const distToEntrance = getDistance(lat, lng, exhibitionSettings.entrance_latitude, exhibitionSettings.entrance_longitude);
+        const near = distToEntrance <= exhibitionSettings.entrance_threshold_meters;
+        setIsNearEntrance(near);
+
+        if (!hasPromptedRef.current) {
+          hasPromptedRef.current = true;
+          if (near) {
+            setShowEntrancePrompt(true);
+          } else {
+            setShowChecklistPrompt(true);
+          }
+        }
+      }
+    }
+  }, [mockMode, exhibitionSettings, bypassBoundaryCheck]);
+
+  const handleSelectMockLocation = (presetOrNodeId: string) => {
+    setMockMode(true);
+    setMockStartNodeId(presetOrNodeId);
+
+    if (presetOrNodeId === 'entrance') {
+      const lat = exhibitionSettings.entrance_latitude;
+      const lng = exhibitionSettings.entrance_longitude;
+      setUserLat(lat);
+      setUserLng(lng);
+      setIsFarAway(false);
+      setIsNearEntrance(true);
+      setShowEntrancePrompt(true);
+    } else if (presetOrNodeId === 'center') {
+      const lat = exhibitionSettings.premises_center_latitude;
+      const lng = exhibitionSettings.premises_center_longitude;
+      setUserLat(lat);
+      setUserLng(lng);
+      setIsFarAway(false);
+      setIsNearEntrance(false);
+    } else if (presetOrNodeId === 'outside') {
+      const lat = exhibitionSettings.premises_center_latitude + 0.006;
+      const lng = exhibitionSettings.premises_center_longitude + 0.006;
+      setUserLat(lat);
+      setUserLng(lng);
+      if (!bypassBoundaryCheckRef.current) {
+        setIsFarAway(true);
+      }
+    } else {
+      const node = nodes.find(n => n.id === presetOrNodeId);
+      if (node) {
+        setUserLat(node.latitude);
+        setUserLng(node.longitude);
+        const distToCenter = getDistance(node.latitude, node.longitude, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
+        const far = distToCenter > exhibitionSettings.premises_radius_meters;
+        
+        if (bypassBoundaryCheckRef.current) {
+          setIsFarAway(false);
+        } else {
+          setIsFarAway(far);
+        }
+
+        if (!far || bypassBoundaryCheckRef.current) {
+          const distToEntrance = getDistance(node.latitude, node.longitude, exhibitionSettings.entrance_latitude, exhibitionSettings.entrance_longitude);
+          const near = distToEntrance <= exhibitionSettings.entrance_threshold_meters;
+          setIsNearEntrance(near);
+        }
+      }
+    }
+  };
+
+  const generateGuidedTourRoute = (skipIds: string[]) => {
+    // 1. Determine starting point coordinates
+    let startLatVal = userLat;
+    let startLngVal = userLng;
+
+    if (mockMode) {
+      const startNode = nodes.find(n => n.id === mockStartNodeId);
+      if (startNode) {
+        startLatVal = startNode.latitude;
+        startLngVal = startNode.longitude;
+      }
+    }
+
+    if (startLatVal === null || startLngVal === null) {
+      alert('Location not available. Enable GPS or select a mock start node.');
+      return;
+    }
+
+    // 2. Filter unvisited stores (fallback to demo stalls if database is empty)
+    const realStores = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
+    const availableStalls = realStores.length > 0 ? realStores : DEFAULT_DEMO_STALLS;
+    const targetStores = availableStalls.filter(s => !skipIds.includes(s.id));
+
+    if (targetStores.length === 0) {
+      alert('All stalls have been visited!');
+      return;
+    }
+
+    setLoading(true);
+    
+    // 3. Graph-aware Nearest Neighbor TSP Algorithm using network node distances
+    let currentNodeId: string | null = null;
+    const startNode = findClosestNode(startLatVal, startLngVal, nodes);
+    if (startNode) {
+      currentNodeId = startNode.id;
+    }
+    let currentLat = startLatVal;
+    let currentLng = startLngVal;
+
+    const remaining = [...targetStores];
+    const sequencedRouteNodes: NavigationNode[] = [];
+    
+    while (remaining.length > 0) {
+      let bestIndex = 0;
+      let minDistance = Infinity;
+      
+      for (let i = 0; i < remaining.length; i++) {
+        const store = remaining[i];
+        if (store.latitude !== null && store.longitude !== null) {
+          let targetNode = nodes.find(n => n.store_id === store.id);
+          if (!targetNode) {
+            targetNode = findClosestNode(store.latitude, store.longitude, nodes) || undefined;
+          }
+
+          let d = Infinity;
+          if (currentNodeId && targetNode) {
+            d = computeGraphPathDistance(currentNodeId, targetNode.id, nodes, edges);
+          }
+          if (d === Infinity || isNaN(d)) {
+            d = getDistance(currentLat, currentLng, store.latitude, store.longitude);
+          }
+
+          if (d < minDistance) {
+            minDistance = d;
+            bestIndex = i;
+          }
+        }
+      }
+      
+      const nextStore = remaining[bestIndex];
+      remaining.splice(bestIndex, 1);
+      
+      let targetNode = nodes.find(n => n.store_id === nextStore.id);
+      if (!targetNode) {
+        let closestNode = null;
+        let minNodeDist = Infinity;
+        for (const node of nodes) {
+          const d = getDistance(nextStore.latitude!, nextStore.longitude!, node.latitude, node.longitude);
+          if (d < minNodeDist) {
+            minNodeDist = d;
+            closestNode = node;
+          }
+        }
+        targetNode = closestNode || undefined;
+      }
+
+      if (targetNode) {
+        const path = calculateShortestPathWithSnapping(
+          currentLat,
+          currentLng,
+          targetNode.latitude,
+          targetNode.longitude,
+          targetNode.id,
+          nodes,
+          edges,
+          gpsAccuracy,
+          GPS_ACCURACY_THRESHOLD,
+          buildingRectangles
+        );
+        
+        if (path && path.length > 0) {
+          if (sequencedRouteNodes.length > 0 && path[0].id === sequencedRouteNodes[sequencedRouteNodes.length - 1].id) {
+            sequencedRouteNodes.push(...path.slice(1));
+          } else {
+            sequencedRouteNodes.push(...path);
+          }
+        }
+        currentNodeId = targetNode.id;
+        currentLat = targetNode.latitude;
+        currentLng = targetNode.longitude;
+      }
+    }
+
+    setLoading(false);
+
+    if (sequencedRouteNodes.length > 0) {
+      setCalculatedRoute(sequencedRouteNodes);
+      setGuidedTourActive(true);
+      setNavigationActive(true);
+      setNavSheetExpanded(true);
+      
+      const steps = [`Start Guided Tour visiting ${targetStores.length} stalls.`];
+      let cumulativeDist = 0;
+      for (let i = 0; i < sequencedRouteNodes.length - 1; i++) {
+        const from = sequencedRouteNodes[i];
+        const to = sequencedRouteNodes[i + 1];
+        cumulativeDist += getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
+      }
+      steps.push(`Optimized path covers approximately ${Math.round(cumulativeDist)} meters.`);
+      steps.push(`Follow the dotted cyan path line to visit each stall.`);
+      
+      setTotalDistance(Math.round(cumulativeDist));
+      setGuideSteps(steps);
+    } else {
+      alert('Could not compute routing path. Please check the network graph connection edges.');
+    }
+  };
 
   // Handle deep-linking navigation targets via ?to= query parameters
   // Handle deep-linking navigation targets via query parameters
@@ -734,8 +1148,8 @@ export function MapPage() {
               latitude={mapCenterLat}
               longitude={mapCenterLng}
               stores={stores}
-              userLat={mockMode ? null : userLat}
-              userLng={mockMode ? null : userLng}
+              userLat={userLat}
+              userLng={userLng}
               route={calculatedRoute}
               showGraphMesh={showMesh}
               nodes={nodes}
@@ -746,14 +1160,15 @@ export function MapPage() {
               latitude={mapCenterLat}
               longitude={mapCenterLng}
               stores={stores}
-              userLat={mockMode ? null : userLat}
-              userLng={mockMode ? null : userLng}
+              userLat={userLat}
+              userLng={userLng}
               userHeading={mockMode ? null : userHeading}
               route={calculatedRoute}
               theme={mapTheme as 'dark' | 'streets' | 'light'}
               showGraphMesh={showMesh}
               nodes={nodes}
               edges={edges}
+              onMapClick={handleMapClick}
             />
           )}
 
@@ -981,34 +1396,241 @@ export function MapPage() {
                 </label>
               </div>
             )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+              <label style={{ display: 'block', fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
+                Guided Tour
+              </label>
+              <button
+                className="btn btn-primary btn-sm"
+                style={{ width: '100%', fontSize: '0.8rem', padding: '0.35rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
+                onClick={() => {
+                  if (isNearEntrance) {
+                    setShowEntrancePrompt(true);
+                  } else {
+                    setShowChecklistPrompt(true);
+                  }
+                }}
+              >
+                <Compass size={14} />
+                {guidedTourActive ? 'Restart Tour' : 'Start Tour'}
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ width: '100%', fontSize: '0.75rem', padding: '0.3rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.08)' }}
+                onClick={() => setShowChecklistPrompt(true)}
+              >
+                <CheckSquare size={13} />
+                <span>Visited Tracker ({visitedStallIds.length}/{stores.filter(s => s.id !== 'kalawana-national-school-landmark').length})</span>
+              </button>
+              {guidedTourActive && (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ width: '100%', fontSize: '0.75rem', padding: '0.25rem 0.5rem', color: 'var(--color-danger)' }}
+                  onClick={() => {
+                    setCalculatedRoute([]);
+                    setGuidedTourActive(false);
+                    setNavigationActive(false);
+                  }}
+                >
+                  Cancel Tour
+                </button>
+              )}
+            </div>
+
+            {/* Testing / Mock Location Mode Toggle Button */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+              <label style={{ display: 'block', fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
+                Testing Tools
+              </label>
+              <button
+                className="btn btn-sm"
+                style={{
+                  width: '100%',
+                  fontSize: '0.78rem',
+                  padding: '0.35rem 0.5rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.35rem',
+                  background: mockMode ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                  border: `1px solid ${mockMode ? 'rgba(245, 158, 11, 0.5)' : 'var(--color-border)'}`,
+                  color: mockMode ? '#fbbf24' : 'var(--color-text)',
+                  fontWeight: 700
+                }}
+                onClick={() => setMockMode(prev => !prev)}
+              >
+                <Navigation size={13} />
+                <span>{mockMode ? '📍 Mock Location ON' : '🎯 Enable Mock GPS'}</span>
+              </button>
+            </div>
           </div>
 
-          {/* Mock Location Selector Panel (Renders when GPS signal is inactive) */}
-          {mockMode && nodes.length > 0 && (
+          {/* Active Mock Location Top Banner */}
+          {mockMode && (
+            <div className="glass" style={{
+              position: 'absolute',
+              top: '1rem',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 999,
+              padding: '0.45rem 1.1rem',
+              borderRadius: '20px',
+              background: 'rgba(245, 158, 11, 0.18)',
+              border: '1px solid rgba(245, 158, 11, 0.45)',
+              color: '#fbbf24',
+              fontSize: '0.8rem',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+              backdropFilter: 'blur(10px)'
+            }}>
+              <span>📍 Mock Location Mode Active — Tap map to set location</span>
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ padding: '0.15rem 0.5rem', fontSize: '0.72rem', color: '#fff', background: 'rgba(255,255,255,0.12)', borderRadius: '12px' }}
+                onClick={() => setMockMode(false)}
+              >
+                Use Real GPS
+              </button>
+            </div>
+          )}
+
+          {/* Interactive Mock Location Control Panel */}
+          {mockMode && (
             <div className="glass map-mock-panel" style={{
               position: 'absolute',
-              top: profile?.role === 'admin' ? '12.25rem' : '9.5rem',
+              top: profile?.role === 'admin' ? '18rem' : '15rem',
               right: '1rem',
-              width: '200px',
+              width: '220px',
               zIndex: 999,
-              padding: '0.75rem',
-              borderRadius: '12px',
+              padding: '0.85rem',
+              borderRadius: '14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.6rem',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+              border: '1px solid rgba(245, 158, 11, 0.4)',
+              background: 'rgba(15, 23, 42, 0.88)',
+              backdropFilter: 'blur(12px)'
             }}>
-              <label style={{ display: 'block', fontSize: '0.7rem', color: 'var(--color-warning)', fontWeight: 700, marginBottom: '0.25rem' }}>
-                📍 MOCK START LOCATION
-              </label>
-              <select
-                className="form-select"
-                style={{ fontSize: '0.8rem', padding: '0.4rem 0.5rem', width: '100%' }}
-                value={mockStartNodeId}
-                onChange={(e) => setMockStartNodeId(e.target.value)}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.72rem', color: '#fbbf24', fontWeight: 800, letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  📍 SET MOCK LOCATION
+                </span>
+                <button
+                  onClick={() => setMockMode(false)}
+                  style={{ background: 'none', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
+                  title="Exit Mock Mode"
+                >
+                  ✕ Exit
+                </button>
+              </div>
+
+              {/* Quick Location Presets */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.62rem', color: 'var(--color-muted)', fontWeight: 700, marginBottom: '0.35rem', textTransform: 'uppercase' }}>
+                  Quick Presets
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem' }}>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start' }}
+                    onClick={() => handleSelectMockLocation('entrance')}
+                  >
+                    🚪 Entrance Gate
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start' }}
+                    onClick={() => handleSelectMockLocation('center')}
+                  >
+                    🏛️ Venue Center
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start', color: '#f87171' }}
+                    onClick={() => handleSelectMockLocation('outside')}
+                  >
+                    ⚠️ Far Outside
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start', color: '#22c55e' }}
+                    onClick={() => {
+                      if (nodes.length > 0) handleSelectMockLocation(nodes[0].id);
+                    }}
+                  >
+                    📍 Node #1
+                  </button>
+                </div>
+              </div>
+
+              {/* Node Dropdown Select */}
+              {nodes.length > 0 && (
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.62rem', color: 'var(--color-muted)', fontWeight: 700, marginBottom: '0.25rem', textTransform: 'uppercase' }}>
+                    Select Navigation Node
+                  </label>
+                  <select
+                    className="form-select"
+                    style={{ fontSize: '0.78rem', padding: '0.35rem 0.5rem', width: '100%' }}
+                    value={mockStartNodeId}
+                    onChange={(e) => handleSelectMockLocation(e.target.value)}
+                  >
+                    <option value="">-- Choose Node --</option>
+                    {nodes.map((node) => (
+                      <option key={node.id} value={node.id}>
+                        {node.label} ({node.type})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div style={{ fontSize: '0.68rem', color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.08)', padding: '0.35rem 0.5rem', borderRadius: '6px', lineHeight: 1.4 }}>
+                💡 <strong>Tip:</strong> Tap anywhere on the map to set your user marker to that exact location!
+              </div>
+            </div>
+          )}
+
+          {/* Boundary Check Bypassed Badge */}
+          {bypassBoundaryCheck && (
+            <div className="glass" style={{
+              position: 'absolute',
+              top: profile?.role === 'admin' ? '12.25rem' : '9.5rem',
+              left: '1rem',
+              zIndex: 999,
+              padding: '0.45rem 0.75rem',
+              borderRadius: '20px',
+              background: 'rgba(234, 179, 8, 0.15)',
+              border: '1px solid rgba(234, 179, 8, 0.4)',
+              color: '#fde047',
+              fontSize: '0.75rem',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              backdropFilter: 'blur(8px)'
+            }}>
+              <span>⚠️ Premises Boundary Bypassed</span>
+              <button
+                onClick={() => setBypassBoundaryCheck(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#fff',
+                  cursor: 'pointer',
+                  fontWeight: 800,
+                  fontSize: '0.85rem',
+                  lineHeight: 1
+                }}
+                title="Restore boundary check"
               >
-                {nodes.map((node) => (
-                  <option key={node.id} value={node.id}>
-                    {node.label}
-                  </option>
-                ))}
-              </select>
+                ✕
+              </button>
             </div>
           )}
 
@@ -1172,6 +1794,274 @@ export function MapPage() {
                 ))}
               </div>
             </div>
+          )}
+
+          {/* New Modals for Boundary & Tour check */}
+          {isFarAway && (
+            <div style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(11, 15, 26, 0.92)',
+              zIndex: 10000,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '2rem',
+              textAlign: 'center',
+              backdropFilter: 'blur(8px)'
+            }}>
+              <div style={{
+                width: '64px',
+                height: '64px',
+                borderRadius: '50%',
+                background: 'rgba(239, 68, 68, 0.15)',
+                color: '#f87171',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: '1.5rem'
+              }}>
+                <AlertTriangle size={32} />
+              </div>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '1rem', color: '#fff' }}>Reach to the exhibition premises first</h2>
+              <p style={{ color: 'var(--color-muted)', maxWidth: '400px', fontSize: '0.925rem', lineHeight: 1.6, marginBottom: '2rem' }}>
+                You are currently outside the exhibition boundaries. Please proceed to the exhibition center to start the map navigation system.
+              </p>
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1rem' }}>
+                {!mockMode && (
+                  <button className="btn btn-primary" onClick={() => setMockMode(true)}>
+                    Switch to Mock Location
+                  </button>
+                )}
+                <button className="btn btn-ghost" onClick={() => { setBypassBoundaryCheck(true); setIsFarAway(false); hasPromptedRef.current = true; }}>
+                  Bypass (View Map)
+                </button>
+              </div>
+              {mockMode && (
+                <p style={{ color: 'var(--color-accent)', fontSize: '0.85rem', marginTop: '0.75rem' }}>
+                  Tip: Select a mock start node inside the premises or tap the map to test.
+                </p>
+              )}
+            </div>
+          )}
+
+          {showEntrancePrompt && (
+            <AdminModal
+              title="🎪 Welcome to the Exhibition Entrance!"
+              onClose={() => setShowEntrancePrompt(false)}
+            >
+              <div style={{ padding: '0.5rem 0' }}>
+                <div style={{
+                  background: 'rgba(34, 211, 238, 0.1)',
+                  border: '1px solid rgba(34, 211, 238, 0.25)',
+                  borderRadius: '10px',
+                  padding: '1rem',
+                  marginBottom: '1.25rem',
+                  display: 'flex',
+                  gap: '0.75rem',
+                  alignItems: 'flex-start'
+                }}>
+                  <Compass className="text-accent" size={24} style={{ flexShrink: 0, marginTop: 2 }} />
+                  <div>
+                    <h4 style={{ margin: '0 0 0.25rem', fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-accent)' }}>
+                      Entrance Gate Detected
+                    </h4>
+                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text)', lineHeight: 1.5 }}>
+                      Welcome! You are starting at the entrance gate. By default, your tour is configured to visit <strong>ALL exhibition stalls</strong> in the shortest walking path. You can start right away or choose specific stalls to visit.
+                    </p>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => {
+                      setShowEntrancePrompt(false);
+                      // Default for entrance selector: ALL stalls selected to visit (0 skipped)
+                      setVisitedStallIds([]);
+                      setShowChecklistPrompt(true);
+                    }}
+                  >
+                    📋 Select Stalls to Visit
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setShowEntrancePrompt(false);
+                      setVisitedStallIds([]);
+                      generateGuidedTourRoute([]);
+                    }}
+                  >
+                    🚀 Start Full Tour (All Stalls)
+                  </button>
+                </div>
+              </div>
+            </AdminModal>
+          )}
+
+          {showChecklistPrompt && (
+            <AdminModal
+              title="📋 Select Stalls to Visit (Tour Planner)"
+              onClose={() => setShowChecklistPrompt(false)}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '75vh' }}>
+                <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', margin: 0, lineHeight: 1.5 }}>
+                  Select which stalls you want to visit on your tour. By default, <strong>ALL stalls are selected to visit</strong>. Uncheck any stalls you wish to skip.
+                </p>
+
+                {/* Stats & Quick Actions Toolbar */}
+                <div style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '0.5rem',
+                  padding: '0.6rem 0.85rem',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: '10px'
+                }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8rem', fontWeight: 700 }}>
+                    <span style={{ color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.15)', padding: '0.2rem 0.5rem', borderRadius: '6px' }}>
+                      🎯 To Visit: {(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).filter(s => !visitedStallIds.includes(s.id)).length} / {(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).length}
+                    </span>
+                    {visitedStallIds.length > 0 && (
+                      <span style={{ color: 'var(--color-muted)', background: 'rgba(255, 255, 255, 0.06)', padding: '0.2rem 0.5rem', borderRadius: '6px' }}>
+                        ⏭️ Skipped: {visitedStallIds.length}
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem', color: 'var(--color-accent)' }}
+                      onClick={() => setVisitedStallIds([])}
+                    >
+                      Select All (Visit All)
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem', color: 'var(--color-warning)' }}
+                      onClick={() => {
+                        const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
+                        const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS;
+                        setVisitedStallIds(listToUse.map(s => s.id));
+                      }}
+                    >
+                      Deselect All
+                    </button>
+                  </div>
+                </div>
+
+                {/* Stall Search Filter */}
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="🔍 Search stalls by name or category..."
+                  value={checklistSearchQuery}
+                  onChange={(e) => setChecklistSearchQuery(e.target.value)}
+                  style={{ fontSize: '0.85rem', padding: '0.45rem 0.75rem' }}
+                />
+
+                {/* Scrollable Stall Checklist */}
+                <div style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: '10px',
+                  padding: '0.5rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.4rem',
+                  maxHeight: '320px'
+                }}>
+                  {(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0
+                    ? stores.filter(s => s.id !== 'kalawana-national-school-landmark')
+                    : DEFAULT_DEMO_STALLS)
+                    .filter(s => {
+                      if (!checklistSearchQuery.trim()) return true;
+                      const q = checklistSearchQuery.toLowerCase();
+                      const nameMatch = s.name.toLowerCase().includes(q);
+                      const catMatch = s.categories?.name?.toLowerCase().includes(q);
+                      return nameMatch || catMatch;
+                    })
+                    .map((store) => {
+                      const isSkipped = visitedStallIds.includes(store.id);
+                      const isSelectedToVisit = !isSkipped;
+                      return (
+                        <label
+                          key={store.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.75rem',
+                            padding: '0.65rem 0.85rem',
+                            borderRadius: '8px',
+                            background: isSelectedToVisit ? 'rgba(34, 211, 238, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+                            cursor: 'pointer',
+                            border: `1px solid ${isSelectedToVisit ? 'rgba(34, 211, 238, 0.25)' : 'rgba(255, 255, 255, 0.06)'}`,
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelectedToVisit}
+                            style={{ width: 18, height: 18, accentColor: '#22d3ee', cursor: 'pointer' }}
+                            onChange={() => {
+                              if (isSelectedToVisit) {
+                                setVisitedStallIds([...visitedStallIds, store.id]);
+                              } else {
+                                setVisitedStallIds(visitedStallIds.filter(id => id !== store.id));
+                              }
+                            }}
+                          />
+                          <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '0.9rem', fontWeight: 700, color: isSelectedToVisit ? 'var(--color-text)' : 'var(--color-muted)', textDecoration: isSelectedToVisit ? 'none' : 'line-through' }}>
+                                {store.name}
+                              </span>
+                              {isSelectedToVisit ? (
+                                <span style={{ fontSize: '0.7rem', color: '#22d3ee', fontWeight: 700, background: 'rgba(34, 211, 238, 0.15)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                                  🎯 To Visit ✓
+                                </span>
+                              ) : (
+                                <span style={{ fontSize: '0.7rem', color: 'var(--color-muted)', fontWeight: 600, background: 'rgba(255, 255, 255, 0.05)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                                  ⏭️ Skipped
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.15rem', fontSize: '0.72rem', color: 'var(--color-muted)' }}>
+                              {store.categories?.name && <span>🏷️ {store.categories.name}</span>}
+                              {store.floor && <span>📍 Floor {store.floor}</span>}
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                </div>
+
+                {/* Footer Actions */}
+                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
+                  <button
+                    className="btn btn-ghost"
+                    onClick={() => setShowChecklistPrompt(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setShowChecklistPrompt(false);
+                      generateGuidedTourRoute(visitedStallIds);
+                    }}
+                  >
+                    🚀 Start Shortest Tour ({(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).filter(s => !visitedStallIds.includes(s.id)).length} Stalls)
+                  </button>
+                </div>
+              </div>
+            </AdminModal>
           )}
         </div>
       </div>

@@ -591,3 +591,25 @@ export function getHeading(lat1: number, lon1: number, lat2: number, lon2: numbe
   if (b >= 303.75 && b < 326.25)  return 'Northwest';
   return 'North-Northwest';
 }
+
+/**
+ * Compute total graph distance in meters along the shortest path between startId and endId.
+ * If no path exists, returns Infinity.
+ */
+export function computeGraphPathDistance(
+  startId: string,
+  endId: string,
+  nodes: NavigationNode[],
+  edges: NavigationEdge[]
+): number {
+  if (startId === endId) return 0;
+  const path = calculateShortestPath(startId, endId, nodes, edges);
+  if (!path || path.length < 2) return Infinity;
+
+  let dist = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    dist += getDistance(path[i].latitude, path[i].longitude, path[i + 1].latitude, path[i + 1].longitude);
+  }
+  return dist;
+}
+

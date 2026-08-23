@@ -125,7 +125,7 @@ export interface Announcement {
   id: string;
   title: string;
   message: string;
-  type: 'info' | 'warning' | 'emergency' | 'broadcast';
+  type: 'info' | 'warning' | 'emergency' | 'broadcast' | 'settings';
   is_active: boolean;
   created_by: string | null;
   created_at: string;
