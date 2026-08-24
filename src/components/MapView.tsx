@@ -25,6 +25,8 @@ interface MapViewProps {
   nodes?: NavigationNode[];
   edges?: NavigationEdge[];
   onMapClick?: (lat: number, lng: number) => void;
+  onSelectStore?: (storeId: string) => void;
+  outdoorSegmentCount?: number;
 }
 
 export function MapView({
@@ -41,6 +43,8 @@ export function MapView({
   nodes = [],
   edges = [],
   onMapClick,
+  onSelectStore,
+  outdoorSegmentCount = 0,
 }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<L.Map | null>(null);
@@ -49,6 +53,17 @@ export function MapView({
   useEffect(() => {
     onMapClickRef.current = onMapClick;
   }, [onMapClick]);
+
+  useEffect(() => {
+    (window as any).__onNavigateToStore = (id: string) => {
+      if (onSelectStore) {
+        onSelectStore(id);
+      }
+    };
+    return () => {
+      delete (window as any).__onNavigateToStore;
+    };
+  }, [onSelectStore]);
   const [currentZoom, setCurrentZoom] = useState(zoom);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const routeLayerRef = useRef<L.FeatureGroup | null>(null);
@@ -58,18 +73,49 @@ export function MapView({
   // Tracks the last destination node ID whose bounds we fitted, so we only
   // call fitBounds once when a new route is first drawn — never on GPS updates.
   const lastFittedDestRef = useRef<string | null>(null);
+  const isUserInteractingRef = useRef(false);
+  const prevCenterRef = useRef<{ lat: number; lng: number }>({ lat: latitude, lng: longitude });
 
   // 1. Initialize Map
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
-    // Create Map instance
+    // Create Map instance with explicit gesture and interaction configurations
     const newMap = L.map(mapContainerRef.current, {
       center: [latitude, longitude],
       zoom,
-      zoomControl: true,
+      zoomControl: false, // Positioned at bottomright below to avoid header overlay overlap
       attributionControl: false,
+      dragging: true,
+      touchZoom: true,
+      doubleClickZoom: true,
+      scrollWheelZoom: true,
+      boxZoom: true,
+      keyboard: true,
+      bounceAtZoomLimits: false,
     });
+
+    // Reposition zoom controls at bottom-right so top header bar doesn't block them
+    L.control.zoom({ position: 'bottomright' }).addTo(newMap);
+
+    // Track user gesture interactions to avoid snapping map during active pan/zoom
+    const handleTouchOrDragStart = () => {
+      isUserInteractingRef.current = true;
+    };
+    const handleTouchOrDragEnd = () => {
+      setTimeout(() => {
+        isUserInteractingRef.current = false;
+      }, 400);
+    };
+
+    newMap.on('dragstart zoomstart movestart', handleTouchOrDragStart);
+    newMap.on('dragend zoomend moveend', handleTouchOrDragEnd);
+
+    // ResizeObserver to continuously handle layout / flexbox container recalculations
+    const resizeObserver = new ResizeObserver(() => {
+      newMap.invalidateSize({ animate: false });
+    });
+    resizeObserver.observe(mapContainerRef.current);
 
     // Click listener for custom mock positioning
     newMap.on('click', (e: L.LeafletMouseEvent) => {
@@ -98,6 +144,9 @@ export function MapView({
 
     // Clean up on unmount
     return () => {
+      resizeObserver.disconnect();
+      newMap.off('dragstart zoomstart movestart', handleTouchOrDragStart);
+      newMap.off('dragend zoomend moveend', handleTouchOrDragEnd);
       newMap.remove();
       setMap(null);
       markersLayerRef.current = null;
@@ -105,8 +154,7 @@ export function MapView({
       meshLayerRef.current = null;
       tileLayerRef.current = null;
     };
-  }, []); // Run once on mount only — do NOT include lat/lng/zoom here;
-           // changing those should never destroy and recreate the whole map.
+  }, []); // Run once on mount only — do NOT include lat/lng/zoom here
 
   // 2. Tile Layer Theme Manager
   useEffect(() => {
@@ -133,15 +181,17 @@ export function MapView({
   }, [map, theme]);
 
   // 3. Update view center when the parent explicitly re-centers (no active route)
-  // Only flyTo when there is no active navigation — this handles the "Recenter"
-  // button press without interfering with the user's manual pan/zoom.
+  // Only setView if the target coordinates actually changed AND user is not actively panning/zooming.
   useEffect(() => {
-    if (map && route.length === 0) {
-      map.setView([latitude, longitude], zoom);
+    if (!map) return;
+    const latChanged = prevCenterRef.current.lat !== latitude;
+    const lngChanged = prevCenterRef.current.lng !== longitude;
+    prevCenterRef.current = { lat: latitude, lng: longitude };
+
+    if ((latChanged || lngChanged) && route.length === 0 && !isUserInteractingRef.current) {
+      map.setView([latitude, longitude], zoom, { animate: true });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, latitude, longitude]); // intentionally omit route.length / zoom
-                                  // to avoid re-centering on every GPS tick
+  }, [map, latitude, longitude, zoom, route.length]);
 
   // 4. Render Store Markers
   useEffect(() => {
@@ -231,18 +281,34 @@ export function MapView({
               box-shadow: 0 2px 8px rgba(168,85,247,0.3);
             ">🏫 Open 3D School Map</a>
           ` : `
-            <a href="/stores/${store.id}" style="
-              display: block;
-              background: #6366f1;
-              color: #fff;
-              padding: 0.35rem;
-              border-radius: 4px;
-              font-size: 0.75rem;
-              font-weight: 700;
-              text-decoration: none;
-              text-align: center;
-              box-shadow: 0 2px 4px rgba(99,102,241,0.25);
-            ">View Profile</a>
+            <div style="display: flex; flex-direction: column; gap: 0.35rem;">
+              <button onclick="window.__onNavigateToStore && window.__onNavigateToStore('${store.id}')" style="
+                display: block;
+                width: 100%;
+                background: linear-gradient(135deg, #06b6d4, #3b82f6);
+                color: #fff;
+                padding: 0.38rem 0.5rem;
+                border: none;
+                border-radius: 6px;
+                font-size: 0.75rem;
+                font-weight: 700;
+                cursor: pointer;
+                text-align: center;
+                box-shadow: 0 2px 6px rgba(6,182,212,0.3);
+              ">🧭 Navigate Here</button>
+              <a href="/stores/${store.id}" style="
+                display: block;
+                background: rgba(255,255,255,0.08);
+                border: 1px solid rgba(0,0,0,0.1);
+                color: #334155;
+                padding: 0.3rem;
+                border-radius: 6px;
+                font-size: 0.72rem;
+                font-weight: 600;
+                text-decoration: none;
+                text-align: center;
+              ">View Profile</a>
+            </div>
           `}
         </div>
       `);
@@ -325,38 +391,107 @@ export function MapView({
       return;
     }
 
-    const coordinates = route.map((node) => [node.latitude, node.longitude] as [number, number]);
+    // Split route into outdoor (OSM streets) and indoor (drawn graph) segments
+    const hasOutdoor = outdoorSegmentCount > 0 && outdoorSegmentCount < route.length;
+    const outdoorCoords = hasOutdoor
+      ? route.slice(0, outdoorSegmentCount + 1).map((n) => [n.latitude, n.longitude] as [number, number])
+      : [];
+    const indoorCoords = hasOutdoor
+      ? route.slice(outdoorSegmentCount).map((n) => [n.latitude, n.longitude] as [number, number])
+      : route.map((n) => [n.latitude, n.longitude] as [number, number]);
 
-    // Draw a premium glowing cyan dotted route to show the path clearly
-    const routeCasing = L.polyline(coordinates, {
-      color: 'rgba(34, 211, 238, 0.22)', // Faint cyan glow casing
-      weight: 12,
-      lineCap: 'round',
-      lineJoin: 'round',
-    });
+    // ── Outdoor segment: warm orange dashed line (OSM streets) ────────────────
+    if (hasOutdoor && outdoorCoords.length > 1) {
+      // Glow casing
+      routeLayer.addLayer(L.polyline(outdoorCoords, {
+        color: 'rgba(251, 146, 60, 0.22)',
+        weight: 14,
+        lineCap: 'round',
+        lineJoin: 'round',
+      }));
+      // Dashed orange core
+      routeLayer.addLayer(L.polyline(outdoorCoords, {
+        color: '#fb923c',
+        weight: 5,
+        opacity: 0.95,
+        dashArray: '12, 8',
+        lineCap: 'round',
+        lineJoin: 'round',
+      }));
+      // Walking person icon at start of outdoor segment
+      const startNode = route[0];
+      const walkerIcon = L.divIcon({
+        className: '',
+        html: `<div style="
+          background: #fb923c;
+          border: 2px solid #fff;
+          border-radius: 50%;
+          width: 22px;
+          height: 22px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 12px;
+          box-shadow: 0 2px 8px rgba(251,146,60,0.5);
+        ">🚶</div>`,
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+      });
+      routeLayer.addLayer(L.marker([startNode.latitude, startNode.longitude], { icon: walkerIcon }));
+    }
 
-    const routeCore = L.polyline(coordinates, {
-      color: '#22d3ee', // Bright Cyan accent color
-      weight: 6,
-      opacity: 1.0,
-      dashArray: '0, 14', // Creates a sequence of perfect circular dots spaced 14px apart
-      lineCap: 'round',
-      lineJoin: 'round',
-    });
+    // ── Indoor segment: cyan dotted line (drawn walkway graph) ───────────────
+    if (indoorCoords.length > 1) {
+      // Glow casing
+      routeLayer.addLayer(L.polyline(indoorCoords, {
+        color: 'rgba(34, 211, 238, 0.22)',
+        weight: 12,
+        lineCap: 'round',
+        lineJoin: 'round',
+      }));
+      // Dotted cyan core
+      routeLayer.addLayer(L.polyline(indoorCoords, {
+        color: '#22d3ee',
+        weight: 6,
+        opacity: 1.0,
+        dashArray: '0, 14',
+        lineCap: 'round',
+        lineJoin: 'round',
+      }));
+    }
 
-    routeLayer.addLayer(routeCasing);
-    routeLayer.addLayer(routeCore);
+    // Junction marker between outdoor and indoor (entrance icon)
+    if (hasOutdoor && outdoorSegmentCount < route.length) {
+      const junctionNode = route[outdoorSegmentCount];
+      const entranceIcon = L.divIcon({
+        className: '',
+        html: `<div style="
+          background: linear-gradient(135deg, #fb923c, #22d3ee);
+          border: 2px solid #fff;
+          border-radius: 50%;
+          width: 20px;
+          height: 20px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 11px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        ">🏫</div>`,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+      });
+      routeLayer.addLayer(L.marker([junctionNode.latitude, junctionNode.longitude], { icon: entranceIcon }));
+    }
 
     // Only fit bounds when the DESTINATION changes (i.e. a new route is chosen).
-    // The last node in the route represents the destination.
+    const allCoords = route.map((n) => [n.latitude, n.longitude] as [number, number]);
+    const fullLine = L.polyline(allCoords);
     const destId = route[route.length - 1].id;
     if (destId !== lastFittedDestRef.current) {
       lastFittedDestRef.current = destId;
-      map.fitBounds(routeCore.getBounds(), { padding: [60, 60] });
+      map.fitBounds(fullLine.getBounds(), { padding: [60, 60] });
     }
-    // If destId is the same (GPS just updated our start position), do nothing —
-    // the user's current pan/zoom is preserved.
-  }, [map, route]);
+  }, [map, route, outdoorSegmentCount]);
 
   // 7. Draw Graph Mesh (Admin only)
   useEffect(() => {
@@ -418,6 +553,9 @@ export function MapView({
           borderRadius: 'var(--radius-lg)',
           border: '1px solid var(--color-border)',
           overflow: 'hidden',
+          touchAction: 'none',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
         }}
       />
       {map && (

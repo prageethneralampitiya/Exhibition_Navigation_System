@@ -11,7 +11,7 @@ interface AdminModalProps {
 
 export function AdminModal({ title, onClose, children, footer, maxWidth = 520 }: AdminModalProps) {
   return (
-    <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="modal-backdrop" style={{ zIndex: 11000 }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal-dialog" style={{ maxWidth }}>
         <div className="modal-header">
           <span className="modal-title">{title}</span>

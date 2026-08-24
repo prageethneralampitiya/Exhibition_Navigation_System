@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { type NavigationNode, type NavigationEdge, type Store } from '../../lib/supabase';
+import { getCampusStoreLocation } from '../KalawanaSchool3DLayer';
 import { Maximize2, RotateCcw, Trash2, Check } from 'lucide-react';
 
 // Fix Leaflet default icon paths inside Vite
@@ -43,9 +44,9 @@ export function DrawPathMapPicker({
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Center map on Colombo, Sri Lanka by default
-    let centerLat = 6.9271;
-    let centerLng = 79.8612;
+    // Default center: Kalawana National School Exhibition Campus
+    let centerLat = 6.535472;
+    let centerLng = 80.401000;
 
     // Load the last drawing place (most recently created node coordinates)
     if (nodes && nodes.length > 0) {
@@ -55,7 +56,7 @@ export function DrawPathMapPicker({
         return timeB - timeA;
       })[0];
       
-      if (latestNode) {
+      if (latestNode && latestNode.latitude !== 0 && latestNode.longitude !== 0) {
         centerLat = latestNode.latitude;
         centerLng = latestNode.longitude;
       }
@@ -157,34 +158,69 @@ export function DrawPathMapPicker({
 
       if (isStart || isEnd) return;
 
+      const isStoreNode = node.type === 'store' || !!node.store_id;
+      const linkedStore = node.store_id ? stores.find(s => s.id === node.store_id) : null;
+      const labelText = linkedStore ? `🏪 ${node.label} (${linkedStore.name})` : node.label;
+
       const circle = L.circleMarker([node.latitude, node.longitude], {
-        radius: 5.5,
-        fillColor: '#94a3b8', // Gray dot for background nodes
+        radius: isStoreNode ? 7 : 5.5,
+        fillColor: isStoreNode ? '#a855f7' : (node.type === 'entrance' ? '#22d3ee' : '#94a3b8'),
         color: '#ffffff',
         weight: 1.5,
-        fillOpacity: 0.65,
-      }).bindTooltip(node.label, { permanent: false, direction: 'top' });
+        fillOpacity: 0.85,
+      }).bindTooltip(labelText, { permanent: false, direction: 'top' });
+
+      circle.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        const roundedLat = Math.round(node.latitude * 1000000) / 1000000;
+        const roundedLng = Math.round(node.longitude * 1000000) / 1000000;
+        setPoints((prev) => [...prev, { lat: roundedLat, lng: roundedLng }]);
+      });
 
       markersGroup.addLayer(circle);
     });
 
-    // 2.5. Draw existing store locations on the map
-    stores.forEach((store) => {
-      if (store.latitude === null || store.longitude === null || store.latitude === 0 || store.longitude === 0) return;
+    // 2.5. Draw existing store locations on the map canvas
+    stores.forEach((store, storeIdx) => {
+      const pos = getCampusStoreLocation(store, storeIdx);
+      const isSchool = store.id === 'kalawana-national-school-landmark' || store.name.toLowerCase().includes('kalawana');
+      const catColor = isSchool ? '#a855f7' : (store.categories?.color || '#6366f1');
 
       const storePin = L.divIcon({
         html: `
-          <div style="display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; background: #a855f7; border: 2.5px solid #fff; border-radius: 50%; color: #fff; font-size: 0.65rem; font-weight: 800; box-shadow: 0 2px 6px rgba(0,0,0,0.5)">
-            🏪
+          <div style="
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            background: ${catColor};
+            border: 2.5px solid #ffffff;
+            border-radius: 50%;
+            color: #ffffff;
+            font-size: ${isSchool ? '0.85rem' : '0.7rem'};
+            font-weight: 800;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+            cursor: pointer;
+            overflow: hidden;
+          ">
+            ${isSchool ? '🏫' : (store.logo_url ? `<img src="${store.logo_url}" alt="${store.name}" style="width:100%;height:100%;object-fit:cover;" />` : (store.name[0] || '🏪'))}
           </div>
         `,
         className: 'custom-store-pin',
-        iconSize: [24, 24],
-        iconAnchor: [12, 12],
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
       });
 
-      const marker = L.marker([store.latitude, store.longitude], { icon: storePin })
-        .bindTooltip(`Store: ${store.name} (Floor ${store.floor || '1'})`, { permanent: false, direction: 'top' });
+      const marker = L.marker([pos.lat, pos.lng], { icon: storePin })
+        .bindTooltip(`🏪 Store: ${store.name} (Floor ${store.floor || '1'})`, { permanent: false, direction: 'top', className: 'draw-path-store-tooltip' });
+
+      marker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        const roundedLat = Math.round(pos.lat * 1000000) / 1000000;
+        const roundedLng = Math.round(pos.lng * 1000000) / 1000000;
+        setPoints((prev) => [...prev, { lat: roundedLat, lng: roundedLng }]);
+      });
 
       markersGroup.addLayer(marker);
     });

@@ -154,11 +154,22 @@ export function Map3DPage() {
       zoom: SCHOOL_ZOOM,
       pitch: SCHOOL_PITCH,
       bearing: SCHOOL_BEARING,
+      dragPan: true,
+      dragRotate: true,
+      scrollZoom: true,
+      touchZoomRotate: true,
+      doubleClickZoom: true,
+      keyboard: true,
     });
 
     map.current = m;
 
     m.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
+
+    const resizeObserver = new ResizeObserver(() => {
+      m.resize();
+    });
+    resizeObserver.observe(mapContainer.current);
 
     m.on('error', (e) => {
       console.error('[MapLibre error]', e);
@@ -245,6 +256,7 @@ export function Map3DPage() {
     });
 
     return () => {
+      resizeObserver.disconnect();
       m.remove();
       map.current = null;
     };
@@ -379,7 +391,16 @@ export function Map3DPage() {
     <div style={{ width: '100vw', height: '100dvh', position: 'relative', overflow: 'hidden', background: '#0a0a1a' }}>
 
       {/* Map container */}
-      <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
+      <div
+        ref={mapContainer}
+        style={{
+          width: '100%',
+          height: '100%',
+          touchAction: 'none',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+        }}
+      />
 
       {/* ── Top bar ─────────────────────────────────── */}
       <div className="map3d-topbar" style={{

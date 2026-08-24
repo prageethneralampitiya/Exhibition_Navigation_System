@@ -26,7 +26,7 @@ export async function fetchOSRMRoute(
   targetLabel = 'Destination'
 ): Promise<OSRMRouteResult | null> {
   try {
-    const url = `https://router.project-osrm.org/route/v1/walking/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson&steps=true`;
+    const url = `https://router.project-osrm.org/route/v1/foot/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson&steps=true`;
 
     const response = await fetch(url, {
       signal: AbortSignal.timeout(4000), // 4s timeout fallback

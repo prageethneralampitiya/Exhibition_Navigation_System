@@ -108,8 +108,8 @@ export function AdminExhibitionsPage() {
       location: '',
       start_date: new Date().toISOString().split('T')[0],
       end_date: new Date().toISOString().split('T')[0],
-      latitude: 0,
-      longitude: 0,
+      latitude: 6.535472,
+      longitude: 80.401000,
       is_featured: false,
       is_active: true,
     });

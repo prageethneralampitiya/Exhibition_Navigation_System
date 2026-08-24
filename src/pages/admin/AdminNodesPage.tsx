@@ -127,8 +127,8 @@ export function AdminNodesPage() {
   const handleOpenAddNode = () => {
     setCurrentNode({
       label: '',
-      latitude: 0,
-      longitude: 0,
+      latitude: 6.535472,
+      longitude: 80.401000,
       floor: '1',
       type: 'path',
       store_id: '',

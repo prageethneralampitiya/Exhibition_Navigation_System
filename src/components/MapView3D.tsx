@@ -43,6 +43,9 @@ export function MapView3D({
   const lastFittedDestRef = useRef<string | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
 
+  const isUserInteractingRef = useRef(false);
+  const prevCenterRef = useRef<{ lat: number; lng: number }>({ lat: latitude, lng: longitude });
+
   // ── 1. Initialise MapLibre map (once on mount) ───────────────
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -55,6 +58,12 @@ export function MapView3D({
       pitch: 55,
       bearing: -15,
       attributionControl: false,
+      dragPan: true,
+      dragRotate: true,
+      scrollZoom: true,
+      touchZoomRotate: true,
+      doubleClickZoom: true,
+      keyboard: true,
     });
 
     mapRef.current = m;
@@ -63,6 +72,26 @@ export function MapView3D({
       new maplibregl.NavigationControl({ visualizePitch: true }),
       'bottom-right'
     );
+
+    const handleMoveStart = (e: maplibregl.MapLibreEvent) => {
+      if (e.originalEvent) {
+        isUserInteractingRef.current = true;
+      }
+    };
+    const handleMoveEnd = () => {
+      setTimeout(() => {
+        isUserInteractingRef.current = false;
+      }, 400);
+    };
+
+    m.on('movestart', handleMoveStart);
+    m.on('moveend', handleMoveEnd);
+
+    // ResizeObserver to handle canvas resizing automatically
+    const resizeObserver = new ResizeObserver(() => {
+      m.resize();
+    });
+    resizeObserver.observe(containerRef.current);
 
     m.on('error', (e) => console.error('[MapView3D]', e));
 
@@ -103,6 +132,9 @@ export function MapView3D({
     });
 
     return () => {
+      resizeObserver.disconnect();
+      m.off('movestart', handleMoveStart);
+      m.off('moveend', handleMoveEnd);
       m.remove();
       mapRef.current = null;
       storeMarkersRef.current = [];
@@ -116,11 +148,14 @@ export function MapView3D({
   useEffect(() => {
     const m = mapRef.current;
     if (!m) return;
-    if (route.length === 0) {
+    const latChanged = prevCenterRef.current.lat !== latitude;
+    const lngChanged = prevCenterRef.current.lng !== longitude;
+    prevCenterRef.current = { lat: latitude, lng: longitude };
+
+    if ((latChanged || lngChanged) && route.length === 0 && !isUserInteractingRef.current) {
       m.flyTo({ center: [longitude, latitude], zoom, duration: 600 });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [latitude, longitude]); // intentionally omit zoom/route
+  }, [latitude, longitude, zoom, route.length]);
 
   // ── 3. Store markers ─────────────────────────────────────────
   useEffect(() => {
@@ -387,6 +422,9 @@ export function MapView3D({
           borderRadius: 'var(--radius-lg)',
           border: '1px solid var(--color-border)',
           overflow: 'hidden',
+          touchAction: 'none',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
         }}
       />
     </>

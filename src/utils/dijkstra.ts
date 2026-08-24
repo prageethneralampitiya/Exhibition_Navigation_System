@@ -1,5 +1,5 @@
 import { type NavigationNode, type NavigationEdge } from '../lib/supabase';
-import { type BuildingRectangle, segmentIntersectsAnyBuilding } from './geometry';
+import { type BuildingRectangle } from './geometry';
 
 /**
  * Equirectangular approximation for short-range distance (< 1 km).
@@ -84,6 +84,339 @@ export function projectPointToSegment(
   const distance = getDistance(latP, lonP, latC, lonC);
 
   return { latitude: latC, longitude: lonC, distance };
+}
+
+export interface GraphSnapResult {
+  /** The snapped latitude on the closest path */
+  snapLat: number;
+  /** The snapped longitude on the closest path */
+  snapLng: number;
+  /** Distance (metres) from the query point to the snap point */
+  snapDist: number;
+  /** If snap is exactly at an existing node, its ID. Null for mid-edge snaps. */
+  exactNodeId: string | null;
+  /** For mid-edge snaps: the from-node of the edge that was split */
+  fromNodeId: string | null;
+  /** For mid-edge snaps: the to-node of the edge that was split */
+  toNodeId: string | null;
+}
+
+/**
+ * Find the closest point on the entire drawn graph (nodes + edge segments) to a
+ * given lat/lng coordinate. Returns either an exact node match or a projected
+ * mid-edge snap point with the edge IDs needed to split that edge.
+ *
+ * Strategy:
+ *  1. Check all existing nodes — prefer exact node if within NODE_SNAP_THRESHOLD.
+ *  2. Project the query point onto every edge segment.
+ *  3. Return whichever gives the smallest distance.
+ */
+export function findClosestPointOnGraph(
+  lat: number,
+  lng: number,
+  nodes: NavigationNode[],
+  edges: NavigationEdge[]
+): GraphSnapResult | null {
+  if (nodes.length === 0) return null;
+
+  const NODE_SNAP_THRESHOLD = 15; // metres — prioritize exact store entrance/walkway nodes within 15m
+
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const connectedNodeIds = new Set<string>();
+  edges.forEach((e) => {
+    if (nodeMap.has(e.from_node_id) && nodeMap.has(e.to_node_id)) {
+      connectedNodeIds.add(e.from_node_id);
+      connectedNodeIds.add(e.to_node_id);
+    }
+  });
+
+  let best: GraphSnapResult | null = null;
+
+  // 1. Check all connected nodes first (prefer actual walkway nodes drawn near stalls)
+  for (const node of nodes) {
+    if (!connectedNodeIds.has(node.id)) continue;
+    const d = getDistance(lat, lng, node.latitude, node.longitude);
+    if (!best || d < best.snapDist) {
+      best = {
+        snapLat: node.latitude,
+        snapLng: node.longitude,
+        snapDist: d,
+        exactNodeId: node.id,
+        fromNodeId: null,
+        toNodeId: null,
+      };
+    }
+  }
+
+  // If a connected node is within 15m of the target, snap directly to that node
+  if (best && best.snapDist <= NODE_SNAP_THRESHOLD) {
+    return best;
+  }
+
+  // 2. Otherwise, check all edge segments (projects point onto segment and endpoints)
+  for (const edge of edges) {
+    const nodeA = nodeMap.get(edge.from_node_id);
+    const nodeB = nodeMap.get(edge.to_node_id);
+    if (!nodeA || !nodeB) continue;
+
+    const proj = projectPointToSegment(
+      lat, lng,
+      nodeA.latitude, nodeA.longitude,
+      nodeB.latitude, nodeB.longitude
+    );
+
+    if (!best || proj.distance < best.snapDist) {
+      const distToA = getDistance(proj.latitude, proj.longitude, nodeA.latitude, nodeA.longitude);
+      const distToB = getDistance(proj.latitude, proj.longitude, nodeB.latitude, nodeB.longitude);
+
+      let exactNodeId: string | null = null;
+      if (distToA <= 2) exactNodeId = nodeA.id;
+      else if (distToB <= 2) exactNodeId = nodeB.id;
+
+      best = {
+        snapLat: proj.latitude,
+        snapLng: proj.longitude,
+        snapDist: proj.distance,
+        exactNodeId,
+        fromNodeId: exactNodeId ? null : edge.from_node_id,
+        toNodeId: exactNodeId ? null : edge.to_node_id,
+      };
+    }
+  }
+
+  return best;
+}
+
+/**
+ * Compute the shortest path between any two geographical coordinates strictly along
+ * the drawn graph (edges and nodes). Snaps both start and end coordinates to the closest
+ * point on any drawn path segment, dynamically splits edges, and routes strictly via Dijkstra.
+ */
+export function calculateShortestPathBetweenCoordinates(
+  startLat: number,
+  startLng: number,
+  endLat: number,
+  endLng: number,
+  nodes: NavigationNode[],
+  edges: NavigationEdge[],
+  explicitStartNodeId?: string | null,
+  explicitEndNodeId?: string | null
+): NavigationNode[] {
+  if (nodes.length === 0 || edges.length === 0) return [];
+
+  // Map of nodes for quick O(1) lookup
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const validEdges = edges.filter((e) => nodeMap.has(e.from_node_id) && nodeMap.has(e.to_node_id));
+  if (validEdges.length === 0 && nodes.length === 0) return [];
+
+  // 1. Find start snap
+  let startSnap: GraphSnapResult | null = null;
+  if (explicitStartNodeId && nodeMap.has(explicitStartNodeId)) {
+    const node = nodeMap.get(explicitStartNodeId)!;
+    startSnap = {
+      snapLat: node.latitude,
+      snapLng: node.longitude,
+      snapDist: 0,
+      exactNodeId: node.id,
+      fromNodeId: null,
+      toNodeId: null,
+    };
+  } else {
+    startSnap = findClosestPointOnGraph(startLat, startLng, nodes, validEdges);
+  }
+
+  // 2. Find end snap
+  let endSnap: GraphSnapResult | null = null;
+  if (explicitEndNodeId && nodeMap.has(explicitEndNodeId)) {
+    const node = nodeMap.get(explicitEndNodeId)!;
+    endSnap = {
+      snapLat: node.latitude,
+      snapLng: node.longitude,
+      snapDist: 0,
+      exactNodeId: node.id,
+      fromNodeId: null,
+      toNodeId: null,
+    };
+  } else {
+    endSnap = findClosestPointOnGraph(endLat, endLng, nodes, validEdges);
+  }
+
+  if (!startSnap || !endSnap) return [];
+
+  // If both start and end snap to the same exact node
+  if (startSnap.exactNodeId && endSnap.exactNodeId && startSnap.exactNodeId === endSnap.exactNodeId) {
+    const n = nodeMap.get(startSnap.exactNodeId);
+    return n ? [n] : [];
+  }
+
+  let tempNodes = [...nodes];
+  let tempEdges = [...validEdges];
+
+  const START_VIRTUAL_ID = '__snap_start_virtual__';
+  const END_VIRTUAL_ID = '__snap_end_virtual__';
+
+  const startNodeId = startSnap.exactNodeId || START_VIRTUAL_ID;
+  const endNodeId = endSnap.exactNodeId || END_VIRTUAL_ID;
+
+  // Check if both snap to the SAME edge segment
+  const isSameEdge =
+    !startSnap.exactNodeId &&
+    !endSnap.exactNodeId &&
+    startSnap.fromNodeId &&
+    startSnap.toNodeId &&
+    ((startSnap.fromNodeId === endSnap.fromNodeId && startSnap.toNodeId === endSnap.toNodeId) ||
+      (startSnap.fromNodeId === endSnap.toNodeId && startSnap.toNodeId === endSnap.fromNodeId));
+
+  if (isSameEdge) {
+    const nodeA = nodeMap.get(startSnap.fromNodeId!)!;
+    const nodeB = nodeMap.get(startSnap.toNodeId!)!;
+
+    const vStart: NavigationNode = {
+      id: START_VIRTUAL_ID,
+      label: 'Walkway Snap Point',
+      latitude: startSnap.snapLat,
+      longitude: startSnap.snapLng,
+      floor: nodeA?.floor || null,
+      type: 'path',
+      store_id: null,
+      created_at: new Date().toISOString(),
+    };
+
+    const vEnd: NavigationNode = {
+      id: END_VIRTUAL_ID,
+      label: 'Store Connection Point',
+      latitude: endSnap.snapLat,
+      longitude: endSnap.snapLng,
+      floor: nodeB?.floor || null,
+      type: 'path',
+      store_id: null,
+      created_at: new Date().toISOString(),
+    };
+
+    tempNodes.push(vStart, vEnd);
+
+    // Remove the original edge to avoid shortcut
+    tempEdges = tempEdges.filter(
+      (e) =>
+        !(
+          (e.from_node_id === nodeA.id && e.to_node_id === nodeB.id) ||
+          (e.from_node_id === nodeB.id && e.to_node_id === nodeA.id)
+        )
+    );
+
+    const distAtoStart = getDistance(nodeA.latitude, nodeA.longitude, startSnap.snapLat, startSnap.snapLng);
+    const distAtoEnd = getDistance(nodeA.latitude, nodeA.longitude, endSnap.snapLat, endSnap.snapLng);
+
+    if (distAtoStart <= distAtoEnd) {
+      // Sequence along edge: NodeA <-> vStart <-> vEnd <-> NodeB
+      const dStartEnd = getDistance(startSnap.snapLat, startSnap.snapLng, endSnap.snapLat, endSnap.snapLng);
+      const dEndB = getDistance(endSnap.snapLat, endSnap.snapLng, nodeB.latitude, nodeB.longitude);
+
+      tempEdges.push(
+        { id: '__v_edge_a_start', from_node_id: nodeA.id, to_node_id: START_VIRTUAL_ID, distance: distAtoStart, is_bidirectional: true, created_at: '', floor: null },
+        { id: '__v_edge_start_end', from_node_id: START_VIRTUAL_ID, to_node_id: END_VIRTUAL_ID, distance: dStartEnd, is_bidirectional: true, created_at: '', floor: null },
+        { id: '__v_edge_end_b', from_node_id: END_VIRTUAL_ID, to_node_id: nodeB.id, distance: dEndB, is_bidirectional: true, created_at: '', floor: null }
+      );
+    } else {
+      // Sequence along edge: NodeA <-> vEnd <-> vStart <-> NodeB
+      const dEndStart = getDistance(endSnap.snapLat, endSnap.snapLng, startSnap.snapLat, startSnap.snapLng);
+      const dStartB = getDistance(startSnap.snapLat, startSnap.snapLng, nodeB.latitude, nodeB.longitude);
+
+      tempEdges.push(
+        { id: '__v_edge_a_end', from_node_id: nodeA.id, to_node_id: END_VIRTUAL_ID, distance: distAtoEnd, is_bidirectional: true, created_at: '', floor: null },
+        { id: '__v_edge_end_start', from_node_id: END_VIRTUAL_ID, to_node_id: START_VIRTUAL_ID, distance: dEndStart, is_bidirectional: true, created_at: '', floor: null },
+        { id: '__v_edge_start_b', from_node_id: START_VIRTUAL_ID, to_node_id: nodeB.id, distance: dStartB, is_bidirectional: true, created_at: '', floor: null }
+      );
+    }
+  } else {
+    // Handle start snap and end snap independently (splits on different segments)
+    if (!startSnap.exactNodeId && startSnap.fromNodeId && startSnap.toNodeId) {
+      const nodeA = nodeMap.get(startSnap.fromNodeId);
+      const nodeB = nodeMap.get(startSnap.toNodeId);
+      if (nodeA && nodeB) {
+        const vStart: NavigationNode = {
+          id: START_VIRTUAL_ID,
+          label: 'Walkway Snap Point',
+          latitude: startSnap.snapLat,
+          longitude: startSnap.snapLng,
+          floor: nodeA.floor || null,
+          type: 'path',
+          store_id: null,
+          created_at: new Date().toISOString(),
+        };
+        tempNodes.push(vStart);
+
+        tempEdges = tempEdges.filter(
+          (e) =>
+            !(
+              (e.from_node_id === startSnap.fromNodeId && e.to_node_id === startSnap.toNodeId) ||
+              (e.from_node_id === startSnap.toNodeId && e.to_node_id === startSnap.fromNodeId)
+            )
+        );
+
+        const dA = getDistance(nodeA.latitude, nodeA.longitude, startSnap.snapLat, startSnap.snapLng);
+        const dB = getDistance(nodeB.latitude, nodeB.longitude, startSnap.snapLat, startSnap.snapLng);
+
+        tempEdges.push(
+          { id: '__v_start_edge_a', from_node_id: nodeA.id, to_node_id: START_VIRTUAL_ID, distance: dA, is_bidirectional: true, created_at: '', floor: null },
+          { id: '__v_start_edge_b', from_node_id: START_VIRTUAL_ID, to_node_id: nodeB.id, distance: dB, is_bidirectional: true, created_at: '', floor: null }
+        );
+      }
+    }
+
+    if (!endSnap.exactNodeId && endSnap.fromNodeId && endSnap.toNodeId) {
+      const nodeA = nodeMap.get(endSnap.fromNodeId);
+      const nodeB = nodeMap.get(endSnap.toNodeId);
+      if (nodeA && nodeB) {
+        const vEnd: NavigationNode = {
+          id: END_VIRTUAL_ID,
+          label: 'Store Connection Point',
+          latitude: endSnap.snapLat,
+          longitude: endSnap.snapLng,
+          floor: nodeA.floor || null,
+          type: 'path',
+          store_id: null,
+          created_at: new Date().toISOString(),
+        };
+        tempNodes.push(vEnd);
+
+        tempEdges = tempEdges.filter(
+          (e) =>
+            !(
+              (e.from_node_id === endSnap.fromNodeId && e.to_node_id === endSnap.toNodeId) ||
+              (e.from_node_id === endSnap.toNodeId && e.to_node_id === endSnap.fromNodeId)
+            )
+        );
+
+        const dA = getDistance(nodeA.latitude, nodeA.longitude, endSnap.snapLat, endSnap.snapLng);
+        const dB = getDistance(nodeB.latitude, nodeB.longitude, endSnap.snapLat, endSnap.snapLng);
+
+        tempEdges.push(
+          { id: '__v_end_edge_a', from_node_id: nodeA.id, to_node_id: END_VIRTUAL_ID, distance: dA, is_bidirectional: true, created_at: '', floor: null },
+          { id: '__v_end_edge_b', from_node_id: END_VIRTUAL_ID, to_node_id: nodeB.id, distance: dB, is_bidirectional: true, created_at: '', floor: null }
+        );
+      }
+    }
+  }
+
+  // Run Dijkstra strictly through drawn edges and snap points
+  const path = calculateShortestPath(startNodeId, endNodeId, tempNodes, tempEdges);
+  if (path && path.length > 0) {
+    return path;
+  }
+
+  // Fallback: If startNodeId and endNodeId are on disconnected graph components,
+  // route along the drawn graph from startNodeId to the closest reachable node.
+  const reachableFromStart = getReachableNodes(startNodeId, tempNodes, tempEdges);
+  if (reachableFromStart.size > 0) {
+    const reachableCandidateNodes = tempNodes.filter((n) => reachableFromStart.has(n.id));
+    const closestReachable = findClosestNode(endSnap.snapLat, endSnap.snapLng, reachableCandidateNodes);
+    if (closestReachable && closestReachable.id !== startNodeId) {
+      return calculateShortestPath(startNodeId, closestReachable.id, tempNodes, tempEdges);
+    }
+  }
+
+  return [];
 }
 
 /**
@@ -438,6 +771,44 @@ interface GraphAdjacency {
 }
 
 /**
+ * Returns a Set of all node IDs reachable from startId through the drawn edges (BFS).
+ * Used to filter candidate end-nodes to those that are actually connected to the start.
+ */
+export function getReachableNodes(
+  startId: string,
+  nodes: NavigationNode[],
+  edges: NavigationEdge[]
+): Set<string> {
+  // Build bidirectional adjacency list
+  const adj: Record<string, string[]> = {};
+  nodes.forEach((n) => { adj[n.id] = []; });
+  edges.forEach((edge) => {
+    if (adj[edge.from_node_id] && adj[edge.to_node_id]) {
+      adj[edge.from_node_id].push(edge.to_node_id);
+      if (edge.is_bidirectional !== false) {
+        adj[edge.to_node_id].push(edge.from_node_id);
+      }
+    }
+  });
+
+  const visited = new Set<string>();
+  const queue = [startId];
+  visited.add(startId);
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const neighbor of (adj[current] || [])) {
+      if (!visited.has(neighbor)) {
+        visited.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+  }
+
+  return visited;
+}
+
+/**
  * Compute the shortest path between start and end node IDs using Dijkstra's algorithm.
  */
 export function calculateShortestPath(
@@ -445,8 +816,9 @@ export function calculateShortestPath(
   endId: string,
   nodes: NavigationNode[],
   edges: NavigationEdge[],
-  buildingRectangles: BuildingRectangle[] = []
+  _buildingRectangles: BuildingRectangle[] = []
 ): NavigationNode[] {
+
   if (!startId || !endId || nodes.length === 0) return [];
   if (startId === endId) {
     const node = nodes.find((n) => n.id === startId);
@@ -465,22 +837,14 @@ export function calculateShortestPath(
       const nodeA = nodes.find((n) => n.id === edge.from_node_id);
       const nodeB = nodes.find((n) => n.id === edge.to_node_id);
 
-      if (nodeA && nodeB && buildingRectangles.length > 0) {
-        const crossesBuilding = segmentIntersectsAnyBuilding(
-          nodeA.latitude,
-          nodeA.longitude,
-          nodeB.latitude,
-          nodeB.longitude,
-          buildingRectangles
-        );
-        if (crossesBuilding) return; // Skip blocked edge crossing building rectangle
-      }
-
-      const weight = edge.distance > 0 ? edge.distance : 1;
+      const weight = edge.distance > 0
+        ? edge.distance
+        : (nodeA && nodeB ? getDistance(nodeA.latitude, nodeA.longitude, nodeB.latitude, nodeB.longitude) : 1);
       
       graph[edge.from_node_id].push({ toId: edge.to_node_id, weight });
       
-      if (edge.is_bidirectional) {
+      // All drawn walkways are bidirectional by default unless explicitly false
+      if (edge.is_bidirectional !== false) {
         graph[edge.to_node_id].push({ toId: edge.from_node_id, weight });
       }
     }

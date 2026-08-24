@@ -12,6 +12,7 @@ import {
   Compass,
   AlertTriangle,
   CheckSquare,
+  Check,
 } from 'lucide-react';
 import { AdminModal } from '../components/admin/AdminModal';
 import { useAuth } from '../contexts/AuthContext';
@@ -25,8 +26,7 @@ import {
 import { MapView } from '../components/MapView';
 import { MapView3D } from '../components/MapView3D';
 import { getCampusStoreLocation } from '../components/KalawanaSchool3DLayer';
-import { calculateShortestPath, calculateShortestPathWithSnapping, findClosestNode, getDistance, getHeading, computeGraphPathDistance } from '../utils/dijkstra';
-import { DEFAULT_BUILDING_RECTANGLES, contourPathAroundBuildings, type BuildingRectangle } from '../utils/geometry';
+import { calculateShortestPath, calculateShortestPathWithSnapping, calculateShortestPathBetweenCoordinates, findClosestNode, getReachableNodes, findClosestPointOnGraph, type GraphSnapResult, getDistance, getHeading, computeGraphPathDistance } from '../utils/dijkstra';
 import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
 import { GPSKalmanFilter } from '../utils/gpsFilter';
@@ -109,7 +109,6 @@ export function MapPage() {
   const [stores, setStores] = useState<StoreType[]>([]);
   const [nodes, setNodes] = useState<NavigationNode[]>([]);
   const [edges, setEdges] = useState<NavigationEdge[]>([]);
-  const [buildingRectangles] = useState<BuildingRectangle[]>(DEFAULT_BUILDING_RECTANGLES);
   const [loading, setLoading] = useState(true);
 
   // Geolocation tracking state
@@ -138,6 +137,9 @@ export function MapPage() {
   const [totalDistance, setTotalDistance] = useState(0); // in meters
   const [guideSteps, setGuideSteps] = useState<string[]>([]);
   const [navigationActive, setNavigationActive] = useState(false);
+  // Number of leading nodes in calculatedRoute that came from outdoor OSM routing
+  // 0 means all nodes are from the internal drawn graph (user is inside campus)
+  const [outdoorSegmentCount, setOutdoorSegmentCount] = useState(0);
   const [mapTheme, setMapTheme] = useState<'dark' | 'streets' | 'light' | '3d'>('light');
   const [showMesh, setShowMesh] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
@@ -157,8 +159,6 @@ export function MapPage() {
   }, [exhibitionSettings]);
 
   const [isFarAway, setIsFarAway] = useState(false);
-  const [isNearEntrance, setIsNearEntrance] = useState(false);
-  const [showEntrancePrompt, setShowEntrancePrompt] = useState(false);
   const [showChecklistPrompt, setShowChecklistPrompt] = useState(false);
   const [checklistSearchQuery, setChecklistSearchQuery] = useState('');
 
@@ -182,6 +182,17 @@ export function MapPage() {
   }, [visitedStallIds]);
 
   const [guidedTourActive, setGuidedTourActive] = useState(false);
+  const [tourStops, setTourStops] = useState<StoreType[]>([]);
+  const [currentTourStopIndex, setCurrentTourStopIndex] = useState(0);
+  const [tourSelectedStallIds, setTourSelectedStallIds] = useState<string[]>([]);
+
+  const handleOpenTourPlanner = () => {
+    const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
+    const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS;
+    // By default, select all available stalls to visit on the tour
+    setTourSelectedStallIds(listToUse.map(s => s.id));
+    setShowChecklistPrompt(true);
+  };
 
   const [bypassBoundaryCheck, setBypassBoundaryCheckState] = useState(false);
   const bypassBoundaryCheckRef = useRef(false);
@@ -201,6 +212,7 @@ export function MapPage() {
   const sheetDragDelta = useRef<number>(0);
 
   const handleSheetTouchStart = useCallback((e: React.TouchEvent) => {
+    e.stopPropagation();
     sheetDragStartY.current = e.touches[0].clientY;
     sheetDragDelta.current = 0;
     if (sheetRef.current) {
@@ -209,6 +221,7 @@ export function MapPage() {
   }, []);
 
   const handleSheetTouchMove = useCallback((e: React.TouchEvent) => {
+    e.stopPropagation();
     if (sheetDragStartY.current === null) return;
     const delta = e.touches[0].clientY - sheetDragStartY.current;
     sheetDragDelta.current = delta;
@@ -221,7 +234,8 @@ export function MapPage() {
     }
   }, [navSheetExpanded]);
 
-  const handleSheetTouchEnd = useCallback(() => {
+  const handleSheetTouchEnd = useCallback((e: React.TouchEvent) => {
+    e.stopPropagation();
     const delta = sheetDragDelta.current;
     sheetDragStartY.current = null;
     sheetDragDelta.current = 0;
@@ -429,21 +443,6 @@ export function MapPage() {
         } else {
           setIsFarAway(far);
         }
-
-        if (!far || bypassBoundaryCheckRef.current) {
-          const distToEntrance = getDistance(lat, lng, currentSettings.entrance_latitude, currentSettings.entrance_longitude);
-          const near = distToEntrance <= currentSettings.entrance_threshold_meters;
-          setIsNearEntrance(near);
-
-          if (!hasPromptedRef.current) {
-            hasPromptedRef.current = true;
-            if (near) {
-              setShowEntrancePrompt(true);
-            } else {
-              setShowChecklistPrompt(true);
-            }
-          }
-        }
       },
       (error) => {
         console.warn('GPS location tracking error:', error.message);
@@ -469,21 +468,6 @@ export function MapPage() {
         } else {
           setIsFarAway(far);
         }
-
-        if (!far || bypassBoundaryCheckRef.current) {
-          const distToEntrance = getDistance(node.latitude, node.longitude, exhibitionSettings.entrance_latitude, exhibitionSettings.entrance_longitude);
-          const near = distToEntrance <= exhibitionSettings.entrance_threshold_meters;
-          setIsNearEntrance(near);
-
-          if (!hasPromptedRef.current) {
-            hasPromptedRef.current = true;
-            if (near) {
-              setShowEntrancePrompt(true);
-            } else {
-              setShowChecklistPrompt(true);
-            }
-          }
-        }
       }
     }
   }, [mockMode, mockStartNodeId, nodes, exhibitionSettings, bypassBoundaryCheck]);
@@ -493,7 +477,6 @@ export function MapPage() {
       setUserLat(lat);
       setUserLng(lng);
 
-      // Trigger proximity/guided tour checks for this clicked location
       const distToCenter = getDistance(lat, lng, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
       const far = distToCenter > exhibitionSettings.premises_radius_meters;
       
@@ -501,21 +484,6 @@ export function MapPage() {
         setIsFarAway(false);
       } else {
         setIsFarAway(far);
-      }
-
-      if (!far || bypassBoundaryCheckRef.current) {
-        const distToEntrance = getDistance(lat, lng, exhibitionSettings.entrance_latitude, exhibitionSettings.entrance_longitude);
-        const near = distToEntrance <= exhibitionSettings.entrance_threshold_meters;
-        setIsNearEntrance(near);
-
-        if (!hasPromptedRef.current) {
-          hasPromptedRef.current = true;
-          if (near) {
-            setShowEntrancePrompt(true);
-          } else {
-            setShowChecklistPrompt(true);
-          }
-        }
       }
     }
   }, [mockMode, exhibitionSettings, bypassBoundaryCheck]);
@@ -530,15 +498,12 @@ export function MapPage() {
       setUserLat(lat);
       setUserLng(lng);
       setIsFarAway(false);
-      setIsNearEntrance(true);
-      setShowEntrancePrompt(true);
     } else if (presetOrNodeId === 'center') {
       const lat = exhibitionSettings.premises_center_latitude;
       const lng = exhibitionSettings.premises_center_longitude;
       setUserLat(lat);
       setUserLng(lng);
       setIsFarAway(false);
-      setIsNearEntrance(false);
     } else if (presetOrNodeId === 'outside') {
       const lat = exhibitionSettings.premises_center_latitude + 0.006;
       const lng = exhibitionSettings.premises_center_longitude + 0.006;
@@ -560,149 +525,223 @@ export function MapPage() {
         } else {
           setIsFarAway(far);
         }
-
-        if (!far || bypassBoundaryCheckRef.current) {
-          const distToEntrance = getDistance(node.latitude, node.longitude, exhibitionSettings.entrance_latitude, exhibitionSettings.entrance_longitude);
-          const near = distToEntrance <= exhibitionSettings.entrance_threshold_meters;
-          setIsNearEntrance(near);
-        }
       }
     }
   };
-  const generateGuidedTourRoute = (skipIds: string[]) => {
+  const generateGuidedTourRoute = (selectedStoreIdsToTour: string[]) => {
     // 1. Determine starting point coordinates
     let startLatVal = userLat;
     let startLngVal = userLng;
 
-    if (mockMode) {
-      const startNode = nodes.find(n => n.id === mockStartNodeId);
-      if (startNode) {
-        startLatVal = startNode.latitude;
-        startLngVal = startNode.longitude;
+    if (startLatVal === null || startLngVal === null) {
+      if (mockStartNodeId) {
+        const startNode = nodes.find(n => n.id === mockStartNodeId);
+        if (startNode) {
+          startLatVal = startNode.latitude;
+          startLngVal = startNode.longitude;
+        }
+      }
+      if (startLatVal === null || startLngVal === null) {
+        const entranceNode = nodes.find(n => n.type === 'entrance') || nodes[0];
+        if (entranceNode) {
+          startLatVal = entranceNode.latitude;
+          startLngVal = entranceNode.longitude;
+        } else {
+          startLatVal = exhibitionSettings.entrance_latitude || 6.535472;
+          startLngVal = exhibitionSettings.entrance_longitude || 80.401000;
+        }
       }
     }
 
-    if (startLatVal === null || startLngVal === null) {
-      alert('Location not available. Enable GPS or select a mock start node.');
-      return;
-    }
-
-    // 2. Filter unvisited stores (fallback to demo stalls if database is empty)
+    // 2. Prepare stores with normalized campus coordinates
     const realStores = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
     const availableStalls = realStores.length > 0 ? realStores : DEFAULT_DEMO_STALLS;
-    const targetStores = availableStalls.filter(s => !skipIds.includes(s.id));
+
+    const normalizedStores: StoreType[] = availableStalls.map((store, idx) => {
+      const pos = getCampusStoreLocation(store, idx);
+      return {
+        ...store,
+        latitude: pos.lat,
+        longitude: pos.lng,
+      };
+    });
+
+    const targetStores = normalizedStores.filter(s => selectedStoreIdsToTour.includes(s.id));
 
     if (targetStores.length === 0) {
-      alert('All stalls have been visited!');
+      alert('Please select at least one stall to visit on your tour!');
       return;
     }
 
     setLoading(true);
-    
-    // 3. Graph-aware Nearest Neighbor TSP Algorithm using network node distances
-    let currentNodeId: string | null = null;
-    const startNode = findClosestNode(startLatVal, startLngVal, nodes);
-    if (startNode) {
-      currentNodeId = startNode.id;
-    }
+
+    // 3. Optimal Nearest-Neighbor TSP shortest path using user's drawn network graph
     let currentLat = startLatVal;
     let currentLng = startLngVal;
+    let currentNodeId: string | null = null;
+
+    const connectedNodeIds = new Set<string>();
+    edges.forEach((edge) => {
+      connectedNodeIds.add(edge.from_node_id);
+      connectedNodeIds.add(edge.to_node_id);
+    });
+    const connectedNodes = nodes.filter((n) => connectedNodeIds.has(n.id));
+    const activeGraphNodes = connectedNodes.length > 0 ? connectedNodes : nodes;
+
+    const startGraphNode = findClosestNode(startLatVal, startLngVal, activeGraphNodes);
+    if (startGraphNode) {
+      currentNodeId = startGraphNode.id;
+    }
+
     const remaining = [...targetStores];
+    const orderedTourStops: StoreType[] = [];
     const sequencedRouteNodes: NavigationNode[] = [];
-    
+
+    const startVirtualNode: NavigationNode = {
+      id: 'tour-start-point',
+      label: 'Tour Start Point',
+      latitude: currentLat,
+      longitude: currentLng,
+      floor: '1',
+      type: 'entrance',
+      store_id: null,
+      created_at: new Date().toISOString()
+    };
+    sequencedRouteNodes.push(startVirtualNode);
+
     while (remaining.length > 0) {
       let bestIndex = 0;
       let minDistance = Infinity;
-      
+      let bestPath: NavigationNode[] = [];
+
+      // Find the nearest next store using shortest graph path
       for (let i = 0; i < remaining.length; i++) {
         const store = remaining[i];
-        if (store.latitude !== null && store.longitude !== null) {
-          let targetNode = nodes.find(n => n.store_id === store.id);
-          if (!targetNode) {
-            targetNode = findClosestNode(store.latitude, store.longitude, nodes) || undefined;
-          }
-
-          let d = Infinity;
-          if (currentNodeId && targetNode) {
-            d = computeGraphPathDistance(currentNodeId, targetNode.id, nodes, edges);
-          }
-          if (d === Infinity || isNaN(d)) {
-            d = getDistance(currentLat, currentLng, store.latitude, store.longitude);
-          }
-
-          if (d < minDistance) {
-            minDistance = d;
-            bestIndex = i;
-          }
-        }
-      }
-      
-      const nextStore = remaining[bestIndex];
-      remaining.splice(bestIndex, 1);
-      
-      let targetNode = nodes.find(n => n.store_id === nextStore.id);
-      if (!targetNode) {
-        let closestNode = null;
-        let minNodeDist = Infinity;
-        for (const node of nodes) {
-          const d = getDistance(nextStore.latitude!, nextStore.longitude!, node.latitude, node.longitude);
-          if (d < minNodeDist) {
-            minNodeDist = d;
-            closestNode = node;
-          }
-        }
-        targetNode = closestNode || undefined;
-      }
-
-      if (targetNode) {
-        const path = calculateShortestPathWithSnapping(
+        const p = calculateShortestPathBetweenCoordinates(
           currentLat,
           currentLng,
-          targetNode.latitude,
-          targetNode.longitude,
-          targetNode.id,
+          store.latitude!,
+          store.longitude!,
           nodes,
-          edges,
-          gpsAccuracy,
-          GPS_ACCURACY_THRESHOLD,
-          buildingRectangles
+          edges
         );
-        
-        if (path && path.length > 0) {
-          if (sequencedRouteNodes.length > 0 && path[0].id === sequencedRouteNodes[sequencedRouteNodes.length - 1].id) {
-            sequencedRouteNodes.push(...path.slice(1));
-          } else {
-            sequencedRouteNodes.push(...path);
+
+        let d = Infinity;
+        if (p && p.length > 0) {
+          d = 0;
+          for (let j = 0; j < p.length - 1; j++) {
+            d += getDistance(p[j].latitude, p[j].longitude, p[j + 1].latitude, p[j + 1].longitude);
           }
+          // Add distance from path end to store
+          d += getDistance(p[p.length - 1].latitude, p[p.length - 1].longitude, store.latitude!, store.longitude!);
+        } else {
+          // Fallback straight line only for sorting if graph is completely disconnected
+          d = getDistance(currentLat, currentLng, store.latitude!, store.longitude!) + 1000;
         }
-        currentNodeId = targetNode.id;
-        currentLat = targetNode.latitude;
-        currentLng = targetNode.longitude;
+
+        if (d < minDistance) {
+          minDistance = d;
+          bestIndex = i;
+          bestPath = p;
+        }
+      }
+
+      const nextStore = remaining[bestIndex];
+      remaining.splice(bestIndex, 1);
+      orderedTourStops.push(nextStore);
+
+      const targetLat = nextStore.latitude!;
+      const targetLng = nextStore.longitude!;
+
+      const storeTargetVirtualNode: NavigationNode = {
+        id: `store-stop-${nextStore.id}`,
+        label: nextStore.name,
+        latitude: targetLat,
+        longitude: targetLng,
+        floor: nextStore.floor || '1',
+        type: 'store',
+        store_id: nextStore.id,
+        created_at: new Date().toISOString()
+      };
+
+      if (bestPath && bestPath.length > 0) {
+        // Append walkway path nodes (all strictly on drawn edges)
+        if (sequencedRouteNodes.length > 0 && bestPath[0].id === sequencedRouteNodes[sequencedRouteNodes.length - 1].id) {
+          sequencedRouteNodes.push(...bestPath.slice(1));
+        } else {
+          sequencedRouteNodes.push(...bestPath);
+        }
+
+        // Branch out from walkway snap point into the store
+        const lastWalkwayNode = bestPath[bestPath.length - 1];
+        const distToStore = getDistance(lastWalkwayNode.latitude, lastWalkwayNode.longitude, targetLat, targetLng);
+        if (distToStore > 1.5) {
+          sequencedRouteNodes.push(storeTargetVirtualNode);
+        }
+
+        // The next leg starts from the walkway snap point (user steps back onto the walkway)
+        currentLat = lastWalkwayNode.latitude;
+        currentLng = lastWalkwayNode.longitude;
+      } else {
+        // If graph path couldn't be found, add store target
+        sequencedRouteNodes.push(storeTargetVirtualNode);
+        currentLat = targetLat;
+        currentLng = targetLng;
       }
     }
 
     setLoading(false);
 
     if (sequencedRouteNodes.length > 0) {
+      setTourStops(orderedTourStops);
+      setCurrentTourStopIndex(0);
+      setSelectedDestinationStoreId('');
+      setSelectedDestinationNodeId('');
       setCalculatedRoute(sequencedRouteNodes);
       setGuidedTourActive(true);
       setNavigationActive(true);
       setNavSheetExpanded(true);
-      
-      const steps = [`Start Guided Tour visiting ${targetStores.length} stalls.`];
+
       let cumulativeDist = 0;
+      const steps = [`🚀 Guided Tour Started: Visiting ${orderedTourStops.length} stalls in optimal shortest path.`];
       for (let i = 0; i < sequencedRouteNodes.length - 1; i++) {
         const from = sequencedRouteNodes[i];
         const to = sequencedRouteNodes[i + 1];
-        cumulativeDist += getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
+        const dist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
+        cumulativeDist += dist;
+        if (to.type === 'store' || to.id.startsWith('store-stop-')) {
+          steps.push(`Arrive at Stop: ${to.label} (${Math.round(dist)}m)`);
+        }
       }
-      steps.push(`Optimized path covers approximately ${Math.round(cumulativeDist)} meters.`);
-      steps.push(`Follow the dotted cyan path line to visit each stall.`);
-      
+      steps.push(`Total Tour Distance: ~${Math.round(cumulativeDist)}m (${Math.ceil(cumulativeDist / 80)} min walking).`);
+
       setTotalDistance(Math.round(cumulativeDist));
       setGuideSteps(steps);
     } else {
-      alert('Could not compute routing path. Please check the network graph connection edges.');
+      alert('Could not compute routing path. Please check network graph or stall locations.');
+    }
+  };
+
+  const handleMarkCurrentStopVisited = () => {
+    if (!guidedTourActive || tourStops.length === 0) return;
+    const currentStop = tourStops[currentTourStopIndex];
+    if (currentStop) {
+      const updatedVisited = Array.from(new Set([...visitedStallIds, currentStop.id]));
+      setVisitedStallIds(updatedVisited);
+
+      if (currentTourStopIndex + 1 < tourStops.length) {
+        const nextIndex = currentTourStopIndex + 1;
+        setCurrentTourStopIndex(nextIndex);
+
+        // Recalculate remaining tour route from current location
+        const remainingStops = tourStops.slice(nextIndex);
+        generateGuidedTourRoute(remainingStops.map(s => s.id));
+      } else {
+        setGuidedTourActive(false);
+        setCalculatedRoute([]);
+        setNavigationActive(false);
+        alert('🎉 Congratulations! You have completed your exhibition guided tour and visited all planned stalls!');
+      }
     }
   };
 
@@ -731,6 +770,7 @@ export function MapPage() {
       setTotalDistance(0);
       setGuideSteps([]);
       setNavigationActive(false);
+      setOutdoorSegmentCount(0);
       lastLoggedDestinationRef.current = '';
     }
   }, [selectedDestinationStoreId, selectedDestinationNodeId, userLat, userLng, mockMode, mockStartNodeId, nodes, edges]);
@@ -748,8 +788,10 @@ export function MapPage() {
       const destinationStore = stores.find((s) => s.id === selectedDestinationStoreId);
       if (!destinationStore) return;
       targetLabel = destinationStore.name;
-      targetLat = destinationStore.latitude;
-      targetLng = destinationStore.longitude;
+      const storeIdx = stores.findIndex(s => s.id === selectedDestinationStoreId);
+      const campusLoc = getCampusStoreLocation(destinationStore, storeIdx >= 0 ? storeIdx : 0);
+      targetLat = destinationStore.latitude ?? campusLoc.lat;
+      targetLng = destinationStore.longitude ?? campusLoc.lng;
     } else if (selectedDestinationNodeId) {
       const destinationNode = nodes.find((n) => n.id === selectedDestinationNodeId);
       if (!destinationNode) return;
@@ -774,7 +816,7 @@ export function MapPage() {
     let startLng = mapCenterLng;
     let startLabel = 'Starting Entrance';
 
-    if (userLat !== null && userLng !== null && !mockMode) {
+    if (userLat !== null && userLng !== null) {
       startLat = userLat;
       startLng = userLng;
       startLabel = 'Your Location';
@@ -793,78 +835,91 @@ export function MapPage() {
       startLabel = fallbackNode.label;
     }
 
-    // 3. Tier 1: Try OpenStreetMap OSRM Outdoor Road Navigation (for outdoor street paths)
-    const osrmResult = await fetchOSRMRoute(startLat, startLng, targetLat, targetLng, startLabel, targetLabel);
-    if (osrmResult && osrmResult.nodes.length > 1) {
-      const contouredOSRM = contourPathAroundBuildings(osrmResult.nodes, buildingRectangles);
-      setCalculatedRoute(contouredOSRM);
-      setTotalDistance(osrmResult.totalDistanceMeters);
-      setGuideSteps(osrmResult.guideSteps);
-      setNavigationActive(true);
-      return;
+    // 3. Hybrid routing pipeline:
+    //   a. Detect if user is outside campus boundary
+    //   b. If outside → OSRM outdoor street route from user to nearest entrance node
+    //   c. Inside campus → Dijkstra through drawn edges, starting from entrance
+    //   d. Assemble: [OSM nodes] → [Graph nodes] → [Store real coords]
+
+    const CAMPUS_RADIUS = exhibitionSettings.premises_radius_meters || 150;
+    const CAMPUS_CENTER_LAT = exhibitionSettings.premises_center_latitude || 6.535472;
+    const CAMPUS_CENTER_LNG = exhibitionSettings.premises_center_longitude || 80.401000;
+
+    // Find best entrance node (type === 'entrance') — the handoff point between outdoor and indoor
+    const entranceNodes = nodes.filter((n) => n.type === 'entrance');
+    const closestEntrance = entranceNodes.length > 0
+      ? findClosestNode(CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG, entranceNodes)
+      : (nodes.length > 0 ? findClosestNode(CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG, nodes) : null);
+
+    const distFromCampus = getDistance(startLat, startLng, CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG);
+    const isOutsideCampus = distFromCampus > CAMPUS_RADIUS;
+    setIsFarAway(isOutsideCampus); // keep UI state in sync
+
+    let graphPath: NavigationNode[] = [];
+    const connectedNodes = nodes.filter((n) => edges.some((e) => e.from_node_id === n.id || e.to_node_id === n.id));
+
+    const explicitDestNodeId =
+      selectedDestinationNodeId ||
+      (selectedDestinationStoreId ? nodes.find((n) => n.store_id === selectedDestinationStoreId)?.id : null) ||
+      (connectedNodes.length > 0 ? findClosestNode(targetLat, targetLng, connectedNodes)?.id : null) ||
+      null;
+
+    if (!isOutsideCampus && nodes.length > 0 && edges.length > 0) {
+      // Strictly route inside campus along drawn walkway graph with dual edge-snapping
+      graphPath = calculateShortestPathBetweenCoordinates(
+        startLat,
+        startLng,
+        targetLat,
+        targetLng,
+        nodes,
+        edges,
+        mockStartNodeId || null,
+        explicitDestNodeId
+      );
     }
 
-    // 4. Tier 2: Custom Dijkstra Graph Navigation (with Building Rectangle Avoidance)
-    let path: NavigationNode[] = [];
-    if (nodes.length > 0) {
-      const connectedNodeIds = new Set<string>();
-      edges.forEach((edge) => {
-        connectedNodeIds.add(edge.from_node_id);
-        connectedNodeIds.add(edge.to_node_id);
-      });
-      const connectedNodes = nodes.filter((n) => connectedNodeIds.has(n.id) || n.type === 'entrance');
-      const searchNodesList = connectedNodes.length > 0 ? connectedNodes : nodes;
-      const entranceNodes = nodes.filter((n) => n.type === 'entrance');
+    setSnappedToNode(null);
 
-      let endNode = selectedDestinationStoreId
-        ? (nodes.find((n) => n.store_id === selectedDestinationStoreId) || findClosestNode(targetLat, targetLng, searchNodesList))
-        : nodes.find((n) => n.id === selectedDestinationNodeId);
+    // 4. Outdoor segment via OSRM (only when user is outside campus)
+    let outdoorNodes: NavigationNode[] = [];
+    if (isOutsideCampus && closestEntrance) {
+      const entranceLat = closestEntrance.latitude;
+      const entranceLng = closestEntrance.longitude;
+      const osrmResult = await fetchOSRMRoute(
+        startLat, startLng,
+        entranceLat, entranceLng,
+        startLabel,
+        closestEntrance.label || 'School Entrance'
+      );
 
-      if (endNode) {
-        if (userLat !== null && userLng !== null && !mockMode) {
-          const poorGps = gpsAccuracy !== null && gpsAccuracy > GPS_ACCURACY_THRESHOLD;
-          if (poorGps && entranceNodes.length > 0) {
-            const nearestEntrance = findClosestNode(userLat, userLng, entranceNodes);
-            setSnappedToNode(nearestEntrance?.label ?? null);
-          } else {
-            setSnappedToNode(null);
-          }
-
-          path = calculateShortestPathWithSnapping(
-            userLat,
-            userLng,
-            targetLat,
-            targetLng,
-            endNode.id,
-            nodes,
-            edges,
-            gpsAccuracy,
-            GPS_ACCURACY_THRESHOLD,
-            buildingRectangles
-          );
-        } else {
-          let startNode = mockStartNodeId ? nodes.find((n) => n.id === mockStartNodeId) : undefined;
-          if (!startNode) {
-            startNode = entranceNodes.length > 0 ? entranceNodes[0] : nodes[0];
-            setSnappedToNode(startNode?.label ?? null);
-          } else {
-            setSnappedToNode(null);
-          }
-
-          if (startNode) {
-            path = calculateShortestPath(startNode.id, endNode.id, nodes, edges, buildingRectangles);
-          }
-        }
+      if (osrmResult && osrmResult.nodes.length > 1) {
+        // Use OSRM nodes but exclude the last one (entrance) since graphPath already starts there
+        outdoorNodes = osrmResult.nodes.slice(0, -1);
+      } else {
+        // OSRM failed — straight line from user to entrance as fallback
+        outdoorNodes = [{
+          id: 'outdoor-start-virtual',
+          label: startLabel,
+          latitude: startLat,
+          longitude: startLng,
+          floor: null,
+          type: 'poi',
+          store_id: null,
+          created_at: new Date().toISOString()
+        }];
       }
     }
 
-    // Virtual endpoints
+    // 5. Assemble final route:
+    //    Outside campus: [OSRM outdoor nodes] → [Campus entrance] → [...Drawn graph...] → [Store]
+    //    Inside campus:  [User position] → [...Drawn graph...] → [Store]
+
     const userStartVirtualNode: NavigationNode = {
       id: 'actual-start-virtual',
       label: startLabel,
       latitude: startLat,
       longitude: startLng,
-      floor: path[0]?.floor || null,
+      floor: graphPath[0]?.floor || null,
       type: 'poi',
       store_id: null,
       created_at: new Date().toISOString()
@@ -875,63 +930,132 @@ export function MapPage() {
       label: targetLabel,
       latitude: targetLat,
       longitude: targetLng,
-      floor: path[path.length - 1]?.floor || null,
+      floor: graphPath[graphPath.length - 1]?.floor || null,
       type: 'store',
-      store_id: null,
+      store_id: selectedDestinationStoreId || null,
       created_at: new Date().toISOString()
     };
 
-    let finalRoute = [...path];
-    if (path.length > 0) {
-      const startDist = getDistance(startLat, startLng, path[0].latitude, path[0].longitude);
-      const endDist = getDistance(path[path.length - 1].latitude, path[path.length - 1].longitude, targetLat, targetLng);
+    const finalRoute: NavigationNode[] = [];
+    let newOutdoorSegmentCount = 0;
 
-      if (startDist > 2) {
-        finalRoute.unshift(userStartVirtualNode);
+    if (isOutsideCampus) {
+      // ── OUTSIDE CAMPUS ─────────────────────────────────────────────────────
+      // Show ONLY the street path leading to the campus entrance gate.
+      // The indoor store path is hidden until the user crosses the boundary.
+      if (outdoorNodes.length > 0) {
+        finalRoute.push(...outdoorNodes);
+        newOutdoorSegmentCount = outdoorNodes.length;
       }
-      if (endDist > 2) {
-        finalRoute.push(destEndVirtualNode);
+      // Always end at the entrance node so the map shows the target clearly
+      if (closestEntrance) {
+        const lastOutdoorNode = finalRoute[finalRoute.length - 1];
+        const alreadyAtEntrance = lastOutdoorNode &&
+          getDistance(lastOutdoorNode.latitude, lastOutdoorNode.longitude,
+            closestEntrance.latitude, closestEntrance.longitude) < 5;
+        if (!alreadyAtEntrance) {
+          finalRoute.push({
+            ...closestEntrance,
+            label: closestEntrance.label || 'School Entrance',
+          });
+        }
+      }
+    } else {
+      // ── INSIDE CAMPUS ──────────────────────────────────────────────────────
+      // Path format:
+      // Store -> Closest point of path drawing -> User location (by drawn paths ONLY, no direct paths)
+      if (graphPath.length > 0) {
+        const distToFirstNode = getDistance(startLat, startLng, graphPath[0].latitude, graphPath[0].longitude);
+        if (distToFirstNode > 1.5) {
+          finalRoute.push(userStartVirtualNode);
+        }
+        finalRoute.push(...graphPath);
+
+        const distFromLastNode = getDistance(
+          graphPath[graphPath.length - 1].latitude,
+          graphPath[graphPath.length - 1].longitude,
+          targetLat, targetLng
+        );
+        if (distFromLastNode > 1.5) {
+          finalRoute.push(destEndVirtualNode);
+        }
+      } else {
+        // Fallback: If no continuous path found, snap both start and end to closest drawn path points
+        // NEVER draw a direct straight line across the school / buildings!
+        const startSnap = findClosestPointOnGraph(startLat, startLng, nodes, edges);
+        const endSnap = findClosestPointOnGraph(targetLat, targetLng, nodes, edges);
+        if (startSnap && endSnap) {
+          finalRoute.push(userStartVirtualNode);
+          finalRoute.push({
+            id: '__fallback_start_snap__',
+            label: 'Walkway Point',
+            latitude: startSnap.snapLat,
+            longitude: startSnap.snapLng,
+            floor: null,
+            type: 'path',
+            store_id: null,
+            created_at: new Date().toISOString()
+          });
+          finalRoute.push({
+            id: '__fallback_end_snap__',
+            label: 'Store Connection Point',
+            latitude: endSnap.snapLat,
+            longitude: endSnap.snapLng,
+            floor: null,
+            type: 'path',
+            store_id: null,
+            created_at: new Date().toISOString()
+          });
+          finalRoute.push(destEndVirtualNode);
+        } else {
+          finalRoute.push(userStartVirtualNode);
+        }
       }
     }
 
-    // Apply building perimeter contouring (auto-narrowing path around building rectangles)
-    let contouredRoute = contourPathAroundBuildings(finalRoute, buildingRectangles);
-
-    // Fallback to direct path with perimeter contouring if graph produced no route
-    if (contouredRoute.length === 0) {
-      contouredRoute = contourPathAroundBuildings([userStartVirtualNode, destEndVirtualNode], buildingRectangles);
-    }
-
-    setCalculatedRoute(contouredRoute);
+    setOutdoorSegmentCount(newOutdoorSegmentCount);
+    setCalculatedRoute(finalRoute);
     setNavigationActive(true);
 
-    if (contouredRoute.length > 1) {
+    if (finalRoute.length > 0) {
       let distanceMeters = 0;
       const steps: string[] = [];
 
-      for (let i = 0; i < contouredRoute.length - 1; i++) {
-        const from = contouredRoute[i];
-        const to = contouredRoute[i + 1];
-        const segmentDist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
-        distanceMeters += segmentDist;
-
-        if (i === 0) {
-          steps.push(`Start from ${from.label}`);
+      if (isOutsideCampus) {
+        // Outside campus: guide steps are about reaching the entrance gate
+        if (finalRoute.length > 1) {
+          steps.push(`Start from ${finalRoute[0].label}`);
+          for (let i = 0; i < finalRoute.length - 1; i++) {
+            const from = finalRoute[i];
+            const to = finalRoute[i + 1];
+            const segDist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
+            distanceMeters += segDist;
+            const heading = getHeading(from.latitude, from.longitude, to.latitude, to.longitude);
+            steps.push(`Head ${heading} towards ${to.label} (${Math.round(segDist)}m)`);
+          }
+          const entranceName = closestEntrance?.label || 'School Entrance';
+          steps.push(`🏫 Enter through ${entranceName} to access the exhibition`);
         }
-
-        const heading = getHeading(from.latitude, from.longitude, to.latitude, to.longitude);
-        if (to.id.startsWith('contour-node')) {
-          steps.push(`Skirt around building perimeter (${heading}) for ${Math.round(segmentDist)}m`);
-        } else {
-          steps.push(`Head ${heading} towards ${to.label} (${Math.round(segmentDist)}m)`);
+      } else {
+        // Inside campus: guide steps are about reaching the store
+        if (finalRoute.length > 1) {
+          steps.push(`Start from ${finalRoute[0].label}`);
+          for (let i = 0; i < finalRoute.length - 1; i++) {
+            const from = finalRoute[i];
+            const to = finalRoute[i + 1];
+            const segDist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
+            distanceMeters += segDist;
+            const heading = getHeading(from.latitude, from.longitude, to.latitude, to.longitude);
+            steps.push(`Head ${heading} towards ${to.label} (${Math.round(segDist)}m)`);
+          }
+          steps.push(`Arrive at ${targetLabel}`);
         }
       }
 
-      steps.push(`Arrive at ${targetLabel}`);
       setTotalDistance(Math.round(distanceMeters));
       setGuideSteps(steps);
     }
-  }
+  } // end calculateRoutePath
 
 
   const handleRecenterLocation = () => {
@@ -1167,6 +1291,12 @@ export function MapPage() {
               nodes={nodes}
               edges={edges}
               onMapClick={handleMapClick}
+              outdoorSegmentCount={outdoorSegmentCount}
+              onSelectStore={(storeId) => {
+                setSelectedDestinationStoreId(storeId);
+                const st = stores.find(s => s.id === storeId);
+                if (st) setStoreSearchQuery(st.name);
+              }}
             />
           )}
 
@@ -1402,13 +1532,7 @@ export function MapPage() {
               <button
                 className="btn btn-primary btn-sm"
                 style={{ width: '100%', fontSize: '0.8rem', padding: '0.35rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
-                onClick={() => {
-                  if (isNearEntrance) {
-                    setShowEntrancePrompt(true);
-                  } else {
-                    setShowChecklistPrompt(true);
-                  }
-                }}
+                onClick={handleOpenTourPlanner}
               >
                 <Compass size={14} />
                 {guidedTourActive ? 'Restart Tour' : 'Start Tour'}
@@ -1416,10 +1540,10 @@ export function MapPage() {
               <button
                 className="btn btn-ghost btn-sm"
                 style={{ width: '100%', fontSize: '0.75rem', padding: '0.3rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.08)' }}
-                onClick={() => setShowChecklistPrompt(true)}
+                onClick={handleOpenTourPlanner}
               >
                 <CheckSquare size={13} />
-                <span>Visited Tracker ({visitedStallIds.length}/{stores.filter(s => s.id !== 'kalawana-national-school-landmark').length})</span>
+                <span>Visited Tracker ({visitedStallIds.length}/{(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).length})</span>
               </button>
               {guidedTourActive && (
                 <button
@@ -1455,7 +1579,23 @@ export function MapPage() {
                   color: mockMode ? '#fbbf24' : 'var(--color-text)',
                   fontWeight: 700
                 }}
-                onClick={() => setMockMode(prev => !prev)}
+                onClick={() => {
+                  setMockMode(prev => {
+                    const next = !prev;
+                    if (next && (userLat === null || userLng === null)) {
+                      const entranceNode = nodes.find(n => n.type === 'entrance') || nodes[0];
+                      if (entranceNode) {
+                        setUserLat(entranceNode.latitude);
+                        setUserLng(entranceNode.longitude);
+                      } else {
+                        setUserLat(exhibitionSettings.entrance_latitude || 6.535472);
+                        setUserLng(exhibitionSettings.entrance_longitude || 80.401000);
+                      }
+                      setIsFarAway(false);
+                    }
+                    return next;
+                  });
+                }}
               >
                 <Navigation size={13} />
                 <span>{mockMode ? '📍 Mock Location ON' : '🎯 Enable Mock GPS'}</span>
@@ -1678,104 +1818,211 @@ export function MapPage() {
               </div>
 
               {/* Summary row — always visible */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                  <div style={{ width: 42, height: 42, background: 'rgba(99,102,241,0.15)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-primary-h)', flexShrink: 0 }}>
-                    <Route size={20} />
-                  </div>
-                  <div>
-                    <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 'clamp(140px, 40vw, 240px)' }}>
-                      Navigating to {selectedDestinationStoreId
-                        ? (stores.find((s) => s.id === selectedDestinationStoreId)?.name || 'Exhibitor')
-                        : (nodes.find((n) => n.id === selectedDestinationNodeId)?.label || 'Facility')}
-                    </h3>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)', margin: 0 }}>
-                      <span style={{ color: 'var(--color-accent)', fontWeight: 700 }}>{totalDistance} m</span>
-                      {' · '}Est: {totalDistance < 80 ? '< 1 min' : `${Math.ceil(totalDistance / 80)} min`}
-                      {/* GPS accuracy indicator — only shown when real GPS is active */}
-                      {!mockMode && gpsAccuracy !== null && (
-                        <span style={{
-                          marginLeft: '0.5rem',
-                          fontSize: '0.72rem',
-                          fontWeight: 700,
-                          padding: '0.05rem 0.4rem',
-                          borderRadius: '4px',
-                          color: gpsAccuracy <= 5
-                            ? '#22c55e'
-                            : gpsAccuracy <= 15
-                              ? '#eab308'
-                              : '#f97316',
-                          background: gpsAccuracy <= 5
-                            ? 'rgba(34,197,94,0.1)'
-                            : gpsAccuracy <= 15
-                              ? 'rgba(234,179,8,0.1)'
-                              : 'rgba(249,115,22,0.1)',
-                          border: `1px solid ${gpsAccuracy <= 5
-                            ? 'rgba(34,197,94,0.25)'
-                            : gpsAccuracy <= 15
-                              ? 'rgba(234,179,8,0.25)'
-                              : 'rgba(249,115,22,0.25)'}`,
-                        }}>
-                          📍 ±{Math.round(gpsAccuracy)} m
-                        </span>
-                      )}
-                    </p>
-                    {/* Entrance-snap notice — shown when poor GPS caused fallback */}
-                    {snappedToNode && !mockMode && (
-                      <p style={{
-                        fontSize: '0.72rem',
-                        color: '#f97316',
-                        margin: '0.2rem 0 0',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.3rem',
+              {guidedTourActive && tourStops.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                      <div style={{
+                        width: 42, height: 42,
+                        background: 'linear-gradient(135deg, #a855f7, #6366f1)',
+                        borderRadius: '50%',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: '#fff', flexShrink: 0,
+                        boxShadow: '0 4px 12px rgba(168, 85, 247, 0.4)'
                       }}>
-                        <span style={{ opacity: 0.8 }}>⚠️</span>
-                        Weak GPS — routing from <strong style={{ color: '#fb923c' }}>{snappedToNode}</strong>
-                      </p>
-                    )}
+                        <Compass size={22} />
+                      </div>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 800, color: '#22d3ee', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            🎪 GUIDED TOUR · STOP {currentTourStopIndex + 1} OF {tourStops.length}
+                          </span>
+                        </div>
+                        <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: '0.1rem 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 'clamp(140px, 40vw, 240px)' }}>
+                          {tourStops[currentTourStopIndex]?.name || 'Next Stall'}
+                        </h3>
+                        <p style={{ fontSize: '0.78rem', color: 'var(--color-muted)', margin: 0 }}>
+                          <span style={{ color: 'var(--color-accent)', fontWeight: 700 }}>{totalDistance} m</span>
+                          {' · '}Est: {totalDistance < 80 ? '< 1 min' : `${Math.ceil(totalDistance / 80)} min`} walking
+                        </p>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexShrink: 0 }}>
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={handleMarkCurrentStopVisited}
+                        style={{
+                          fontSize: '0.75rem',
+                          padding: '0.35rem 0.65rem',
+                          background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                          border: 'none',
+                          fontWeight: 700,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.3rem',
+                          boxShadow: '0 2px 8px rgba(34, 197, 94, 0.3)'
+                        }}
+                      >
+                        <Check size={14} />
+                        {currentTourStopIndex + 1 < tourStops.length ? 'Next Stall ✓' : 'Finish Tour 🎉'}
+                      </button>
+
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => {
+                          setGuidedTourActive(false);
+                          setCalculatedRoute([]);
+                          setNavigationActive(false);
+                        }}
+                        style={{ padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.75rem', color: 'var(--color-danger)' }}
+                      >
+                        ✕ End
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Tour Stops Sequence Progress Pills */}
+                  <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', paddingBottom: '0.15rem', scrollbarWidth: 'none' }}>
+                    {tourStops.map((stop, sIdx) => {
+                      const isCurrent = sIdx === currentTourStopIndex;
+                      const isPast = sIdx < currentTourStopIndex || visitedStallIds.includes(stop.id);
+                      return (
+                        <div
+                          key={stop.id}
+                          style={{
+                            padding: '0.2rem 0.5rem',
+                            borderRadius: '6px',
+                            fontSize: '0.68rem',
+                            fontWeight: 700,
+                            whiteSpace: 'nowrap',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                            background: isCurrent
+                              ? 'rgba(34, 211, 238, 0.2)'
+                              : isPast
+                                ? 'rgba(34, 197, 94, 0.15)'
+                                : 'rgba(255, 255, 255, 0.05)',
+                            border: `1px solid ${
+                              isCurrent
+                                ? '#22d3ee'
+                                : isPast
+                                  ? '#22c55e'
+                                  : 'var(--color-border)'
+                            }`,
+                            color: isCurrent ? '#22d3ee' : isPast ? '#22c55e' : 'var(--color-muted)'
+                          }}
+                        >
+                          <span>{isPast ? '✓' : sIdx + 1}</span>
+                          <span>{stop.name}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
+              ) : (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <div style={{ width: 42, height: 42, background: 'rgba(99,102,241,0.15)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-primary-h)', flexShrink: 0 }}>
+                      <Route size={20} />
+                    </div>
+                    <div>
+                      <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 'clamp(140px, 40vw, 240px)' }}>
+                        {isFarAway
+                          ? `🏫 Head to School Entrance`
+                          : `Navigating to ${selectedDestinationStoreId
+                              ? (stores.find((s) => s.id === selectedDestinationStoreId)?.name || 'Exhibitor')
+                              : (nodes.find((n) => n.id === selectedDestinationNodeId)?.label || 'Facility')}`}
+                      </h3>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)', margin: 0 }}>
+                        <span style={{ color: 'var(--color-accent)', fontWeight: 700 }}>{totalDistance} m</span>
+                        {' · '}Est: {totalDistance < 80 ? '< 1 min' : `${Math.ceil(totalDistance / 80)} min`}
+                        {/* GPS accuracy indicator — only shown when real GPS is active */}
+                        {!mockMode && gpsAccuracy !== null && (
+                          <span style={{
+                            marginLeft: '0.5rem',
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            padding: '0.05rem 0.4rem',
+                            borderRadius: '4px',
+                            color: gpsAccuracy <= 5
+                              ? '#22c55e'
+                              : gpsAccuracy <= 15
+                                ? '#eab308'
+                                : '#f97316',
+                            background: gpsAccuracy <= 5
+                              ? 'rgba(34,197,94,0.1)'
+                              : gpsAccuracy <= 15
+                                ? 'rgba(234,179,8,0.1)'
+                                : 'rgba(249,115,22,0.1)',
+                            border: `1px solid ${gpsAccuracy <= 5
+                              ? 'rgba(34,197,94,0.25)'
+                              : gpsAccuracy <= 15
+                                ? 'rgba(234,179,8,0.25)'
+                                : 'rgba(249,115,22,0.25)'}`,
+                          }}>
+                            📍 ±{Math.round(gpsAccuracy)} m
+                          </span>
+                        )}
+                      </p>
+                      {/* Entrance-snap notice — shown when poor GPS caused fallback */}
+                      {snappedToNode && !mockMode && (
+                        <p style={{
+                          fontSize: '0.72rem',
+                          color: '#f97316',
+                          margin: '0.2rem 0 0',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.3rem',
+                        }}>
+                          <span style={{ opacity: 0.8 }}>⚠️</span>
+                          Weak GPS — routing from <strong style={{ color: '#fb923c' }}>{snappedToNode}</strong>
+                        </p>
+                      )}
+                    </div>
+                  </div>
 
-                <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexShrink: 0 }}>
-                  {/* Expand/collapse toggle — visible on mobile */}
-                  <button
-                    className="nav-sheet-toggle"
-                    onClick={() => setNavSheetExpanded(v => !v)}
-                    style={{
-                      display: 'none', /* shown via CSS on mobile */
-                      background: 'rgba(255,255,255,0.06)',
-                      border: '1px solid var(--color-border)',
-                      borderRadius: '50%',
-                      width: 30, height: 30,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      color: 'var(--color-muted)',
-                      transition: 'transform 0.3s',
-                      transform: navSheetExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                    }}
-                    aria-label={navSheetExpanded ? 'Collapse' : 'Expand'}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <polyline points="18 15 12 9 6 15" />
-                    </svg>
-                  </button>
+                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexShrink: 0 }}>
+                    {/* Expand/collapse toggle — visible on mobile */}
+                    <button
+                      className="nav-sheet-toggle"
+                      onClick={() => setNavSheetExpanded(v => !v)}
+                      style={{
+                        display: 'none', /* shown via CSS on mobile */
+                        background: 'rgba(255,255,255,0.06)',
+                        border: '1px solid var(--color-border)',
+                        borderRadius: '50%',
+                        width: 30, height: 30,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        color: 'var(--color-muted)',
+                        transition: 'transform 0.3s',
+                        transform: navSheetExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                      }}
+                      aria-label={navSheetExpanded ? 'Collapse' : 'Expand'}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <polyline points="18 15 12 9 6 15" />
+                      </svg>
+                    </button>
 
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => {
-                      setSelectedDestinationStoreId('');
-                      setSelectedDestinationNodeId('');
-                      setStoreSearchQuery('');
-                      setNavSheetExpanded(false);
-                    }}
-                    style={{ padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.8rem' }}
-                  >
-                    ✕ Clear
-                  </button>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => {
+                        setSelectedDestinationStoreId('');
+                        setSelectedDestinationNodeId('');
+                        setStoreSearchQuery('');
+                        setNavSheetExpanded(false);
+                      }}
+                      style={{ padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.8rem' }}
+                    >
+                      ✕ Clear
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Step guidance — hidden when collapsed, visible when expanded on mobile */}
               <div className="nav-sheet-steps" style={{ overflowY: 'auto', paddingRight: '0.5rem', flexDirection: 'column', gap: '0.5rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.75rem' }}>
@@ -1843,59 +2090,7 @@ export function MapPage() {
             </div>
           )}
 
-          {showEntrancePrompt && (
-            <AdminModal
-              title="🎪 Welcome to the Exhibition Entrance!"
-              onClose={() => setShowEntrancePrompt(false)}
-            >
-              <div style={{ padding: '0.5rem 0' }}>
-                <div style={{
-                  background: 'rgba(34, 211, 238, 0.1)',
-                  border: '1px solid rgba(34, 211, 238, 0.25)',
-                  borderRadius: '10px',
-                  padding: '1rem',
-                  marginBottom: '1.25rem',
-                  display: 'flex',
-                  gap: '0.75rem',
-                  alignItems: 'flex-start'
-                }}>
-                  <Compass className="text-accent" size={24} style={{ flexShrink: 0, marginTop: 2 }} />
-                  <div>
-                    <h4 style={{ margin: '0 0 0.25rem', fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-accent)' }}>
-                      Entrance Gate Detected
-                    </h4>
-                    <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text)', lineHeight: 1.5 }}>
-                      Welcome! You are starting at the entrance gate. By default, your tour is configured to visit <strong>ALL exhibition stalls</strong> in the shortest walking path. You can start right away or choose specific stalls to visit.
-                    </p>
-                  </div>
-                </div>
 
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => {
-                      setShowEntrancePrompt(false);
-                      // Default for entrance selector: ALL stalls selected to visit (0 skipped)
-                      setVisitedStallIds([]);
-                      setShowChecklistPrompt(true);
-                    }}
-                  >
-                    📋 Select Stalls to Visit
-                  </button>
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => {
-                      setShowEntrancePrompt(false);
-                      setVisitedStallIds([]);
-                      generateGuidedTourRoute([]);
-                    }}
-                  >
-                    🚀 Start Full Tour (All Stalls)
-                  </button>
-                </div>
-              </div>
-            </AdminModal>
-          )}
 
           {showChecklistPrompt && (
             <AdminModal
@@ -1904,7 +2099,7 @@ export function MapPage() {
             >
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '75vh' }}>
                 <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', margin: 0, lineHeight: 1.5 }}>
-                  Select which stalls you want to visit on your tour. By default, <strong>ALL stalls are selected to visit</strong>. Uncheck any stalls you wish to skip.
+                  Choose which stalls you want to visit on your guided tour. By default, <strong>ALL stalls are selected</strong> for the shortest optimal path.
                 </p>
 
                 {/* Stats & Quick Actions Toolbar */}
@@ -1921,11 +2116,11 @@ export function MapPage() {
                 }}>
                   <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8rem', fontWeight: 700 }}>
                     <span style={{ color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.15)', padding: '0.2rem 0.5rem', borderRadius: '6px' }}>
-                      🎯 To Visit: {(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).filter(s => !visitedStallIds.includes(s.id)).length} / {(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).length}
+                      🎯 In Tour: {tourSelectedStallIds.length} / {(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).length}
                     </span>
                     {visitedStallIds.length > 0 && (
-                      <span style={{ color: 'var(--color-muted)', background: 'rgba(255, 255, 255, 0.06)', padding: '0.2rem 0.5rem', borderRadius: '6px' }}>
-                        ⏭️ Skipped: {visitedStallIds.length}
+                      <span style={{ color: '#22c55e', background: 'rgba(34, 197, 94, 0.12)', padding: '0.2rem 0.5rem', borderRadius: '6px' }}>
+                        ✓ Visited: {visitedStallIds.length}
                       </span>
                     )}
                   </div>
@@ -1934,18 +2129,29 @@ export function MapPage() {
                     <button
                       className="btn btn-ghost btn-sm"
                       style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem', color: 'var(--color-accent)' }}
-                      onClick={() => setVisitedStallIds([])}
+                      onClick={() => {
+                        const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
+                        const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS;
+                        setTourSelectedStallIds(listToUse.map(s => s.id));
+                      }}
                     >
-                      Select All (Visit All)
+                      Select All
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem', color: '#38bdf8' }}
+                      onClick={() => {
+                        const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
+                        const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS;
+                        setTourSelectedStallIds(listToUse.filter(s => !visitedStallIds.includes(s.id)).map(s => s.id));
+                      }}
+                    >
+                      Unvisited Only
                     </button>
                     <button
                       className="btn btn-ghost btn-sm"
                       style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem', color: 'var(--color-warning)' }}
-                      onClick={() => {
-                        const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
-                        const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS;
-                        setVisitedStallIds(listToUse.map(s => s.id));
-                      }}
+                      onClick={() => setTourSelectedStallIds([])}
                     >
                       Deselect All
                     </button>
@@ -1961,6 +2167,7 @@ export function MapPage() {
                   onChange={(e) => setChecklistSearchQuery(e.target.value)}
                   style={{ fontSize: '0.85rem', padding: '0.45rem 0.75rem' }}
                 />
+
                 <div style={{
                   flex: 1,
                   overflowY: 'auto',
@@ -1983,8 +2190,8 @@ export function MapPage() {
                       return nameMatch || catMatch;
                     })
                     .map((store) => {
-                      const isSkipped = visitedStallIds.includes(store.id);
-                      const isSelectedToVisit = !isSkipped;
+                      const isSelected = tourSelectedStallIds.includes(store.id);
+                      const isVisited = visitedStallIds.includes(store.id);
                       return (
                         <label
                           key={store.id}
@@ -1994,38 +2201,45 @@ export function MapPage() {
                             gap: '0.75rem',
                             padding: '0.65rem 0.85rem',
                             borderRadius: '8px',
-                            background: isSelectedToVisit ? 'rgba(34, 211, 238, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+                            background: isSelected ? 'rgba(34, 211, 238, 0.08)' : 'rgba(255, 255, 255, 0.02)',
                             cursor: 'pointer',
-                            border: `1px solid ${isSelectedToVisit ? 'rgba(34, 211, 238, 0.25)' : 'rgba(255, 255, 255, 0.06)'}`,
+                            border: `1px solid ${isSelected ? 'rgba(34, 211, 238, 0.25)' : 'rgba(255, 255, 255, 0.06)'}`,
                             transition: 'all 0.15s ease'
                           }}
                         >
                           <input
                             type="checkbox"
-                            checked={isSelectedToVisit}
+                            checked={isSelected}
                             style={{ width: 18, height: 18, accentColor: '#22d3ee', cursor: 'pointer' }}
                             onChange={() => {
-                              if (isSelectedToVisit) {
-                                setVisitedStallIds([...visitedStallIds, store.id]);
+                              if (isSelected) {
+                                setTourSelectedStallIds(tourSelectedStallIds.filter(id => id !== store.id));
                               } else {
-                                setVisitedStallIds(visitedStallIds.filter(id => id !== store.id));
+                                setTourSelectedStallIds([...tourSelectedStallIds, store.id]);
                               }
                             }}
                           />
                           <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: '0.9rem', fontWeight: 700, color: isSelectedToVisit ? 'var(--color-text)' : 'var(--color-muted)', textDecoration: isSelectedToVisit ? 'none' : 'line-through' }}>
+                              <span style={{ fontSize: '0.9rem', fontWeight: 700, color: isSelected ? 'var(--color-text)' : 'var(--color-muted)' }}>
                                 {store.name}
                               </span>
-                              {isSelectedToVisit ? (
-                                <span style={{ fontSize: '0.7rem', color: '#22d3ee', fontWeight: 700, background: 'rgba(34, 211, 238, 0.15)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
-                                  🎯 To Visit ✓
-                                </span>
-                              ) : (
-                                <span style={{ fontSize: '0.7rem', color: 'var(--color-muted)', fontWeight: 600, background: 'rgba(255, 255, 255, 0.05)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
-                                  ⏭️ Skipped
-                                </span>
-                              )}
+                              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                                {isVisited && (
+                                  <span style={{ fontSize: '0.68rem', color: '#22c55e', fontWeight: 700, background: 'rgba(34, 197, 94, 0.15)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                                    ✓ Visited
+                                  </span>
+                                )}
+                                {isSelected ? (
+                                  <span style={{ fontSize: '0.68rem', color: '#22d3ee', fontWeight: 700, background: 'rgba(34, 211, 238, 0.15)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                                    🎯 In Tour
+                                  </span>
+                                ) : (
+                                  <span style={{ fontSize: '0.68rem', color: 'var(--color-muted)', fontWeight: 600, background: 'rgba(255, 255, 255, 0.05)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                                    ⏭️ Excluded
+                                  </span>
+                                )}
+                              </div>
                             </div>
                             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.15rem', fontSize: '0.72rem', color: 'var(--color-muted)' }}>
                               {store.categories?.name && <span>🏷️ {store.categories.name}</span>}
@@ -2047,12 +2261,13 @@ export function MapPage() {
                   </button>
                   <button
                     className="btn btn-primary"
+                    disabled={tourSelectedStallIds.length === 0}
                     onClick={() => {
                       setShowChecklistPrompt(false);
-                      generateGuidedTourRoute(visitedStallIds);
+                      generateGuidedTourRoute(tourSelectedStallIds);
                     }}
                   >
-                    🚀 Start Shortest Tour ({(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).filter(s => !visitedStallIds.includes(s.id)).length} Stalls)
+                    🚀 Start Shortest Tour ({tourSelectedStallIds.length} Stalls)
                   </button>
                 </div>
               </div>

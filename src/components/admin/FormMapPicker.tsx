@@ -27,9 +27,9 @@ export function FormMapPicker({ latitude, longitude, onChange }: FormMapPickerPr
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Use current lat/lng or default to school/city center if coordinates are 0
-    const startLat = latitude !== 0 ? latitude : 6.9271;
-    const startLng = longitude !== 0 ? longitude : 79.8612;
+    // Use current lat/lng or default to Kalawana National School campus center if coordinates are missing/0
+    const startLat = latitude && latitude !== 0 ? latitude : 6.535472;
+    const startLng = longitude && longitude !== 0 ? longitude : 80.401000;
 
     const map = L.map(containerRef.current, {
       center: [startLat, startLng],
