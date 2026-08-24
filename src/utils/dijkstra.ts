@@ -313,9 +313,9 @@ export function calculateShortestPathBetweenCoordinates(
       const dEndB = getDistance(endSnap.snapLat, endSnap.snapLng, nodeB.latitude, nodeB.longitude);
 
       tempEdges.push(
-        { id: '__v_edge_a_start', from_node_id: nodeA.id, to_node_id: START_VIRTUAL_ID, distance: distAtoStart, is_bidirectional: true, created_at: '', floor: null },
-        { id: '__v_edge_start_end', from_node_id: START_VIRTUAL_ID, to_node_id: END_VIRTUAL_ID, distance: dStartEnd, is_bidirectional: true, created_at: '', floor: null },
-        { id: '__v_edge_end_b', from_node_id: END_VIRTUAL_ID, to_node_id: nodeB.id, distance: dEndB, is_bidirectional: true, created_at: '', floor: null }
+        { id: '__v_edge_a_start', from_node_id: nodeA.id, to_node_id: START_VIRTUAL_ID, distance: distAtoStart, is_bidirectional: true, created_at: '' },
+        { id: '__v_edge_start_end', from_node_id: START_VIRTUAL_ID, to_node_id: END_VIRTUAL_ID, distance: dStartEnd, is_bidirectional: true, created_at: '' },
+        { id: '__v_edge_end_b', from_node_id: END_VIRTUAL_ID, to_node_id: nodeB.id, distance: dEndB, is_bidirectional: true, created_at: '' }
       );
     } else {
       // Sequence along edge: NodeA <-> vEnd <-> vStart <-> NodeB
@@ -323,9 +323,9 @@ export function calculateShortestPathBetweenCoordinates(
       const dStartB = getDistance(startSnap.snapLat, startSnap.snapLng, nodeB.latitude, nodeB.longitude);
 
       tempEdges.push(
-        { id: '__v_edge_a_end', from_node_id: nodeA.id, to_node_id: END_VIRTUAL_ID, distance: distAtoEnd, is_bidirectional: true, created_at: '', floor: null },
-        { id: '__v_edge_end_start', from_node_id: END_VIRTUAL_ID, to_node_id: START_VIRTUAL_ID, distance: dEndStart, is_bidirectional: true, created_at: '', floor: null },
-        { id: '__v_edge_start_b', from_node_id: START_VIRTUAL_ID, to_node_id: nodeB.id, distance: dStartB, is_bidirectional: true, created_at: '', floor: null }
+        { id: '__v_edge_a_end', from_node_id: nodeA.id, to_node_id: END_VIRTUAL_ID, distance: distAtoEnd, is_bidirectional: true, created_at: '' },
+        { id: '__v_edge_end_start', from_node_id: END_VIRTUAL_ID, to_node_id: START_VIRTUAL_ID, distance: dEndStart, is_bidirectional: true, created_at: '' },
+        { id: '__v_edge_start_b', from_node_id: START_VIRTUAL_ID, to_node_id: nodeB.id, distance: dStartB, is_bidirectional: true, created_at: '' }
       );
     }
   } else {
@@ -358,8 +358,8 @@ export function calculateShortestPathBetweenCoordinates(
         const dB = getDistance(nodeB.latitude, nodeB.longitude, startSnap.snapLat, startSnap.snapLng);
 
         tempEdges.push(
-          { id: '__v_start_edge_a', from_node_id: nodeA.id, to_node_id: START_VIRTUAL_ID, distance: dA, is_bidirectional: true, created_at: '', floor: null },
-          { id: '__v_start_edge_b', from_node_id: START_VIRTUAL_ID, to_node_id: nodeB.id, distance: dB, is_bidirectional: true, created_at: '', floor: null }
+          { id: '__v_start_edge_a', from_node_id: nodeA.id, to_node_id: START_VIRTUAL_ID, distance: dA, is_bidirectional: true, created_at: '' },
+          { id: '__v_start_edge_b', from_node_id: START_VIRTUAL_ID, to_node_id: nodeB.id, distance: dB, is_bidirectional: true, created_at: '' }
         );
       }
     }
@@ -392,8 +392,8 @@ export function calculateShortestPathBetweenCoordinates(
         const dB = getDistance(nodeB.latitude, nodeB.longitude, endSnap.snapLat, endSnap.snapLng);
 
         tempEdges.push(
-          { id: '__v_end_edge_a', from_node_id: nodeA.id, to_node_id: END_VIRTUAL_ID, distance: dA, is_bidirectional: true, created_at: '', floor: null },
-          { id: '__v_end_edge_b', from_node_id: END_VIRTUAL_ID, to_node_id: nodeB.id, distance: dB, is_bidirectional: true, created_at: '', floor: null }
+          { id: '__v_end_edge_a', from_node_id: nodeA.id, to_node_id: END_VIRTUAL_ID, distance: dA, is_bidirectional: true, created_at: '' },
+          { id: '__v_end_edge_b', from_node_id: END_VIRTUAL_ID, to_node_id: nodeB.id, distance: dB, is_bidirectional: true, created_at: '' }
         );
       }
     }

@@ -26,7 +26,7 @@ import {
 import { MapView } from '../components/MapView';
 import { MapView3D } from '../components/MapView3D';
 import { getCampusStoreLocation } from '../components/KalawanaSchool3DLayer';
-import { calculateShortestPath, calculateShortestPathWithSnapping, calculateShortestPathBetweenCoordinates, findClosestNode, getReachableNodes, findClosestPointOnGraph, type GraphSnapResult, getDistance, getHeading, computeGraphPathDistance } from '../utils/dijkstra';
+import { calculateShortestPathBetweenCoordinates, findClosestNode, findClosestPointOnGraph, getDistance, getHeading } from '../utils/dijkstra';
 import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
 import { GPSKalmanFilter } from '../utils/gpsFilter';
@@ -122,10 +122,6 @@ export function MapPage() {
 
   // Kalman Filter for coordinates smoothing
   const filterRef = useRef(new GPSKalmanFilter(0.8, 1.8));
-
-  // When GPS accuracy is worse than this threshold (metres), we snap the
-  // route start to the nearest entrance node instead of trusting raw GPS.
-  const GPS_ACCURACY_THRESHOLD = 20;
 
   // Selected mock starting node (if GPS is disabled)
   const [mockStartNodeId, setMockStartNodeId] = useState('');
@@ -578,20 +574,6 @@ export function MapPage() {
     // 3. Optimal Nearest-Neighbor TSP shortest path using user's drawn network graph
     let currentLat = startLatVal;
     let currentLng = startLngVal;
-    let currentNodeId: string | null = null;
-
-    const connectedNodeIds = new Set<string>();
-    edges.forEach((edge) => {
-      connectedNodeIds.add(edge.from_node_id);
-      connectedNodeIds.add(edge.to_node_id);
-    });
-    const connectedNodes = nodes.filter((n) => connectedNodeIds.has(n.id));
-    const activeGraphNodes = connectedNodes.length > 0 ? connectedNodes : nodes;
-
-    const startGraphNode = findClosestNode(startLatVal, startLngVal, activeGraphNodes);
-    if (startGraphNode) {
-      currentNodeId = startGraphNode.id;
-    }
 
     const remaining = [...targetStores];
     const orderedTourStops: StoreType[] = [];
