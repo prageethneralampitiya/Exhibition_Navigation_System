@@ -785,6 +785,16 @@ export function MapPage() {
     }
   };
 
+  const handleCancelTour = () => {
+    setGuidedTourActive(false);
+    setCalculatedRoute([]);
+    setNavigationActive(false);
+    setTourStops([]);
+    setCurrentTourStopIndex(0);
+    setArrivedStopPrompt(null);
+    lastPromptedStopIdRef.current = null;
+  };
+
   // Automatic Proximity Arrival Detector during guided tour
   useEffect(() => {
     if (!guidedTourActive || tourStops.length === 0) return;
@@ -1614,11 +1624,7 @@ export function MapPage() {
                 <button
                   className="btn btn-ghost btn-sm"
                   style={{ width: '100%', fontSize: '0.75rem', padding: '0.25rem 0.5rem', color: 'var(--color-danger)' }}
-                  onClick={() => {
-                    setCalculatedRoute([]);
-                    setGuidedTourActive(false);
-                    setNavigationActive(false);
-                  }}
+                  onClick={handleCancelTour}
                 >
                   Cancel Tour
                 </button>
@@ -1941,11 +1947,7 @@ export function MapPage() {
 
                       <button
                         className="btn btn-ghost btn-sm"
-                        onClick={() => {
-                          setGuidedTourActive(false);
-                          setCalculatedRoute([]);
-                          setNavigationActive(false);
-                        }}
+                        onClick={handleCancelTour}
                         style={{ padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.75rem', color: 'var(--color-danger)' }}
                       >
                         ✕ End
