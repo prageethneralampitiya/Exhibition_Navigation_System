@@ -905,8 +905,9 @@ export function calculateShortestPath(
   const pathIds: string[] = [];
   let curr: string | null = endId;
 
-  // If no path was found
-  if (previous[endId] === null && startId !== endId) {
+  // If no path was found (covers both null for unreachable nodes
+  // and undefined for virtual nodes not in the initial previous map)
+  if (previous[endId] == null && startId !== endId) {
     return [];
   }
 
@@ -916,7 +917,7 @@ export function calculateShortestPath(
   }
 
   // Map IDs to actual Node objects
-  const nodeMap = new Map(nodes.map((id) => [id.id, id]));
+  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
   return pathIds.map((id) => nodeMap.get(id)!).filter(Boolean);
 }
 

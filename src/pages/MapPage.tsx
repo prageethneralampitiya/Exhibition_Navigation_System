@@ -263,11 +263,12 @@ export function MapPage() {
     loadNavigationResources();
     startLocationTracking();
 
+    const gpsFilter = filterRef.current;
     return () => {
       if (geoWatchIdRef.current !== null) {
         navigator.geolocation.clearWatch(geoWatchIdRef.current);
       }
-      filterRef.current.reset();
+      gpsFilter.reset();
     };
   }, []);
 
@@ -482,7 +483,7 @@ export function MapPage() {
         setIsFarAway(far);
       }
     }
-  }, [mockMode, exhibitionSettings, bypassBoundaryCheck]);
+  }, [mockMode, exhibitionSettings]);
 
   const handleSelectMockLocation = (presetOrNodeId: string) => {
     setMockMode(true);
@@ -741,7 +742,7 @@ export function MapPage() {
       setSelectedDestinationStoreId('');
       setSearchParams({});
     }
-  }, [searchParams, stores, nodes]);
+  }, [searchParams, stores, nodes, setSearchParams]);
 
   // Main pathfinder computation trigger
   useEffect(() => {
@@ -755,6 +756,7 @@ export function MapPage() {
       setOutdoorSegmentCount(0);
       lastLoggedDestinationRef.current = '';
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDestinationStoreId, selectedDestinationNodeId, userLat, userLng, mockMode, mockStartNodeId, nodes, edges]);
 
   // Compute route path

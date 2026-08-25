@@ -60,7 +60,7 @@ export function AdminAnnouncementsPage() {
     if (clean.length === 11 && !clean.includes('/') && !clean.includes('?')) {
       return clean;
     }
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|live\/)([^#\&\?]*).*/;
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|live\/)([^#&?]*).*/;
     const match = clean.match(regExp);
     return match && match[2].length === 11 ? match[2] : null;
   }
