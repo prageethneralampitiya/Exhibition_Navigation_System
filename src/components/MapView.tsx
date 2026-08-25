@@ -27,6 +27,8 @@ interface MapViewProps {
   onMapClick?: (lat: number, lng: number) => void;
   onSelectStore?: (storeId: string) => void;
   outdoorSegmentCount?: number;
+  tourStops?: Store[];
+  visitedStallIds?: string[];
 }
 
 export function MapView({
@@ -45,6 +47,8 @@ export function MapView({
   onMapClick,
   onSelectStore,
   outdoorSegmentCount = 0,
+  tourStops = [],
+  visitedStallIds = [],
 }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<L.Map | null>(null);
@@ -208,12 +212,17 @@ export function MapView({
       const catColor = isSchool ? '#a855f7' : (store.categories?.color || 'var(--color-primary)');
       const isDestination = route.length > 0 && route[route.length - 1].store_id === store.id;
 
+      // Tour stop index & visited status
+      const tourStopIdx = tourStops.findIndex((s) => s.id === store.id);
+      const isTourStop = tourStopIdx !== -1;
+      const isVisited = visitedStallIds.includes(store.id);
+
       // Custom HTML pin (adds pulse effect if this store is the destination or Kalawana School)
       const customIcon = L.divIcon({
         className: 'custom-map-pin-wrapper',
         html: `
           <div style="position: relative; display: flex; align-items: center; justify-content: center; width: 34px; height: 34px;">
-            ${isDestination || isSchool ? `
+            ${isDestination || isSchool || (isTourStop && !isVisited) ? `
               <div style="
                 position: absolute;
                 width: 48px;
@@ -228,7 +237,7 @@ export function MapView({
               width: 30px;
               height: 30px;
               border-radius: 50%;
-              background: ${catColor};
+              background: ${isVisited ? '#16a34a' : catColor};
               border: 2.5px solid #fff;
               box-shadow: 0 2px 10px rgba(0,0,0,0.6);
               display: flex;
@@ -246,6 +255,28 @@ export function MapView({
                 ${store.name[0]}
               `)}
             </div>
+            ${isTourStop ? `
+              <div style="
+                position: absolute;
+                top: -6px;
+                right: -6px;
+                background: ${isVisited ? '#22c55e' : '#22d3ee'};
+                color: ${isVisited ? '#fff' : '#0f172a'};
+                font-size: 0.65rem;
+                font-weight: 900;
+                width: 17px;
+                height: 17px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border: 1.5px solid #fff;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+                z-index: 20;
+              ">
+                ${isVisited ? '✓' : tourStopIdx + 1}
+              </div>
+            ` : ''}
           </div>
           <style>
             @keyframes map-pin-pulse {
@@ -315,7 +346,7 @@ export function MapView({
 
       markersLayer.addLayer(marker);
     });
-  }, [map, stores, route]);
+  }, [map, stores, route, onSelectStore, tourStops, visitedStallIds]);
 
   // 5. Render User Location Marker (with Direction Cone)
   useEffect(() => {

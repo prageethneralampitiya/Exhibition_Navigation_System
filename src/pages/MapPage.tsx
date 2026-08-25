@@ -13,6 +13,8 @@ import {
   AlertTriangle,
   CheckSquare,
   Check,
+  Award,
+  Home,
 } from 'lucide-react';
 import { AdminModal } from '../components/admin/AdminModal';
 import { useAuth } from '../contexts/AuthContext';
@@ -181,6 +183,13 @@ export function MapPage() {
   const [tourStops, setTourStops] = useState<StoreType[]>([]);
   const [currentTourStopIndex, setCurrentTourStopIndex] = useState(0);
   const [tourSelectedStallIds, setTourSelectedStallIds] = useState<string[]>([]);
+  const [arrivedStopPrompt, setArrivedStopPrompt] = useState<StoreType | null>(null);
+  const lastPromptedStopIdRef = useRef<string | null>(null);
+  const [showTourCompletedModal, setShowTourCompletedModal] = useState(false);
+  const [completedTourStats, setCompletedTourStats] = useState<{ totalStalls: number; totalVisited: number }>({
+    totalStalls: 0,
+    totalVisited: 0,
+  });
 
   const handleOpenTourPlanner = () => {
     const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
@@ -324,8 +333,21 @@ export function MapPage() {
       });
 
       setStores(processedStores);
-      setNodes(navigationNodes);
+      // Sort navigation nodes naturally in ascending order (Node 1, Node 2, ...)
+      const sortedNodes = [...navigationNodes].sort((a, b) =>
+        a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' })
+      );
+      setNodes(sortedNodes);
       setEdges(navigationEdges);
+
+      // Identify primary map entrance node / Node 1
+      const entranceNode =
+        sortedNodes.find(
+          (n) =>
+            n.type === 'entrance' ||
+            n.label.toLowerCase().includes('node 1') ||
+            n.label.toLowerCase().includes('entrance')
+        ) || sortedNodes[0];
 
       // Fetch settings announcement row
       const { data: settingsData } = await supabase
@@ -339,8 +361,8 @@ export function MapPage() {
         try {
           const parsed = JSON.parse(settingsData[0].message);
           setExhibitionSettings({
-            entrance_latitude: parsed.entrance_latitude ?? 6.535472,
-            entrance_longitude: parsed.entrance_longitude ?? 80.401000,
+            entrance_latitude: entranceNode?.latitude ?? parsed.entrance_latitude ?? 6.535472,
+            entrance_longitude: entranceNode?.longitude ?? parsed.entrance_longitude ?? 80.401000,
             entrance_threshold_meters: parsed.entrance_threshold_meters ?? 20.0,
             premises_center_latitude: parsed.premises_center_latitude ?? 6.535472,
             premises_center_longitude: parsed.premises_center_longitude ?? 80.401000,
@@ -349,20 +371,23 @@ export function MapPage() {
         } catch (jsonErr) {
           console.warn('Error parsing settings JSON:', jsonErr);
         }
+      } else if (entranceNode) {
+        setExhibitionSettings((prev) => ({
+          ...prev,
+          entrance_latitude: entranceNode.latitude,
+          entrance_longitude: entranceNode.longitude,
+        }));
       }
 
       // Set default mock start node selection
-      const entrances = navigationNodes.filter((n) => n.type === 'entrance');
-      if (entrances.length > 0) {
-        setMockStartNodeId(entrances[0].id);
-      } else if (navigationNodes.length > 0) {
-        setMockStartNodeId(navigationNodes[0].id);
+      if (entranceNode) {
+        setMockStartNodeId(entranceNode.id);
       }
 
       // Default map center: Kalawana National School (6.535472, 80.401000)
       if (!hasGPSCenteredRef.current) {
-        setMapCenterLat(6.535472);
-        setMapCenterLng(80.401000);
+        setMapCenterLat(entranceNode?.latitude ?? 6.535472);
+        setMapCenterLng(entranceNode?.longitude ?? 80.401000);
       }
     } catch (err) {
       console.error('Error fetching navigation data:', err);
@@ -490,8 +515,15 @@ export function MapPage() {
     setMockStartNodeId(presetOrNodeId);
 
     if (presetOrNodeId === 'entrance') {
-      const lat = exhibitionSettings.entrance_latitude;
-      const lng = exhibitionSettings.entrance_longitude;
+      const entranceNode =
+        nodes.find(
+          (n) =>
+            n.type === 'entrance' ||
+            n.label.toLowerCase().includes('node 1') ||
+            n.label.toLowerCase().includes('entrance')
+        ) || nodes[0];
+      const lat = entranceNode ? entranceNode.latitude : (exhibitionSettings.entrance_latitude || 6.535472);
+      const lng = entranceNode ? entranceNode.longitude : (exhibitionSettings.entrance_longitude || 80.401000);
       setUserLat(lat);
       setUserLng(lng);
       setIsFarAway(false);
@@ -525,6 +557,85 @@ export function MapPage() {
       }
     }
   };
+
+  /** Compute navigation route strictly for the current single active leg of the guided tour */
+  const routeToTourStop = (
+    fromLat: number,
+    fromLng: number,
+    targetStore: StoreType,
+    stopIndex: number,
+    totalStops: number
+  ) => {
+    const storeIdx = stores.findIndex((s) => s.id === targetStore.id);
+    const campusLoc = getCampusStoreLocation(targetStore, storeIdx >= 0 ? storeIdx : 0);
+    const targetLat = targetStore.latitude ?? campusLoc.lat;
+    const targetLng = targetStore.longitude ?? campusLoc.lng;
+
+    const p = calculateShortestPathBetweenCoordinates(
+      fromLat,
+      fromLng,
+      targetLat,
+      targetLng,
+      nodes,
+      edges
+    );
+
+    const storeTargetVirtualNode: NavigationNode = {
+      id: `store-stop-${targetStore.id}`,
+      label: targetStore.name,
+      latitude: targetLat,
+      longitude: targetLng,
+      floor: targetStore.floor || '1',
+      type: 'store',
+      store_id: targetStore.id,
+      created_at: new Date().toISOString(),
+    };
+
+    const sequencedRouteNodes: NavigationNode[] = [];
+    const startVirtualNode: NavigationNode = {
+      id: 'tour-start-point',
+      label: 'Your Location',
+      latitude: fromLat,
+      longitude: fromLng,
+      floor: '1',
+      type: 'entrance',
+      store_id: null,
+      created_at: new Date().toISOString(),
+    };
+    sequencedRouteNodes.push(startVirtualNode);
+
+    if (p && p.length > 0) {
+      if (sequencedRouteNodes.length > 0 && p[0].id === sequencedRouteNodes[sequencedRouteNodes.length - 1].id) {
+        sequencedRouteNodes.push(...p.slice(1));
+      } else {
+        sequencedRouteNodes.push(...p);
+      }
+
+      const lastWalkwayNode = p[p.length - 1];
+      const distToStore = getDistance(lastWalkwayNode.latitude, lastWalkwayNode.longitude, targetLat, targetLng);
+      if (distToStore > 1.5) {
+        sequencedRouteNodes.push(storeTargetVirtualNode);
+      }
+    } else {
+      sequencedRouteNodes.push(storeTargetVirtualNode);
+    }
+
+    setCalculatedRoute(sequencedRouteNodes);
+    let cumulativeDist = 0;
+    const steps = [`📍 Head to Stop ${stopIndex + 1} of ${totalStops}: ${targetStore.name}`];
+    for (let i = 0; i < sequencedRouteNodes.length - 1; i++) {
+      const from = sequencedRouteNodes[i];
+      const to = sequencedRouteNodes[i + 1];
+      const dist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
+      cumulativeDist += dist;
+      if (to.type === 'store' || to.id.startsWith('store-stop-')) {
+        steps.push(`Arrive at: ${to.label} (${Math.round(dist)}m)`);
+      }
+    }
+    setTotalDistance(Math.round(cumulativeDist));
+    setGuideSteps(steps);
+  };
+
   const generateGuidedTourRoute = (selectedStoreIdsToTour: string[]) => {
     // 1. Determine starting point coordinates
     let startLatVal = userLat;
@@ -532,14 +643,20 @@ export function MapPage() {
 
     if (startLatVal === null || startLngVal === null) {
       if (mockStartNodeId) {
-        const startNode = nodes.find(n => n.id === mockStartNodeId);
+        const startNode = nodes.find((n) => n.id === mockStartNodeId);
         if (startNode) {
           startLatVal = startNode.latitude;
           startLngVal = startNode.longitude;
         }
       }
       if (startLatVal === null || startLngVal === null) {
-        const entranceNode = nodes.find(n => n.type === 'entrance') || nodes[0];
+        const entranceNode =
+          nodes.find(
+            (n) =>
+              n.type === 'entrance' ||
+              n.label.toLowerCase().includes('node 1') ||
+              n.label.toLowerCase().includes('entrance')
+          ) || nodes[0];
         if (entranceNode) {
           startLatVal = entranceNode.latitude;
           startLngVal = entranceNode.longitude;
@@ -551,7 +668,7 @@ export function MapPage() {
     }
 
     // 2. Prepare stores with normalized campus coordinates
-    const realStores = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
+    const realStores = stores.filter((s) => s.id !== 'kalawana-national-school-landmark');
     const availableStalls = realStores.length > 0 ? realStores : DEFAULT_DEMO_STALLS;
 
     const normalizedStores: StoreType[] = availableStalls.map((store, idx) => {
@@ -563,7 +680,7 @@ export function MapPage() {
       };
     });
 
-    const targetStores = normalizedStores.filter(s => selectedStoreIdsToTour.includes(s.id));
+    const targetStores = normalizedStores.filter((s) => selectedStoreIdsToTour.includes(s.id));
 
     if (targetStores.length === 0) {
       alert('Please select at least one stall to visit on your tour!');
@@ -572,32 +689,17 @@ export function MapPage() {
 
     setLoading(true);
 
-    // 3. Optimal Nearest-Neighbor TSP shortest path using user's drawn network graph
+    // 3. Optimal Nearest-Neighbor TSP shortest path order
     let currentLat = startLatVal;
     let currentLng = startLngVal;
 
     const remaining = [...targetStores];
     const orderedTourStops: StoreType[] = [];
-    const sequencedRouteNodes: NavigationNode[] = [];
-
-    const startVirtualNode: NavigationNode = {
-      id: 'tour-start-point',
-      label: 'Tour Start Point',
-      latitude: currentLat,
-      longitude: currentLng,
-      floor: '1',
-      type: 'entrance',
-      store_id: null,
-      created_at: new Date().toISOString()
-    };
-    sequencedRouteNodes.push(startVirtualNode);
 
     while (remaining.length > 0) {
       let bestIndex = 0;
       let minDistance = Infinity;
-      let bestPath: NavigationNode[] = [];
 
-      // Find the nearest next store using shortest graph path
       for (let i = 0; i < remaining.length; i++) {
         const store = remaining[i];
         const p = calculateShortestPathBetweenCoordinates(
@@ -615,91 +717,39 @@ export function MapPage() {
           for (let j = 0; j < p.length - 1; j++) {
             d += getDistance(p[j].latitude, p[j].longitude, p[j + 1].latitude, p[j + 1].longitude);
           }
-          // Add distance from path end to store
           d += getDistance(p[p.length - 1].latitude, p[p.length - 1].longitude, store.latitude!, store.longitude!);
         } else {
-          // Fallback straight line only for sorting if graph is completely disconnected
           d = getDistance(currentLat, currentLng, store.latitude!, store.longitude!) + 1000;
         }
 
         if (d < minDistance) {
           minDistance = d;
           bestIndex = i;
-          bestPath = p;
         }
       }
 
       const nextStore = remaining[bestIndex];
       remaining.splice(bestIndex, 1);
       orderedTourStops.push(nextStore);
-
-      const targetLat = nextStore.latitude!;
-      const targetLng = nextStore.longitude!;
-
-      const storeTargetVirtualNode: NavigationNode = {
-        id: `store-stop-${nextStore.id}`,
-        label: nextStore.name,
-        latitude: targetLat,
-        longitude: targetLng,
-        floor: nextStore.floor || '1',
-        type: 'store',
-        store_id: nextStore.id,
-        created_at: new Date().toISOString()
-      };
-
-      if (bestPath && bestPath.length > 0) {
-        // Append walkway path nodes (all strictly on drawn edges)
-        if (sequencedRouteNodes.length > 0 && bestPath[0].id === sequencedRouteNodes[sequencedRouteNodes.length - 1].id) {
-          sequencedRouteNodes.push(...bestPath.slice(1));
-        } else {
-          sequencedRouteNodes.push(...bestPath);
-        }
-
-        // Branch out from walkway snap point into the store
-        const lastWalkwayNode = bestPath[bestPath.length - 1];
-        const distToStore = getDistance(lastWalkwayNode.latitude, lastWalkwayNode.longitude, targetLat, targetLng);
-        if (distToStore > 1.5) {
-          sequencedRouteNodes.push(storeTargetVirtualNode);
-        }
-
-        // The next leg starts from the walkway snap point (user steps back onto the walkway)
-        currentLat = lastWalkwayNode.latitude;
-        currentLng = lastWalkwayNode.longitude;
-      } else {
-        // If graph path couldn't be found, add store target
-        sequencedRouteNodes.push(storeTargetVirtualNode);
-        currentLat = targetLat;
-        currentLng = targetLng;
-      }
+      currentLat = nextStore.latitude!;
+      currentLng = nextStore.longitude!;
     }
 
     setLoading(false);
 
-    if (sequencedRouteNodes.length > 0) {
+    if (orderedTourStops.length > 0) {
       setTourStops(orderedTourStops);
       setCurrentTourStopIndex(0);
+      lastPromptedStopIdRef.current = null;
+      setArrivedStopPrompt(null);
       setSelectedDestinationStoreId('');
       setSelectedDestinationNodeId('');
-      setCalculatedRoute(sequencedRouteNodes);
       setGuidedTourActive(true);
       setNavigationActive(true);
       setNavSheetExpanded(true);
 
-      let cumulativeDist = 0;
-      const steps = [`🚀 Guided Tour Started: Visiting ${orderedTourStops.length} stalls in optimal shortest path.`];
-      for (let i = 0; i < sequencedRouteNodes.length - 1; i++) {
-        const from = sequencedRouteNodes[i];
-        const to = sequencedRouteNodes[i + 1];
-        const dist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
-        cumulativeDist += dist;
-        if (to.type === 'store' || to.id.startsWith('store-stop-')) {
-          steps.push(`Arrive at Stop: ${to.label} (${Math.round(dist)}m)`);
-        }
-      }
-      steps.push(`Total Tour Distance: ~${Math.round(cumulativeDist)}m (${Math.ceil(cumulativeDist / 80)} min walking).`);
-
-      setTotalDistance(Math.round(cumulativeDist));
-      setGuideSteps(steps);
+      // Route strictly to Stop 1 (the first/closest store)
+      routeToTourStop(startLatVal, startLngVal, orderedTourStops[0], 0, orderedTourStops.length);
     } else {
       alert('Could not compute routing path. Please check network graph or stall locations.');
     }
@@ -711,22 +761,51 @@ export function MapPage() {
     if (currentStop) {
       const updatedVisited = Array.from(new Set([...visitedStallIds, currentStop.id]));
       setVisitedStallIds(updatedVisited);
+      setArrivedStopPrompt(null);
 
       if (currentTourStopIndex + 1 < tourStops.length) {
         const nextIndex = currentTourStopIndex + 1;
         setCurrentTourStopIndex(nextIndex);
 
-        // Recalculate remaining tour route from current location
-        const remainingStops = tourStops.slice(nextIndex);
-        generateGuidedTourRoute(remainingStops.map(s => s.id));
+        // Start next leg from user's current GPS location if available, otherwise from the visited stall
+        const fromLat = userLat !== null ? userLat : (currentStop.latitude || 6.535472);
+        const fromLng = userLng !== null ? userLng : (currentStop.longitude || 80.401000);
+
+        routeToTourStop(fromLat, fromLng, tourStops[nextIndex], nextIndex, tourStops.length);
       } else {
         setGuidedTourActive(false);
         setCalculatedRoute([]);
         setNavigationActive(false);
-        alert('🎉 Congratulations! You have completed your exhibition guided tour and visited all planned stalls!');
+        setCompletedTourStats({
+          totalStalls: tourStops.length,
+          totalVisited: updatedVisited.length,
+        });
+        setShowTourCompletedModal(true);
       }
     }
   };
+
+  // Automatic Proximity Arrival Detector during guided tour
+  useEffect(() => {
+    if (!guidedTourActive || tourStops.length === 0) return;
+    if (userLat === null || userLng === null) return;
+    const currentStop = tourStops[currentTourStopIndex];
+    if (!currentStop) return;
+
+    const stopIdx = stores.findIndex((s) => s.id === currentStop.id);
+    const campusPos = getCampusStoreLocation(currentStop, stopIdx >= 0 ? stopIdx : 0);
+    const targetLat = currentStop.latitude ?? campusPos.lat;
+    const targetLng = currentStop.longitude ?? campusPos.lng;
+
+    if (targetLat && targetLng) {
+      const dist = getDistance(userLat, userLng, targetLat, targetLng);
+      // Prompt when within 15 meters of target store and hasn't been prompted yet
+      if (dist <= 15 && lastPromptedStopIdRef.current !== currentStop.id && !visitedStallIds.includes(currentStop.id)) {
+        lastPromptedStopIdRef.current = currentStop.id;
+        setArrivedStopPrompt(currentStop);
+      }
+    }
+  }, [userLat, userLng, guidedTourActive, tourStops, currentTourStopIndex, visitedStallIds, stores]);
 
   // Handle deep-linking navigation targets via ?to= query parameters
   // Handle deep-linking navigation targets via query parameters
@@ -1276,6 +1355,8 @@ export function MapPage() {
               edges={edges}
               onMapClick={handleMapClick}
               outdoorSegmentCount={outdoorSegmentCount}
+              tourStops={guidedTourActive ? tourStops : []}
+              visitedStallIds={visitedStallIds}
               onSelectStore={(storeId) => {
                 setSelectedDestinationStoreId(storeId);
                 const st = stores.find(s => s.id === storeId);
@@ -1567,7 +1648,13 @@ export function MapPage() {
                   setMockMode(prev => {
                     const next = !prev;
                     if (next && (userLat === null || userLng === null)) {
-                      const entranceNode = nodes.find(n => n.type === 'entrance') || nodes[0];
+                      const entranceNode =
+                        nodes.find(
+                          (n) =>
+                            n.type === 'entrance' ||
+                            n.label.toLowerCase().includes('node 1') ||
+                            n.label.toLowerCase().includes('entrance')
+                        ) || nodes[0];
                       if (entranceNode) {
                         setUserLat(entranceNode.latitude);
                         setUserLng(entranceNode.longitude);
@@ -2075,6 +2162,332 @@ export function MapPage() {
           )}
 
 
+
+          {/* Proximity Arrival Prompt during Guided Tour */}
+          {arrivedStopPrompt && (
+            <div
+              className="glass animate-fade-in"
+              style={{
+                position: 'fixed',
+                top: '5.5rem',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 10000,
+                maxWidth: '92vw',
+                width: '380px',
+                padding: '1.1rem 1.25rem',
+                borderRadius: '16px',
+                background: 'rgba(15, 23, 42, 0.95)',
+                border: '1.5px solid rgba(34, 211, 238, 0.55)',
+                boxShadow: '0 12px 40px rgba(0,0,0,0.65)',
+                backdropFilter: 'blur(16px)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.85rem',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: '50%',
+                    background: 'rgba(34, 211, 238, 0.18)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#22d3ee',
+                    flexShrink: 0,
+                  }}
+                >
+                  <Store size={20} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span
+                    style={{
+                      fontSize: '0.68rem',
+                      fontWeight: 800,
+                      color: '#22d3ee',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                    }}
+                  >
+                    🎯 Arrived at Stop {currentTourStopIndex + 1} of {tourStops.length}
+                  </span>
+                  <h4
+                    style={{
+                      margin: '0.1rem 0 0',
+                      fontSize: '1rem',
+                      fontWeight: 800,
+                      color: '#fff',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {arrivedStopPrompt.name}
+                  </h4>
+                </div>
+              </div>
+
+              <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--color-muted)', lineHeight: 1.45 }}>
+                Have you finished visiting <strong>{arrivedStopPrompt.name}</strong>? Mark as visited to see the route to the next store!
+              </p>
+
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.1rem' }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ flex: 1, fontSize: '0.78rem' }}
+                  onClick={() => setArrivedStopPrompt(null)}
+                >
+                  Still Visiting
+                </button>
+                <button
+                  className="btn btn-primary btn-sm"
+                  style={{
+                    flex: 1.4,
+                    fontSize: '0.78rem',
+                    background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                    border: 'none',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.35rem',
+                    boxShadow: '0 2px 8px rgba(34, 197, 94, 0.35)',
+                  }}
+                  onClick={() => {
+                    handleMarkCurrentStopVisited();
+                  }}
+                >
+                  <Check size={14} />
+                  {currentTourStopIndex + 1 < tourStops.length ? 'Visited → Next Stop' : 'Finish Tour 🎉'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Professional Tour Completion Modal */}
+          {showTourCompletedModal && (
+            <div
+              className="animate-fade-in"
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(11, 15, 26, 0.85)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+                zIndex: 20000,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '1.5rem',
+              }}
+            >
+              <div
+                style={{
+                  width: '100%',
+                  maxWidth: '460px',
+                  background: 'linear-gradient(145deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.98))',
+                  borderRadius: '24px',
+                  border: '1.5px solid rgba(168, 85, 247, 0.4)',
+                  boxShadow: '0 24px 64px rgba(0, 0, 0, 0.7), 0 0 32px rgba(168, 85, 247, 0.25)',
+                  padding: '2rem 1.75rem',
+                  textAlign: 'center',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '1.25rem',
+                  position: 'relative',
+                  overflow: 'hidden',
+                }}
+              >
+                {/* Decorative top ambient glow */}
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '-60px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: '200px',
+                    height: '120px',
+                    background: 'radial-gradient(ellipse, rgba(168, 85, 247, 0.45), transparent 70%)',
+                    pointerEvents: 'none',
+                  }}
+                />
+
+                {/* Celebration Award Badge */}
+                <div
+                  style={{
+                    width: 76,
+                    height: 76,
+                    borderRadius: '50%',
+                    background: 'linear-gradient(135deg, #a855f7, #6366f1, #22d3ee)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#fff',
+                    boxShadow: '0 8px 28px rgba(168, 85, 247, 0.55)',
+                  }}
+                >
+                  <Award size={40} />
+                </div>
+
+                <div>
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 800,
+                      color: '#22d3ee',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.1em',
+                      background: 'rgba(34, 211, 238, 0.12)',
+                      padding: '0.25rem 0.75rem',
+                      borderRadius: '12px',
+                      border: '1px solid rgba(34, 211, 238, 0.3)',
+                      display: 'inline-block',
+                      marginBottom: '0.65rem',
+                    }}
+                  >
+                    ✨ Tour Completed Successfully
+                  </span>
+                  <h2
+                    style={{
+                      fontSize: '1.65rem',
+                      fontWeight: 900,
+                      color: '#fff',
+                      margin: '0 0 0.4rem',
+                      letterSpacing: '-0.02em',
+                    }}
+                  >
+                    Thank You For Visiting Us!
+                  </h2>
+                  <p
+                    style={{
+                      fontSize: '0.88rem',
+                      color: 'var(--color-muted)',
+                      margin: 0,
+                      lineHeight: 1.55,
+                      maxWidth: '380px',
+                    }}
+                  >
+                    You have successfully visited all planned exhibition stalls across our campus. We hope you had an inspiring and memorable experience!
+                  </p>
+                </div>
+
+                {/* Summary Highlights */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '0.75rem',
+                    width: '100%',
+                    margin: '0.25rem 0',
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: '0.85rem 0.75rem',
+                      background: 'rgba(255, 255, 255, 0.04)',
+                      borderRadius: '14px',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '0.2rem',
+                    }}
+                  >
+                    <span style={{ fontSize: '0.72rem', color: 'var(--color-muted)', fontWeight: 600 }}>Stalls Visited</span>
+                    <span style={{ fontSize: '1.35rem', fontWeight: 900, color: '#22c55e' }}>
+                      {completedTourStats.totalVisited} / {completedTourStats.totalStalls}
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      padding: '0.85rem 0.75rem',
+                      background: 'rgba(255, 255, 255, 0.04)',
+                      borderRadius: '14px',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '0.2rem',
+                    }}
+                  >
+                    <span style={{ fontSize: '0.72rem', color: 'var(--color-muted)', fontWeight: 600 }}>Tour Progress</span>
+                    <span style={{ fontSize: '1.35rem', fontWeight: 900, color: '#a855f7' }}>100% Done</span>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', width: '100%' }}>
+                  <button
+                    className="btn btn-primary"
+                    style={{
+                      width: '100%',
+                      padding: '0.75rem',
+                      borderRadius: '12px',
+                      fontSize: '0.92rem',
+                      fontWeight: 800,
+                      background: 'linear-gradient(135deg, #a855f7, #6366f1)',
+                      border: 'none',
+                      boxShadow: '0 4px 16px rgba(168, 85, 247, 0.4)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '0.5rem',
+                    }}
+                    onClick={() => setShowTourCompletedModal(false)}
+                  >
+                    <Check size={18} />
+                    Done & Explore Map
+                  </button>
+
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <Link
+                      to="/"
+                      className="btn btn-ghost"
+                      style={{
+                        flex: 1,
+                        padding: '0.6rem',
+                        borderRadius: '10px',
+                        fontSize: '0.82rem',
+                        border: '1px solid var(--color-border)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.4rem',
+                        textDecoration: 'none',
+                      }}
+                    >
+                      <Home size={15} />
+                      Home
+                    </Link>
+                    <Link
+                      to="/stores"
+                      className="btn btn-ghost"
+                      style={{
+                        flex: 1,
+                        padding: '0.6rem',
+                        borderRadius: '10px',
+                        fontSize: '0.82rem',
+                        border: '1px solid var(--color-border)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.4rem',
+                        textDecoration: 'none',
+                      }}
+                    >
+                      <Store size={15} />
+                      All Stores
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {showChecklistPrompt && (
             <AdminModal

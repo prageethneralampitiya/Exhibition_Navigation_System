@@ -5,7 +5,7 @@ import { AdminTable } from '../../components/admin/AdminTable';
 import { AdminModal } from '../../components/admin/AdminModal';
 import { getDistance } from '../../utils/dijkstra';
 import { FormMapPicker } from '../../components/admin/FormMapPicker';
-import { DrawPathMapPicker } from '../../components/admin/DrawPathMapPicker';
+import { DrawPathMapPicker, type DrawPoint } from '../../components/admin/DrawPathMapPicker';
 
 export function AdminNodesPage() {
   const [nodes, setNodes] = useState<NavigationNode[]>([]);
@@ -29,16 +29,16 @@ export function AdminNodesPage() {
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Inline node rename
+  const [renamingNodeId, setRenamingNodeId] = useState<string | null>(null);
+  const [renameLabel, setRenameLabel] = useState('');
+
   // Draw Path states
   const [isDrawPathModalOpen, setIsDrawPathModalOpen] = useState(false);
-  const [drawPathStartNodeId, setDrawPathStartNodeId] = useState('');
-  const [drawPathEndNodeId, setDrawPathEndNodeId] = useState('');
-  const [newStartNodeName, setNewStartNodeName] = useState('');
-  const [newEndNodeName, setNewEndNodeName] = useState('');
-  const [drawPathPoints, setDrawPathPoints] = useState<Array<{ lat: number; lng: number }>>([]);
+  const [drawPathPoints, setDrawPathPoints] = useState<DrawPoint[]>([]);
   const [drawPathBidirectional, setDrawPathBidirectional] = useState(true);
-  const [drawPathBaseName, setDrawPathBaseName] = useState('Path Point');
   const [drawPathFloor, setDrawPathFloor] = useState('1');
+  const [drawPathTool, setDrawPathTool] = useState<'draw' | 'erase'>('draw');
 
   /**
    * Compute the straight-line distance between two nodes using the equirectangular
@@ -72,7 +72,10 @@ export function AdminNodesPage() {
         supabase.from('stores').select('*').order('name'),
       ]);
 
-      setNodes(nodesRes.data || []);
+      const sortedNodes = (nodesRes.data || []).sort((a, b) =>
+        a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' })
+      );
+      setNodes(sortedNodes);
       setEdges(edgesRes.data || []);
       setStores(storesRes.data || []);
     } catch (err) {
@@ -251,49 +254,18 @@ export function AdminNodesPage() {
 
   // --- DRAW PATH FUNCTIONS ---
   const handleOpenDrawPath = () => {
-    // Make default as none selected
-    setDrawPathStartNodeId('');
-    setDrawPathEndNodeId('');
-    setNewStartNodeName('');
-    setNewEndNodeName('');
     setDrawPathPoints([]);
     setDrawPathBidirectional(true);
-    setDrawPathBaseName('Path Point');
     setDrawPathFloor('1');
+    setDrawPathTool('draw');
     setFormError('');
     setIsDrawPathModalOpen(true);
   };
 
   const handleDrawPathSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!drawPathStartNodeId || !drawPathEndNodeId) {
-      setFormError('Start and End nodes are required');
-      return;
-    }
-    if (drawPathStartNodeId === 'new' && !newStartNodeName.trim()) {
-      setFormError('Please enter a name for the new Start Node');
-      return;
-    }
-    if (drawPathEndNodeId === 'new' && !newEndNodeName.trim()) {
-      setFormError('Please enter a name for the new End Node');
-      return;
-    }
-
-    // Validation of clicked points count
-    const minPointsRequired = (drawPathStartNodeId === 'new' ? 1 : 0) + (drawPathEndNodeId === 'new' ? 1 : 0);
-    if (drawPathPoints.length < Math.max(1, minPointsRequired)) {
-      if (drawPathStartNodeId === 'new' && drawPathEndNodeId === 'new') {
-        setFormError('Please click at least 2 points on the map to define the Start and End node coordinates');
-      } else if (drawPathStartNodeId === 'new' || drawPathEndNodeId === 'new') {
-        setFormError('Please click at least 1 point on the map to define the new node coordinates');
-      } else {
-        setFormError('Please click at least 1 intermediate waypoint on the map');
-      }
-      return;
-    }
-
-    if (drawPathStartNodeId !== 'new' && drawPathEndNodeId !== 'new' && drawPathStartNodeId === drawPathEndNodeId) {
-      setFormError('Start and End nodes cannot be the same');
+    if (drawPathPoints.length < 2) {
+      setFormError('Click at least 2 points on the map to define a path');
       return;
     }
 
@@ -301,132 +273,92 @@ export function AdminNodesPage() {
       setSubmitting(true);
       setFormError('');
 
-      let startNode: NavigationNode | null = null;
-      let endNode: NavigationNode | null = null;
-      let startPoint: { lat: number; lng: number } | null = null;
-      let endPoint: { lat: number; lng: number } | null = null;
-      let waypointPoints: Array<{ lat: number; lng: number }> = [];
+      // Resolve every DrawPoint → NavigationNode
+      // Existing-node points reuse the saved node; new points are inserted.
+      const resolvedChain: NavigationNode[] = [];
+      let counter = nodes.length + 1; // continuous numbering from where we left off
 
-      // Determine Start coordinates or load existing node
-      if (drawPathStartNodeId === 'new') {
-        startPoint = drawPathPoints[0];
-      } else {
-        const found = nodes.find((n) => n.id === drawPathStartNodeId);
-        if (!found) throw new Error('Start node not found');
-        startNode = found;
+      for (const pt of drawPathPoints) {
+        if (pt.existingNodeId) {
+          const existing = nodes.find((n) => n.id === pt.existingNodeId);
+          if (!existing) throw new Error(`Referenced node not found: ${pt.existingNodeId}`);
+          resolvedChain.push(existing);
+        } else {
+          const label = pt.label?.trim() || `Node ${counter}`;
+          counter++;
+          const { data: newNode, error: nodeErr } = await supabase
+            .from('navigation_nodes')
+            .insert({
+              label,
+              latitude: pt.lat,
+              longitude: pt.lng,
+              floor: drawPathFloor || null,
+              type: 'path' as NodeType,
+              store_id: null,
+            })
+            .select('*')
+            .single();
+          if (nodeErr) throw nodeErr;
+          if (!newNode) throw new Error('Failed to create node');
+          resolvedChain.push(newNode as NavigationNode);
+        }
       }
 
-      // Determine End coordinates or load existing node
-      if (drawPathEndNodeId === 'new') {
-        const lastIdx = drawPathPoints.length - 1;
-        endPoint = drawPathPoints[lastIdx];
-      } else {
-        const found = nodes.find((n) => n.id === drawPathEndNodeId);
-        if (!found) throw new Error('End node not found');
-        endNode = found;
+      // Build edges; skip pairs that already have a saved connection
+      const edgesToInsert: Array<{
+        from_node_id: string;
+        to_node_id: string;
+        distance: number;
+        is_bidirectional: boolean;
+      }> = [];
+
+      for (let i = 0; i < resolvedChain.length - 1; i++) {
+        const from = resolvedChain[i];
+        const to = resolvedChain[i + 1];
+        const alreadyExists = edges.some(
+          (e) =>
+            (e.from_node_id === from.id && e.to_node_id === to.id) ||
+            (e.is_bidirectional && e.from_node_id === to.id && e.to_node_id === from.id)
+        );
+        if (!alreadyExists) {
+          const dist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
+          edgesToInsert.push({
+            from_node_id: from.id,
+            to_node_id: to.id,
+            distance: Math.round(dist * 100) / 100,
+            is_bidirectional: drawPathBidirectional,
+          });
+        }
       }
 
-      // Slice out intermediate waypoints
-      const sIdx = drawPathStartNodeId === 'new' ? 1 : 0;
-      const eIdx = drawPathEndNodeId === 'new' ? drawPathPoints.length - 1 : drawPathPoints.length;
-      if (sIdx < eIdx) {
-        waypointPoints = drawPathPoints.slice(sIdx, eIdx);
+      if (edgesToInsert.length > 0) {
+        const { error: edgesErr } = await supabase
+          .from('navigation_edges')
+          .insert(edgesToInsert);
+        if (edgesErr) throw edgesErr;
       }
-
-      // 1. Insert new Start Node if necessary
-      if (drawPathStartNodeId === 'new' && startPoint) {
-        const { data: newSNode, error: nodeErr } = await supabase
-          .from('navigation_nodes')
-          .insert({
-            label: newStartNodeName.trim(),
-            latitude: startPoint.lat,
-            longitude: startPoint.lng,
-            floor: drawPathFloor || null,
-            type: 'poi' as NodeType,
-            store_id: null,
-          })
-          .select('*')
-          .single();
-
-        if (nodeErr) throw nodeErr;
-        if (!newSNode) throw new Error('Failed to create new Start Node');
-        startNode = newSNode as NavigationNode;
-      }
-
-      // 2. Insert new End Node if necessary
-      if (drawPathEndNodeId === 'new' && endPoint) {
-        const { data: newENode, error: nodeErr } = await supabase
-          .from('navigation_nodes')
-          .insert({
-            label: newEndNodeName.trim(),
-            latitude: endPoint.lat,
-            longitude: endPoint.lng,
-            floor: drawPathFloor || null,
-            type: 'poi' as NodeType,
-            store_id: null,
-          })
-          .select('*')
-          .single();
-
-        if (nodeErr) throw nodeErr;
-        if (!newENode) throw new Error('Failed to create new End Node');
-        endNode = newENode as NavigationNode;
-      }
-
-      // 3. Insert intermediate path points
-      const createdWaypoints: NavigationNode[] = [];
-      for (let i = 0; i < waypointPoints.length; i++) {
-        const pt = waypointPoints[i];
-        const payload = {
-          label: `${drawPathBaseName} ${i + 1}`,
-          latitude: pt.lat,
-          longitude: pt.lng,
-          floor: drawPathFloor || null,
-          type: 'path' as NodeType,
-          store_id: null,
-        };
-
-        const { data: newNode, error: nodeErr } = await supabase
-          .from('navigation_nodes')
-          .insert(payload)
-          .select('*')
-          .single();
-
-        if (nodeErr) throw nodeErr;
-        if (newNode) createdWaypoints.push(newNode as NavigationNode);
-      }
-
-      // 4. Build sequential chain: Start Node ➔ Waypoints ➔ End Node
-      const fullChain = [startNode!, ...createdWaypoints, endNode!];
-
-      // 5. Insert connecting edges
-      const edgesToInsert = [];
-      for (let i = 0; i < fullChain.length - 1; i++) {
-        const from = fullChain[i];
-        const to = fullChain[i + 1];
-        const calculatedDist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
-        const roundedDist = Math.round(calculatedDist * 100) / 100;
-
-        edgesToInsert.push({
-          from_node_id: from.id,
-          to_node_id: to.id,
-          distance: roundedDist,
-          is_bidirectional: drawPathBidirectional,
-        });
-      }
-
-      const { error: edgesErr } = await supabase
-        .from('navigation_edges')
-        .insert(edgesToInsert);
-
-      if (edgesErr) throw edgesErr;
 
       setIsDrawPathModalOpen(false);
       loadAllData();
     } catch (err: unknown) {
-      setFormError(err instanceof Error ? err.message : 'Failed to save drawn path');
+      setFormError(err instanceof Error ? err.message : 'Failed to save path');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  /** Erase a single edge (and clean up any orphaned path nodes). */
+  const handleEraseEdge = async (edgeId: string) => {
+    try {
+      const { error } = await supabase
+        .from('navigation_edges')
+        .delete()
+        .eq('id', edgeId);
+      if (error) throw error;
+      await cleanOrphanedPathNodes();
+      loadAllData();
+    } catch (err) {
+      console.error('Failed to erase edge:', err);
     }
   };
 
@@ -513,65 +445,146 @@ export function AdminNodesPage() {
     }
   };
 
-  const filteredNodes = nodes.filter((n) =>
-    n.type !== 'path' && (
+  /** Inline rename: persist the new label to Supabase immediately. */
+  const handleRenameNode = async (nodeId: string, newLabel: string) => {
+    const trimmed = newLabel.trim();
+    if (!trimmed) { setRenamingNodeId(null); return; }
+    const original = nodes.find((n) => n.id === nodeId);
+    if (original?.label === trimmed) { setRenamingNodeId(null); return; }
+    try {
+      const { error } = await supabase
+        .from('navigation_nodes')
+        .update({ label: trimmed })
+        .eq('id', nodeId);
+      if (error) throw error;
+      loadAllData();
+    } catch (err) {
+      console.error('Rename failed:', err);
+    } finally {
+      setRenamingNodeId(null);
+    }
+  };
+
+  const filteredNodes = nodes
+    .filter((n) =>
       n.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
       n.type.toLowerCase().includes(searchQuery.toLowerCase())
     )
-  );
+    .sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' })
+    );
 
   const nodeColumns = [
     {
       key: 'label',
       label: 'Label / Name',
       render: (row: NavigationNode) => (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <Navigation2 size={14} className={`node-type-${row.type}`} />
-          <span style={{ fontWeight: 600 }}>{row.label}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+          <Navigation2 size={14} className={`node-type-${row.type}`} style={{ flexShrink: 0 }} />
+          {renamingNodeId === row.id ? (
+            <input
+              autoFocus
+              className="form-input"
+              style={{ padding: '0.2rem 0.5rem', fontSize: '0.875rem', height: '1.9rem', flex: 1, minWidth: 0 }}
+              value={renameLabel}
+              onChange={(e) => setRenameLabel(e.target.value)}
+              onBlur={() => handleRenameNode(row.id, renameLabel)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleRenameNode(row.id, renameLabel);
+                if (e.key === 'Escape') setRenamingNodeId(null);
+              }}
+            />
+          ) : (
+            <span
+              style={{ fontWeight: 600, cursor: 'text', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              title={`${row.label} — click pencil to rename`}
+            >
+              {row.label}
+            </span>
+          )}
         </div>
       ),
     },
     {
       key: 'type',
-      label: 'Node Type',
+      label: 'Type',
+      width: '110px',
       render: (row: NavigationNode) => (
-        <span style={{ fontSize: '0.8rem', textTransform: 'capitalize' }}>{row.type}</span>
+        <span style={{
+          fontSize: '0.75rem', fontWeight: 600, textTransform: 'capitalize',
+          padding: '0.15rem 0.5rem', borderRadius: 4,
+          background: row.type === 'path'
+            ? 'rgba(148,163,184,0.12)'
+            : row.type === 'entrance'
+            ? 'rgba(34,211,238,0.12)'
+            : row.type === 'store'
+            ? 'rgba(168,85,247,0.12)'
+            : row.type === 'emergency'
+            ? 'rgba(239,68,68,0.12)'
+            : 'rgba(99,102,241,0.12)',
+          color: row.type === 'path'
+            ? '#94a3b8'
+            : row.type === 'entrance'
+            ? '#22d3ee'
+            : row.type === 'store'
+            ? '#a855f7'
+            : row.type === 'emergency'
+            ? '#ef4444'
+            : '#818cf8',
+        }}>{row.type}</span>
       ),
     },
     {
       key: 'coords',
-      label: 'Coordinates (Lat / Lng)',
+      label: 'Coordinates',
       render: (row: NavigationNode) => (
-        <span style={{ color: 'var(--color-muted)', fontSize: '0.8rem' }}>
-          {row.latitude.toFixed(6)}, {row.longitude.toFixed(6)}
+        <span style={{ color: 'var(--color-muted)', fontSize: '0.78rem', fontFamily: 'monospace' }}>
+          {row.latitude.toFixed(5)}, {row.longitude.toFixed(5)}
         </span>
       ),
     },
     {
       key: 'floor',
       label: 'Floor',
-      width: '80px',
-      render: (row: NavigationNode) => <span>{row.floor || '1'}</span>,
+      width: '60px',
+      render: (row: NavigationNode) => <span style={{ fontSize: '0.85rem' }}>{row.floor || '1'}</span>,
     },
     {
       key: 'actions',
       label: 'Actions',
-      width: '120px',
+      width: '110px',
       render: (row: NavigationNode) => (
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.35rem' }}>
+          {/* Inline rename toggle */}
+          <button
+            className="btn btn-ghost btn-sm btn-icon"
+            title="Rename node"
+            onClick={() => {
+              if (renamingNodeId === row.id) {
+                handleRenameNode(row.id, renameLabel);
+              } else {
+                setRenameLabel(row.label);
+                setRenamingNodeId(row.id);
+              }
+            }}
+            style={renamingNodeId === row.id ? { color: 'var(--color-accent)', border: '1px solid var(--color-accent)' } : {}}
+          >
+            <Edit2 size={13} />
+          </button>
+          {/* Full edit modal */}
           <button
             className="btn btn-ghost btn-sm btn-icon"
             onClick={() => handleOpenEditNode(row)}
-            title="Edit node"
+            title="Edit full node"
           >
-            <Edit2 size={14} />
+            <Navigation2 size={13} />
           </button>
           <button
             className="btn btn-danger btn-sm btn-icon"
             onClick={() => handleOpenDeleteNode(row)}
             title="Delete node"
           >
-            <Trash2 size={14} />
+            <Trash2 size={13} />
           </button>
         </div>
       ),
@@ -1081,15 +1094,19 @@ export function AdminNodesPage() {
       {/* DRAW PATH MODAL */}
       {isDrawPathModalOpen && (
         <AdminModal
-          title="Draw Navigation Path Waypoints"
+          title="Draw Navigation Path"
           onClose={() => setIsDrawPathModalOpen(false)}
-          maxWidth={850}
+          maxWidth={880}
         >
-          <form onSubmit={handleDrawPathSubmit} className="admin-form" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', maxHeight: '75vh', overflowY: 'auto', paddingRight: '0.5rem' }}>
-            {/* Left Column: Form Fields */}
+          <form
+            onSubmit={handleDrawPathSubmit}
+            className="admin-form"
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', maxHeight: '80vh', overflowY: 'auto', paddingRight: '0.5rem' }}
+          >
+            {/* ── Left: controls ── */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-              <p style={{ fontSize: '0.82rem', color: 'var(--color-muted)', lineHeight: 1.4 }}>
-                Choose two main nodes, then click sequentially on the map to define the custom walkable path.
+              <p style={{ fontSize: '0.82rem', color: 'var(--color-muted)', lineHeight: 1.45, margin: 0 }}>
+                Click the map to add path nodes. Click an existing node dot to connect it. Click a numbered badge to rename that node.
               </p>
 
               {formError && (
@@ -1098,129 +1115,94 @@ export function AdminNodesPage() {
                 </div>
               )}
 
+              {/* Draw / Erase tool toggle */}
               <div className="form-group">
-                <label className="form-label" htmlFor="draw-start-node">First Point (Start Node) *</label>
-                <select
-                  id="draw-start-node"
-                  className="form-select"
-                  value={drawPathStartNodeId}
-                  onChange={(e) => {
-                    setDrawPathStartNodeId(e.target.value);
-                    if (e.target.value !== 'new') setNewStartNodeName('');
-                  }}
-                  required
-                >
-                  <option value="">-- Select Start Node --</option>
-                  <option value="new" style={{ fontWeight: 'bold', color: 'var(--color-accent)' }}>+ Create New Node (Click on Map)</option>
-                  {nodes.map((n) => (
-                    <option key={n.id} value={n.id}>
-                      {n.label} (Floor {n.floor || '1'} · {n.type})
-                    </option>
+                <label className="form-label">Drawing Tool</label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  {(['draw', 'erase'] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setDrawPathTool(t)}
+                      style={{
+                        flex: 1, padding: '0.5rem', borderRadius: 8,
+                        border: `1.5px solid ${
+                          drawPathTool === t
+                            ? (t === 'draw' ? '#6366f1' : '#ef4444')
+                            : 'var(--color-border)'
+                        }`,
+                        background:
+                          drawPathTool === t
+                            ? (t === 'draw' ? 'rgba(99,102,241,0.15)' : 'rgba(239,68,68,0.12)')
+                            : 'var(--color-surface)',
+                        color:
+                          drawPathTool === t
+                            ? (t === 'draw' ? '#818cf8' : '#f87171')
+                            : 'var(--color-muted)',
+                        fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                      }}
+                    >
+                      {t === 'draw' ? '✏️ Draw' : '🗑️ Erase'}
+                    </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Stats chips */}
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 700, padding: '0.22rem 0.6rem', borderRadius: 6, background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.22)', color: '#818cf8' }}>
+                  {drawPathPoints.length} point{drawPathPoints.length !== 1 ? 's' : ''}
+                </span>
+                {drawPathPoints.filter((p) => !p.existingNodeId).length > 0 && (
+                  <span style={{ fontSize: '0.78rem', fontWeight: 700, padding: '0.22rem 0.6rem', borderRadius: 6, background: 'rgba(99,102,241,0.07)', border: '1px solid rgba(99,102,241,0.18)', color: '#6366f1' }}>
+                    {drawPathPoints.filter((p) => !p.existingNodeId).length} new
+                  </span>
+                )}
+                {drawPathPoints.filter((p) => !!p.existingNodeId).length > 0 && (
+                  <span style={{ fontSize: '0.78rem', fontWeight: 700, padding: '0.22rem 0.6rem', borderRadius: 6, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.28)', color: '#f59e0b' }}>
+                    {drawPathPoints.filter((p) => !!p.existingNodeId).length} existing
+                  </span>
+                )}
+              </div>
+
+              {/* Direction */}
+              <div className="form-group">
+                <label className="form-label" htmlFor="draw-direction">Path Direction</label>
+                <select
+                  id="draw-direction"
+                  className="form-select"
+                  value={drawPathBidirectional ? 'bi' : 'uni'}
+                  onChange={(e) => setDrawPathBidirectional(e.target.value === 'bi')}
+                >
+                  <option value="bi">↔ Bidirectional (Two-way walkway)</option>
+                  <option value="uni">→ One-directional (One-way path)</option>
                 </select>
               </div>
 
-              {drawPathStartNodeId === 'new' && (
-                <div className="form-group animate-fade-in">
-                  <label className="form-label" htmlFor="new-start-node-name">New Start Node Name *</label>
-                  <input
-                    id="new-start-node-name"
-                    type="text"
-                    className="form-input"
-                    value={newStartNodeName}
-                    onChange={(e) => setNewStartNodeName(e.target.value)}
-                    placeholder="e.g. Entrance Gate X"
-                    required
-                  />
-                </div>
-              )}
-
+              {/* Floor */}
               <div className="form-group">
-                <label className="form-label" htmlFor="draw-end-node">End Point (Destination Node) *</label>
-                <select
-                  id="draw-end-node"
-                  className="form-select"
-                  value={drawPathEndNodeId}
-                  onChange={(e) => {
-                    setDrawPathEndNodeId(e.target.value);
-                    if (e.target.value !== 'new') setNewEndNodeName('');
-                  }}
-                  required
-                >
-                  <option value="">-- Select End Node --</option>
-                  <option value="new" style={{ fontWeight: 'bold', color: 'var(--color-accent)' }}>+ Create New Node (Click on Map)</option>
-                  {nodes.map((n) => (
-                    <option key={n.id} value={n.id}>
-                      {n.label} (Floor {n.floor || '1'} · {n.type})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {drawPathEndNodeId === 'new' && (
-                <div className="form-group animate-fade-in">
-                  <label className="form-label" htmlFor="new-end-node-name">New End Node Name *</label>
-                  <input
-                    id="new-end-node-name"
-                    type="text"
-                    className="form-input"
-                    value={newEndNodeName}
-                    onChange={(e) => setNewEndNodeName(e.target.value)}
-                    placeholder="e.g. Hall B Entrance"
-                    required
-                  />
-                </div>
-              )}
-
-              <div className="form-group">
-                <label className="form-label" htmlFor="draw-base-name">Waypoints Base Label</label>
+                <label className="form-label" htmlFor="draw-floor">Floor</label>
                 <input
-                  id="draw-base-name"
+                  id="draw-floor"
                   type="text"
                   className="form-input"
-                  value={drawPathBaseName}
-                  onChange={(e) => setDrawPathBaseName(e.target.value)}
-                  placeholder="e.g. Hallway A Path"
-                  required
+                  value={drawPathFloor}
+                  onChange={(e) => setDrawPathFloor(e.target.value)}
+                  placeholder="e.g. 1"
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                <div className="form-group">
-                  <label className="form-label" htmlFor="draw-floor">Floor</label>
-                  <input
-                    id="draw-floor"
-                    type="text"
-                    className="form-input"
-                    value={drawPathFloor}
-                    onChange={(e) => setDrawPathFloor(e.target.value)}
-                    placeholder="e.g. 1"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label" htmlFor="draw-direction">Direction</label>
-                  <select
-                    id="draw-direction"
-                    className="form-select"
-                    value={drawPathBidirectional ? 'bi' : 'uni'}
-                    onChange={(e) => setDrawPathBidirectional(e.target.value === 'bi')}
-                  >
-                    <option value="bi">Bidirectional (Two-way)</option>
-                    <option value="uni">One-directional (One-way)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+              {/* Undo / Clear */}
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button
                   type="button"
-                  onClick={() => setDrawPathPoints(drawPathPoints.slice(0, -1))}
+                  onClick={() => setDrawPathPoints((p) => p.slice(0, -1))}
                   className="btn btn-ghost btn-sm"
                   disabled={drawPathPoints.length === 0}
                   style={{ flex: 1 }}
                 >
-                  Undo Point
+                  ↩ Undo Point
                 </button>
                 <button
                   type="button"
@@ -1229,11 +1211,12 @@ export function AdminNodesPage() {
                   disabled={drawPathPoints.length === 0}
                   style={{ flex: 1 }}
                 >
-                  Clear Points
+                  Clear All
                 </button>
               </div>
 
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
+              {/* Cancel / Save */}
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
                 <button
                   type="button"
                   className="btn btn-ghost"
@@ -1246,7 +1229,7 @@ export function AdminNodesPage() {
                 <button
                   type="submit"
                   className="btn btn-primary"
-                  disabled={submitting || drawPathPoints.length === 0}
+                  disabled={submitting || drawPathPoints.length < 2}
                   style={{ flex: 1 }}
                 >
                   {submitting ? <span className="spinner" /> : <Check size={16} />}
@@ -1255,18 +1238,20 @@ export function AdminNodesPage() {
               </div>
             </div>
 
-            {/* Right Column: Click Map Picker */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', minHeight: '380px' }}>
-              <label className="form-label">Click Points sequentially on Map to build path:</label>
+            {/* ── Right: map ── */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', minHeight: '400px' }}>
+              <label className="form-label">Click map to place nodes · Click dot to connect existing:</label>
               <div style={{ flex: 1, position: 'relative' }}>
                 <DrawPathMapPicker
                   nodes={nodes}
                   edges={edges}
                   stores={stores}
-                  startNodeId={drawPathStartNodeId}
-                  endNodeId={drawPathEndNodeId}
                   points={drawPathPoints}
                   setPoints={setDrawPathPoints}
+                  tool={drawPathTool}
+                  onToolChange={setDrawPathTool}
+                  onEraseEdge={handleEraseEdge}
+                  startNodeCounter={nodes.length + 1}
                 />
               </div>
             </div>
