@@ -315,9 +315,9 @@ export function MapView({
             ` : ''}
             <div style="width:${pinDiameter}px;height:${pinDiameter}px;border-radius:50%;background:${isVisited ? '#16a34a' : catColor};border:${borderWidth}px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;color:#fff;font-size:${isSchool ? Math.max(10, fontSize + 2) : fontSize}px;font-weight:800;z-index:10;overflow:hidden;">
               ${isSchool ? '🏫' : (store.logo_url
-                ? `<img src="${store.logo_url}" alt="${store.name}" style="width:100%;height:100%;object-fit:cover;display:block;" />`
-                : store.name[0]
-              )}
+            ? `<img src="${store.logo_url}" alt="${store.name}" style="width:100%;height:100%;object-fit:cover;display:block;" />`
+            : store.name[0]
+          )}
             </div>
             ${isTourStop && pinDiameter >= 14 ? `
               <div style="position:absolute;top:${-Math.round(badgeSize * 0.3)}px;right:${-Math.round(badgeSize * 0.3)}px;background:${isVisited ? '#22c55e' : '#22d3ee'};color:${isVisited ? '#fff' : '#0f172a'};font-size:${badgeFontSize}px;font-weight:900;width:${badgeSize}px;height:${badgeSize}px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.45);z-index:20;">
@@ -373,7 +373,7 @@ export function MapView({
     // At zoom 17 (~100m scale bar, the view in the user screenshot), metersPerPixel ≈ 1.19.
     // Setting threshold to 0.85 hides store bubbles when zooming out to zoom 17 or further,
     // so only the School landmark stays visible without cluttering the campus view.
-    const SCALE_HIDE_THRESHOLD = 0.85;
+    const SCALE_HIDE_THRESHOLD = 1.25;
     if (metersPerPixel > SCALE_HIDE_THRESHOLD) return;
 
     // ── Zoom-responsive sizing for regular store bubbles ──────────────────────
