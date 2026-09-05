@@ -591,7 +591,7 @@ export function MapPage() {
   };
 
   /** Compute navigation route strictly for the current single active leg of the guided tour */
-  const routeToTourStop = (
+  const routeToTourStop = async (
     fromLat: number,
     fromLng: number,
     targetStore: StoreType,
@@ -603,14 +603,21 @@ export function MapPage() {
     const targetLat = targetStore.latitude ?? campusLoc.lat;
     const targetLng = targetStore.longitude ?? campusLoc.lng;
 
-    const p = calculateShortestPathBetweenCoordinates(
-      fromLat,
-      fromLng,
-      targetLat,
-      targetLng,
-      nodes,
-      edges
-    );
+    const CAMPUS_RADIUS = exhibitionSettings.premises_radius_meters || 150;
+    const CAMPUS_CENTER_LAT = exhibitionSettings.premises_center_latitude || 6.535472;
+    const CAMPUS_CENTER_LNG = exhibitionSettings.premises_center_longitude || 80.401000;
+    const isOutsideCampus = getDistance(fromLat, fromLng, CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG) > CAMPUS_RADIUS;
+
+    const ENTRANCE_GATE_LAT = exhibitionSettings.entrance_latitude || 6.53586;
+    const ENTRANCE_GATE_LNG = exhibitionSettings.entrance_longitude || 80.40035;
+
+    const entranceNodes = nodes.filter((n) => n.type === 'entrance');
+    const closestEntrance = entranceNodes.length > 0
+      ? findClosestNode(ENTRANCE_GATE_LAT, ENTRANCE_GATE_LNG, entranceNodes)
+      : (nodes.length > 0 ? findClosestNode(ENTRANCE_GATE_LAT, ENTRANCE_GATE_LNG, nodes) : null);
+
+    const entranceLat = closestEntrance ? closestEntrance.latitude : ENTRANCE_GATE_LAT;
+    const entranceLng = closestEntrance ? closestEntrance.longitude : ENTRANCE_GATE_LNG;
 
     const storeTargetVirtualNode: NavigationNode = {
       id: `store-stop-${targetStore.id}`,
@@ -624,47 +631,155 @@ export function MapPage() {
     };
 
     const sequencedRouteNodes: NavigationNode[] = [];
-    const startVirtualNode: NavigationNode = {
-      id: 'tour-start-point',
-      label: 'Your Location',
-      latitude: fromLat,
-      longitude: fromLng,
-      floor: '1',
-      type: 'entrance',
-      store_id: null,
-      created_at: new Date().toISOString(),
-    };
-    sequencedRouteNodes.push(startVirtualNode);
+    let outdoorSegmentLen = 0;
+    let totalDistVal = 0;
+    const steps: string[] = [`📍 Tour Stop ${stopIndex + 1} of ${totalStops}: ${targetStore.name}`];
 
-    if (p && p.length > 0) {
-      if (sequencedRouteNodes.length > 0 && p[0].id === sequencedRouteNodes[sequencedRouteNodes.length - 1].id) {
-        sequencedRouteNodes.push(...p.slice(1));
+    if (isOutsideCampus) {
+      // 1. Outside campus: use OSRM from user location until the entrance gate
+      const osrmResult = await fetchOSRMRoute(
+        fromLat,
+        fromLng,
+        entranceLat,
+        entranceLng,
+        'Your Location',
+        closestEntrance?.label || 'School Entrance Gate'
+      );
+
+      if (osrmResult && osrmResult.nodes.length > 1) {
+        const outdoorNodes = osrmResult.nodes.slice(0, -1);
+        sequencedRouteNodes.push(...outdoorNodes);
+        outdoorSegmentLen = outdoorNodes.length;
+        if (osrmResult.guideSteps && osrmResult.guideSteps.length > 0) {
+          steps.push(...osrmResult.guideSteps);
+        }
+        totalDistVal += osrmResult.totalDistanceMeters ?? 0;
       } else {
-        sequencedRouteNodes.push(...p);
+        const outdoorVirtual: NavigationNode = {
+          id: 'tour-outdoor-virtual',
+          label: 'Your Location',
+          latitude: fromLat,
+          longitude: fromLng,
+          floor: '1',
+          type: 'poi',
+          store_id: null,
+          created_at: new Date().toISOString()
+        };
+        sequencedRouteNodes.push(outdoorVirtual);
+        outdoorSegmentLen = 1;
+        totalDistVal += getDistance(fromLat, fromLng, entranceLat, entranceLng);
       }
 
-      const lastWalkwayNode = p[p.length - 1];
-      const distToStore = getDistance(lastWalkwayNode.latitude, lastWalkwayNode.longitude, targetLat, targetLng);
-      if (distToStore > 1.5) {
+      // Entrance gate handoff point
+      const gateNode: NavigationNode = closestEntrance ? {
+        ...closestEntrance,
+        label: closestEntrance.label || 'School Entrance Gate',
+      } : {
+        id: 'tour-entrance-gate',
+        label: 'School Entrance Gate',
+        latitude: entranceLat,
+        longitude: entranceLng,
+        floor: '1',
+        type: 'entrance',
+        store_id: null,
+        created_at: new Date().toISOString()
+      };
+      sequencedRouteNodes.push(gateNode);
+      steps.push(`🏫 Enter through ${gateNode.label}`);
+
+      // 2. From entrance gate to target store using the school node paths (Dijkstra)
+      const indoorP = calculateShortestPathBetweenCoordinates(
+        entranceLat,
+        entranceLng,
+        targetLat,
+        targetLng,
+        nodes,
+        edges,
+        closestEntrance?.id || null
+      );
+
+      if (indoorP && indoorP.length > 0) {
+        const skipFirst = indoorP[0].id === gateNode.id ||
+          getDistance(indoorP[0].latitude, indoorP[0].longitude, gateNode.latitude, gateNode.longitude) < 2;
+        const remainingIndoor = skipFirst ? indoorP.slice(1) : indoorP;
+        sequencedRouteNodes.push(...remainingIndoor);
+
+        for (let i = 0; i < remainingIndoor.length - 1; i++) {
+          const from = remainingIndoor[i];
+          const to = remainingIndoor[i + 1];
+          const d = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
+          totalDistVal += d;
+          const h = getHeading(from.latitude, from.longitude, to.latitude, to.longitude);
+          steps.push(`Head ${h} towards ${to.label} (${Math.round(d)}m)`);
+        }
+
+        const lastNode = sequencedRouteNodes[sequencedRouteNodes.length - 1];
+        if (getDistance(lastNode.latitude, lastNode.longitude, targetLat, targetLng) > 1.5) {
+          sequencedRouteNodes.push(storeTargetVirtualNode);
+          totalDistVal += getDistance(lastNode.latitude, lastNode.longitude, targetLat, targetLng);
+        }
+      } else {
+        sequencedRouteNodes.push(storeTargetVirtualNode);
+        totalDistVal += getDistance(entranceLat, entranceLng, targetLat, targetLng);
+      }
+      steps.push(`Arrive at Stop ${stopIndex + 1}: ${targetStore.name}`);
+    } else {
+      // ── INSIDE SCHOOL ───────────────────────────────────────────────────────
+      // Unchanged: use existing school node paths directly to tour stall
+      const startVirtualNode: NavigationNode = {
+        id: 'tour-start-point',
+        label: 'Your Location',
+        latitude: fromLat,
+        longitude: fromLng,
+        floor: '1',
+        type: 'entrance',
+        store_id: null,
+        created_at: new Date().toISOString(),
+      };
+      sequencedRouteNodes.push(startVirtualNode);
+
+      const p = calculateShortestPathBetweenCoordinates(
+        fromLat,
+        fromLng,
+        targetLat,
+        targetLng,
+        nodes,
+        edges
+      );
+
+      if (p && p.length > 0) {
+        if (sequencedRouteNodes.length > 0 && p[0].id === sequencedRouteNodes[sequencedRouteNodes.length - 1].id) {
+          sequencedRouteNodes.push(...p.slice(1));
+        } else {
+          sequencedRouteNodes.push(...p);
+        }
+
+        const lastWalkwayNode = p[p.length - 1];
+        const distToStore = getDistance(lastWalkwayNode.latitude, lastWalkwayNode.longitude, targetLat, targetLng);
+        if (distToStore > 1.5) {
+          sequencedRouteNodes.push(storeTargetVirtualNode);
+        }
+      } else {
         sequencedRouteNodes.push(storeTargetVirtualNode);
       }
-    } else {
-      sequencedRouteNodes.push(storeTargetVirtualNode);
-    }
 
-    setCalculatedRoute(sequencedRouteNodes);
-    let cumulativeDist = 0;
-    const steps = [`📍 Head to Stop ${stopIndex + 1} of ${totalStops}: ${targetStore.name}`];
-    for (let i = 0; i < sequencedRouteNodes.length - 1; i++) {
-      const from = sequencedRouteNodes[i];
-      const to = sequencedRouteNodes[i + 1];
-      const dist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
-      cumulativeDist += dist;
-      if (to.type === 'store' || to.id.startsWith('store-stop-')) {
-        steps.push(`Arrive at: ${to.label} (${Math.round(dist)}m)`);
+      for (let i = 0; i < sequencedRouteNodes.length - 1; i++) {
+        const from = sequencedRouteNodes[i];
+        const to = sequencedRouteNodes[i + 1];
+        const dist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
+        totalDistVal += dist;
+        if (to.type === 'store' || to.id.startsWith('store-stop-')) {
+          steps.push(`Arrive at: ${to.label} (${Math.round(dist)}m)`);
+        } else {
+          const h = getHeading(from.latitude, from.longitude, to.latitude, to.longitude);
+          steps.push(`Head ${h} towards ${to.label} (${Math.round(dist)}m)`);
+        }
       }
     }
-    setTotalDistance(Math.round(cumulativeDist));
+
+    setOutdoorSegmentCount(outdoorSegmentLen);
+    setCalculatedRoute(sequencedRouteNodes);
+    setTotalDistance(Math.round(totalDistVal));
     setGuideSteps(steps);
   };
 
@@ -951,17 +1066,21 @@ export function MapPage() {
     const CAMPUS_CENTER_LAT = exhibitionSettings.premises_center_latitude || 6.535472;
     const CAMPUS_CENTER_LNG = exhibitionSettings.premises_center_longitude || 80.401000;
 
-    // Find best entrance node (type === 'entrance') — the handoff point between outdoor and indoor.
-    // Use the entrance closest to the USER's position, not the campus center,
-    // so multi-entrance campuses route to the correct gate.
+    const ENTRANCE_GATE_LAT = exhibitionSettings.entrance_latitude || 6.53586;
+    const ENTRANCE_GATE_LNG = exhibitionSettings.entrance_longitude || 80.40035;
+
+    // Find entrance node in graph (type === 'entrance') closest to the gate coordinates
     const entranceNodes = nodes.filter((n) => n.type === 'entrance');
     const closestEntrance = entranceNodes.length > 0
-      ? findClosestNode(startLat, startLng, entranceNodes)
-      : (nodes.length > 0 ? findClosestNode(CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG, nodes) : null);
+      ? findClosestNode(ENTRANCE_GATE_LAT, ENTRANCE_GATE_LNG, entranceNodes)
+      : (nodes.length > 0 ? findClosestNode(ENTRANCE_GATE_LAT, ENTRANCE_GATE_LNG, nodes) : null);
+
+    const entranceLat = closestEntrance ? closestEntrance.latitude : ENTRANCE_GATE_LAT;
+    const entranceLng = closestEntrance ? closestEntrance.longitude : ENTRANCE_GATE_LNG;
 
     const distFromCampus = getDistance(startLat, startLng, CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG);
     // User is physically outside the campus whenever their position exceeds the campus radius.
-    // Outside users route along real public roads via OSRM to the venue gate.
+    // Outside users route along real public roads via OSRM to the venue gate, then use node paths inside.
     const isOutsideCampus = distFromCampus > CAMPUS_RADIUS;
     setIsFarAway(isOutsideCampus); // keep UI state in sync
 
@@ -974,18 +1093,32 @@ export function MapPage() {
       (connectedNodes.length > 0 ? findClosestNode(targetLat, targetLng, connectedNodes)?.id : null) ||
       null;
 
-    if (!isOutsideCampus && nodes.length > 0 && edges.length > 0) {
-      // Strictly route inside campus along drawn walkway graph with dual edge-snapping
-      graphPath = calculateShortestPathBetweenCoordinates(
-        startLat,
-        startLng,
-        targetLat,
-        targetLng,
-        nodes,
-        edges,
-        mockStartNodeId || null,
-        explicitDestNodeId
-      );
+    if (nodes.length > 0 && edges.length > 0) {
+      if (isOutsideCampus) {
+        // Outside campus: compute indoor path from entrance gate to the target store
+        graphPath = calculateShortestPathBetweenCoordinates(
+          entranceLat,
+          entranceLng,
+          targetLat,
+          targetLng,
+          nodes,
+          edges,
+          closestEntrance?.id || null,
+          explicitDestNodeId
+        );
+      } else {
+        // Strictly route inside campus along drawn walkway graph with dual edge-snapping
+        graphPath = calculateShortestPathBetweenCoordinates(
+          startLat,
+          startLng,
+          targetLat,
+          targetLng,
+          nodes,
+          edges,
+          mockStartNodeId || null,
+          explicitDestNodeId
+        );
+      }
     }
 
     setSnappedToNode(null);
@@ -994,7 +1127,7 @@ export function MapPage() {
     let outdoorNodes: NavigationNode[] = [];
     let osrmGuideSteps: string[] | null = null;
     let osrmTotalDistance: number | null = null;
-    if (isOutsideCampus && closestEntrance) {
+    if (isOutsideCampus) {
       const destKey = selectedDestinationStoreId || selectedDestinationNodeId || 'campus-gate';
       const cached = lastOSRMRouteRef.current;
       // Re-use cached street route if user hasn't moved > 35 meters and destination hasn't changed.
@@ -1009,13 +1142,11 @@ export function MapPage() {
         osrmGuideSteps = cached.guideSteps;
         osrmTotalDistance = cached.totalDistance;
       } else {
-        const entranceLat = closestEntrance.latitude;
-        const entranceLng = closestEntrance.longitude;
         const osrmResult = await fetchOSRMRoute(
           startLat, startLng,
           entranceLat, entranceLng,
           startLabel,
-          closestEntrance.label || 'School Entrance'
+          closestEntrance?.label || 'School Entrance'
         );
 
         if (osrmResult && osrmResult.nodes.length > 1) {
@@ -1055,7 +1186,7 @@ export function MapPage() {
     }
 
     // 5. Assemble final route:
-    //    Outside campus: [OSRM outdoor nodes] → [Campus entrance] → [...Drawn graph...] → [Store]
+    //    Outside campus: [OSRM outdoor nodes] → [Entrance Gate] → [School Node Paths] → [Store]
     //    Inside campus:  [User position] → [...Drawn graph...] → [Store]
 
     const userStartVirtualNode: NavigationNode = {
@@ -1084,25 +1215,47 @@ export function MapPage() {
     let newOutdoorSegmentCount = 0;
 
     if (isOutsideCampus) {
-      // ── OUTSIDE CAMPUS ─────────────────────────────────────────────────────
-      // Show ONLY the street path leading to the campus entrance gate.
-      // The indoor store path is hidden until the user crosses the boundary.
+      // ── OUTSIDE CAMPUS: Hybrid Route ────────────────────────────────────────
+      // Use OSRM until the entrance gate, then use node paths inside the school!
       if (outdoorNodes.length > 0) {
         finalRoute.push(...outdoorNodes);
         newOutdoorSegmentCount = outdoorNodes.length;
       }
-      // Always end at the entrance node so the map shows the target clearly
-      if (closestEntrance) {
-        const lastOutdoorNode = finalRoute[finalRoute.length - 1];
-        const alreadyAtEntrance = lastOutdoorNode &&
-          getDistance(lastOutdoorNode.latitude, lastOutdoorNode.longitude,
-            closestEntrance.latitude, closestEntrance.longitude) < 5;
-        if (!alreadyAtEntrance) {
-          finalRoute.push({
-            ...closestEntrance,
-            label: closestEntrance.label || 'School Entrance',
-          });
+
+      const gateNode: NavigationNode = closestEntrance ? {
+        ...closestEntrance,
+        label: closestEntrance.label || 'School Entrance Gate',
+      } : {
+        id: 'school-entrance-gate',
+        label: 'School Entrance Gate',
+        latitude: entranceLat,
+        longitude: entranceLng,
+        floor: '1',
+        type: 'entrance',
+        store_id: null,
+        created_at: new Date().toISOString()
+      };
+
+      const lastOutdoorNode = finalRoute[finalRoute.length - 1];
+      const alreadyAtEntrance = lastOutdoorNode &&
+        getDistance(lastOutdoorNode.latitude, lastOutdoorNode.longitude, gateNode.latitude, gateNode.longitude) < 5;
+      if (!alreadyAtEntrance) {
+        finalRoute.push(gateNode);
+      }
+
+      // Append internal school node path from entrance gate to store
+      if (graphPath.length > 0) {
+        const firstIndoor = graphPath[0];
+        const skipFirst = firstIndoor.id === gateNode.id ||
+          getDistance(firstIndoor.latitude, firstIndoor.longitude, gateNode.latitude, gateNode.longitude) < 2;
+        finalRoute.push(...(skipFirst ? graphPath.slice(1) : graphPath));
+
+        const lastIndoorNode = finalRoute[finalRoute.length - 1];
+        if (getDistance(lastIndoorNode.latitude, lastIndoorNode.longitude, targetLat, targetLng) > 1.5) {
+          finalRoute.push(destEndVirtualNode);
         }
+      } else {
+        finalRoute.push(destEndVirtualNode);
       }
     } else {
       // ── INSIDE CAMPUS ──────────────────────────────────────────────────────
@@ -1166,32 +1319,29 @@ export function MapPage() {
       const steps: string[] = [];
 
       if (isOutsideCampus) {
-        // Outside campus: prefer OSRM's rich turn-by-turn guide steps.
-        // Fall back to heading-based steps if OSRM had no steps data.
-        if (osrmGuideSteps && osrmGuideSteps.length > 1) {
+        // Outside campus: OSRM steps until entrance gate, then indoor node directions to store
+        if (osrmGuideSteps && osrmGuideSteps.length > 0) {
           steps.push(...osrmGuideSteps);
-          distanceMeters = osrmTotalDistance ?? 0;
-          // Add total from remaining finalRoute nodes not in OSRM (entrance extra segment)
-          for (let i = 0; i < finalRoute.length - 1; i++) {
-            const from = finalRoute[i];
-            const to = finalRoute[i + 1];
-            // Only count any entrance gap not covered by OSRM
-            if (i >= outdoorNodes.length) {
-              distanceMeters += getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
-            }
-          }
-        } else if (finalRoute.length > 1) {
-          steps.push(`Start from ${finalRoute[0].label}`);
-          for (let i = 0; i < finalRoute.length - 1; i++) {
-            const from = finalRoute[i];
-            const to = finalRoute[i + 1];
-            const segDist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
-            distanceMeters += segDist;
+        }
+        steps.push(`🏫 Enter through ${closestEntrance?.label || 'School Entrance Gate'}`);
+
+        const indoorNodesSlice = finalRoute.slice(newOutdoorSegmentCount);
+        for (let i = 0; i < indoorNodesSlice.length - 1; i++) {
+          const from = indoorNodesSlice[i];
+          const to = indoorNodesSlice[i + 1];
+          const segDist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
+          if (segDist > 1) {
             const heading = getHeading(from.latitude, from.longitude, to.latitude, to.longitude);
             steps.push(`Head ${heading} towards ${to.label} (${Math.round(segDist)}m)`);
           }
-          const entranceName = closestEntrance?.label || 'School Entrance';
-          steps.push(`🏫 Enter through ${entranceName} to access the exhibition`);
+        }
+        steps.push(`Arrive at ${targetLabel}`);
+
+        distanceMeters = osrmTotalDistance ?? 0;
+        for (let i = newOutdoorSegmentCount; i < finalRoute.length - 1; i++) {
+          const from = finalRoute[i];
+          const to = finalRoute[i + 1];
+          distanceMeters += getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
         }
       } else {
         // Inside campus: guide steps are about reaching the store
@@ -1691,53 +1841,6 @@ export function MapPage() {
               pointerEvents: 'none',
             }}
           >
-            {/* Mobile Tour Floating Action Pill */}
-            <div className="map-mobile-tour-pill" style={{ pointerEvents: 'auto', display: 'none' }}>
-              <button
-                onClick={handleOpenTourPlanner}
-                className="btn btn-primary"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.4rem',
-                  fontSize: '0.82rem',
-                  fontWeight: 700,
-                  padding: '0.45rem 0.95rem',
-                  borderRadius: '24px',
-                  background: guidedTourActive
-                    ? 'linear-gradient(135deg, #10b981, #06b6d4)'
-                    : 'linear-gradient(135deg, #6366f1, #06b6d4)',
-                  color: '#ffffff',
-                  border: '1px solid rgba(255, 255, 255, 0.25)',
-                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.45)',
-                  backdropFilter: 'blur(10px)',
-                  cursor: 'pointer',
-                }}
-              >
-                <Compass size={16} />
-                <span>{guidedTourActive ? `Stop ${currentTourStopIndex + 1}/${tourStops.length}: Next Stall` : '🧭 Start Tour'}</span>
-              </button>
-              {guidedTourActive && (
-                <button
-                  onClick={handleCancelTour}
-                  className="btn btn-ghost btn-sm"
-                  style={{
-                    marginLeft: '0.4rem',
-                    padding: '0.4rem 0.65rem',
-                    borderRadius: '20px',
-                    fontSize: '0.75rem',
-                    fontWeight: 700,
-                    background: 'rgba(239, 68, 68, 0.25)',
-                    color: '#fca5a5',
-                    border: '1px solid rgba(239, 68, 68, 0.4)',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Cancel
-                </button>
-              )}
-            </div>
 
             {/* Floating Search Panel */}
             <div

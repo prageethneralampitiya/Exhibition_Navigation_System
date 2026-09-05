@@ -2571,11 +2571,6 @@ html, body, #root {
     max-width: calc(100vw - 1.5rem) !important;
   }
 
-  /* Show mobile quick Tour action pill */
-  .map-mobile-tour-pill {
-    display: flex !important;
-    align-items: center !important;
-  }
 
   /* Right controls stack (mock GPS) on mobile */
   .map-right-controls-stack {
