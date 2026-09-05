@@ -331,8 +331,8 @@ export function isNearKalawanaCampus(lat?: number | null, lng?: number | null): 
 
 /**
  * Returns the best campus lat/lng for a store marker.
- * • If the store already has valid campus coords → use them directly.
- * • Otherwise → place in a small ring around the campus anchor so the
+ * • If the store already has valid coordinates (whether on campus or custom outside campus like mora1, mora2, mora3) → use them directly.
+ * • Otherwise (if coords are missing) → place in a small ring around the campus anchor so the
  *   marker always appears ON the 3D school model.
  */
 export function getCampusStoreLocation(
@@ -340,10 +340,16 @@ export function getCampusStoreLocation(
   index: number,
   _calibration?: unknown
 ): { lat: number; lng: number } {
-  if (isNearKalawanaCampus(store.latitude, store.longitude)) {
-    return { lat: store.latitude!, lng: store.longitude! };
+  if (
+    typeof store.latitude === 'number' &&
+    typeof store.longitude === 'number' &&
+    !isNaN(store.latitude) &&
+    !isNaN(store.longitude) &&
+    (store.latitude !== 0 || store.longitude !== 0)
+  ) {
+    return { lat: store.latitude, lng: store.longitude };
   }
-  // Spread off-campus stores evenly around the campus centre
+  // Spread stores without coordinates evenly around the campus centre
   const angle = (index / 5) * 2 * Math.PI; // 5 slots cover 360°
   return {
     lat: Number((KALAWANA_ANCHOR_LAT + CAMPUS_RING_RADIUS_LAT * Math.sin(angle)).toFixed(6)),

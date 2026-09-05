@@ -165,10 +165,14 @@ export function Map3DPage() {
       .then(({ data }) => {
         if (!data) return;
 
-        // Map stores to campus building centroids (fallback for off-campus coords)
+        // Preserve store coordinates, or fallback to campus ring if coordinates are missing
         const processedStores: Store[] = data.map((store, index) => {
           const loc = getCampusStoreLocation(store, index);
-          return { ...store, latitude: loc.lat, longitude: loc.lng };
+          return {
+            ...store,
+            latitude: (store.latitude != null && !isNaN(store.latitude)) ? store.latitude : loc.lat,
+            longitude: (store.longitude != null && !isNaN(store.longitude)) ? store.longitude : loc.lng,
+          };
         });
 
         setStores(processedStores);

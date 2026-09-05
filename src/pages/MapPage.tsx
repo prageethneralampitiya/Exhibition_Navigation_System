@@ -28,7 +28,15 @@ import {
 import { MapView } from '../components/MapView';
 import { MapView3D } from '../components/MapView3D';
 import { getCampusStoreLocation } from '../components/KalawanaSchool3DLayer';
-import { calculateShortestPathBetweenCoordinates, findClosestNode, findClosestPointOnGraph, getDistance, getHeading } from '../utils/dijkstra';
+import {
+  calculateShortestPathBetweenCoordinates,
+  findClosestNode,
+  findClosestPointOnGraph,
+  getDistance,
+  getHeading,
+  getAllEntrancePoints,
+  findShortestDistanceEntrance,
+} from '../utils/dijkstra';
 import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
 import { GPSKalmanFilter } from '../utils/gpsFilter';
@@ -340,7 +348,11 @@ export function MapPage() {
         if (store.id === 'kalawana-national-school-landmark') return store;
         const storeIndex = Math.max(0, index - 1);
         const pos = getCampusStoreLocation(store, storeIndex);
-        return { ...store, latitude: pos.lat || store.latitude, longitude: pos.lng || store.longitude };
+        return {
+          ...store,
+          latitude: (store.latitude != null && !isNaN(store.latitude)) ? store.latitude : pos.lat,
+          longitude: (store.longitude != null && !isNaN(store.longitude)) ? store.longitude : pos.lng,
+        };
       });
 
       setStores(processedStores);
@@ -540,19 +552,16 @@ export function MapPage() {
     setMockMode(true);
     setMockStartNodeId(presetOrNodeId);
 
+    const allEntrances = getAllEntrancePoints(nodes, exhibitionSettings);
+
     if (presetOrNodeId === 'entrance') {
-      const entranceNode =
-        nodes.find(
-          (n) =>
-            n.type === 'entrance' ||
-            n.label.toLowerCase().includes('node 1') ||
-            n.label.toLowerCase().includes('entrance')
-        ) || nodes[0];
-      const lat = entranceNode ? entranceNode.latitude : (exhibitionSettings.entrance_latitude || 6.53586);
-      const lng = entranceNode ? entranceNode.longitude : (exhibitionSettings.entrance_longitude || 80.40035);
-      setUserLat(lat);
-      setUserLng(lng);
+      const currentLat = userLat ?? mapCenterLat;
+      const currentLng = userLng ?? mapCenterLng;
+      const best = findShortestDistanceEntrance(allEntrances, currentLat, currentLng, currentLat, currentLng);
+      setUserLat(best.latitude);
+      setUserLng(best.longitude);
       setIsFarAway(false);
+      if (best.node) setMockStartNodeId(best.node.id);
     } else if (presetOrNodeId === 'center') {
       const lat = exhibitionSettings.premises_center_latitude;
       const lng = exhibitionSettings.premises_center_longitude;
@@ -570,22 +579,19 @@ export function MapPage() {
         setIsFarAway(false);
       }
     } else {
+      const matchedEntrance = allEntrances.find(e => e.id === presetOrNodeId);
+      if (matchedEntrance) {
+        setUserLat(matchedEntrance.latitude);
+        setUserLng(matchedEntrance.longitude);
+        setIsFarAway(false);
+        if (matchedEntrance.node) setMockStartNodeId(matchedEntrance.node.id);
+        return;
+      }
       const node = nodes.find(n => n.id === presetOrNodeId);
       if (node) {
         setUserLat(node.latitude);
         setUserLng(node.longitude);
-        if (exhibitionSettings.school_boundary_enabled === false) {
-          setIsFarAway(false);
-        } else {
-          const distToCenter = getDistance(node.latitude, node.longitude, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
-          const far = distToCenter > exhibitionSettings.premises_radius_meters;
-          
-          if (bypassBoundaryCheckRef.current) {
-            setIsFarAway(false);
-          } else {
-            setIsFarAway(far);
-          }
-        }
+        setIsFarAway(false);
       }
     }
   };
@@ -603,21 +609,16 @@ export function MapPage() {
     const targetLat = targetStore.latitude ?? campusLoc.lat;
     const targetLng = targetStore.longitude ?? campusLoc.lng;
 
-    const CAMPUS_RADIUS = exhibitionSettings.premises_radius_meters || 150;
-    const CAMPUS_CENTER_LAT = exhibitionSettings.premises_center_latitude || 6.535472;
-    const CAMPUS_CENTER_LNG = exhibitionSettings.premises_center_longitude || 80.401000;
-    const isOutsideCampus = getDistance(fromLat, fromLng, CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG) > CAMPUS_RADIUS;
+    const allEntrances = getAllEntrancePoints(nodes, exhibitionSettings);
+    const bestEntrance = findShortestDistanceEntrance(allEntrances, fromLat, fromLng, targetLat, targetLng);
+    const closestEntrance = bestEntrance.node || nodes.find(n => n.id === bestEntrance.id) || null;
+    const entranceLat = bestEntrance.latitude;
+    const entranceLng = bestEntrance.longitude;
+    const entranceLabel = bestEntrance.label;
 
-    const ENTRANCE_GATE_LAT = exhibitionSettings.entrance_latitude || 6.53586;
-    const ENTRANCE_GATE_LNG = exhibitionSettings.entrance_longitude || 80.40035;
-
-    const entranceNodes = nodes.filter((n) => n.type === 'entrance');
-    const closestEntrance = entranceNodes.length > 0
-      ? findClosestNode(ENTRANCE_GATE_LAT, ENTRANCE_GATE_LNG, entranceNodes)
-      : (nodes.length > 0 ? findClosestNode(ENTRANCE_GATE_LAT, ENTRANCE_GATE_LNG, nodes) : null);
-
-    const entranceLat = closestEntrance ? closestEntrance.latitude : ENTRANCE_GATE_LAT;
-    const entranceLng = closestEntrance ? closestEntrance.longitude : ENTRANCE_GATE_LNG;
+    const VENUE_RADIUS = exhibitionSettings.premises_radius_meters || 150;
+    const isOutsideVenue = getDistance(fromLat, fromLng, entranceLat, entranceLng) > VENUE_RADIUS;
+    const isTargetIsolated = getDistance(targetLat, targetLng, entranceLat, entranceLng) > 500;
 
     const storeTargetVirtualNode: NavigationNode = {
       id: `store-stop-${targetStore.id}`,
@@ -635,15 +636,48 @@ export function MapPage() {
     let totalDistVal = 0;
     const steps: string[] = [`📍 Tour Stop ${stopIndex + 1} of ${totalStops}: ${targetStore.name}`];
 
-    if (isOutsideCampus) {
-      // 1. Outside campus: use OSRM from user location until the entrance gate
+    if (isTargetIsolated) {
+      // Standalone store outside any entrance venue: direct OSRM
+      const osrmResult = await fetchOSRMRoute(
+        fromLat,
+        fromLng,
+        targetLat,
+        targetLng,
+        'Your Location',
+        targetStore.name
+      );
+      if (osrmResult && osrmResult.nodes.length > 1) {
+        sequencedRouteNodes.push(...osrmResult.nodes);
+        outdoorSegmentLen = osrmResult.nodes.length;
+        if (osrmResult.guideSteps && osrmResult.guideSteps.length > 0) {
+          steps.push(...osrmResult.guideSteps);
+        }
+        totalDistVal += osrmResult.totalDistanceMeters ?? 0;
+      } else {
+        const outdoorVirtual: NavigationNode = {
+          id: 'tour-outdoor-virtual',
+          label: 'Your Location',
+          latitude: fromLat,
+          longitude: fromLng,
+          floor: '1',
+          type: 'poi',
+          store_id: null,
+          created_at: new Date().toISOString()
+        };
+        sequencedRouteNodes.push(outdoorVirtual, storeTargetVirtualNode);
+        outdoorSegmentLen = 2;
+        totalDistVal += getDistance(fromLat, fromLng, targetLat, targetLng);
+      }
+      steps.push(`Arrive at Stop ${stopIndex + 1}: ${targetStore.name}`);
+    } else if (isOutsideVenue) {
+      // User is outside the venue of this stop: route via OSRM to the shortest distance entrance gate, then node paths inside
       const osrmResult = await fetchOSRMRoute(
         fromLat,
         fromLng,
         entranceLat,
         entranceLng,
         'Your Location',
-        closestEntrance?.label || 'School Entrance Gate'
+        entranceLabel
       );
 
       if (osrmResult && osrmResult.nodes.length > 1) {
@@ -673,10 +707,10 @@ export function MapPage() {
       // Entrance gate handoff point
       const gateNode: NavigationNode = closestEntrance ? {
         ...closestEntrance,
-        label: closestEntrance.label || 'School Entrance Gate',
+        label: closestEntrance.label || entranceLabel,
       } : {
-        id: 'tour-entrance-gate',
-        label: 'School Entrance Gate',
+        id: bestEntrance.id,
+        label: entranceLabel,
         latitude: entranceLat,
         longitude: entranceLng,
         floor: '1',
@@ -685,9 +719,9 @@ export function MapPage() {
         created_at: new Date().toISOString()
       };
       sequencedRouteNodes.push(gateNode);
-      steps.push(`🏫 Enter through ${gateNode.label}`);
+      steps.push(`🏫 Enter through ${entranceLabel}`);
 
-      // 2. From entrance gate to target store using the school node paths (Dijkstra)
+      // From entrance gate to target store using the node paths (Dijkstra)
       const indoorP = calculateShortestPathBetweenCoordinates(
         entranceLat,
         entranceLng,
@@ -724,8 +758,8 @@ export function MapPage() {
       }
       steps.push(`Arrive at Stop ${stopIndex + 1}: ${targetStore.name}`);
     } else {
-      // ── INSIDE SCHOOL ───────────────────────────────────────────────────────
-      // Unchanged: use existing school node paths directly to tour stall
+      // ── INSIDE VENUE ────────────────────────────────────────────────────────
+      // Inside the venue: use venue node paths directly to tour stall
       const startVirtualNode: NavigationNode = {
         id: 'tour-start-point',
         label: 'Your Location',
@@ -822,8 +856,8 @@ export function MapPage() {
       const pos = getCampusStoreLocation(store, idx);
       return {
         ...store,
-        latitude: pos.lat,
-        longitude: pos.lng,
+        latitude: (store.latitude != null && !isNaN(store.latitude)) ? store.latitude : pos.lat,
+        longitude: (store.longitude != null && !isNaN(store.longitude)) ? store.longitude : pos.lng,
       };
     });
 
@@ -1062,27 +1096,109 @@ export function MapPage() {
     //   c. Inside campus → Dijkstra through drawn edges, starting from entrance
     //   d. Assemble: [OSM nodes] → [Graph nodes] → [Store real coords]
 
-    const CAMPUS_RADIUS = exhibitionSettings.premises_radius_meters || 150;
-    const CAMPUS_CENTER_LAT = exhibitionSettings.premises_center_latitude || 6.535472;
-    const CAMPUS_CENTER_LNG = exhibitionSettings.premises_center_longitude || 80.401000;
+    // 3. Find entrance with the shortest distance among all entrances
+    const allEntrances = getAllEntrancePoints(nodes, exhibitionSettings);
+    const bestEntrance = findShortestDistanceEntrance(allEntrances, startLat, startLng, targetLat, targetLng);
+    const closestEntrance = bestEntrance.node || nodes.find(n => n.id === bestEntrance.id) || null;
+    const entranceLat = bestEntrance.latitude;
+    const entranceLng = bestEntrance.longitude;
+    const entranceLabel = bestEntrance.label;
 
-    const ENTRANCE_GATE_LAT = exhibitionSettings.entrance_latitude || 6.53586;
-    const ENTRANCE_GATE_LNG = exhibitionSettings.entrance_longitude || 80.40035;
+    const VENUE_RADIUS = exhibitionSettings.premises_radius_meters || 150;
+    const distFromEntrance = getDistance(startLat, startLng, entranceLat, entranceLng);
+    const isOutsideVenue = distFromEntrance > VENUE_RADIUS;
+    setIsFarAway(isOutsideVenue); // keep UI state in sync
 
-    // Find entrance node in graph (type === 'entrance') closest to the gate coordinates
-    const entranceNodes = nodes.filter((n) => n.type === 'entrance');
-    const closestEntrance = entranceNodes.length > 0
-      ? findClosestNode(ENTRANCE_GATE_LAT, ENTRANCE_GATE_LNG, entranceNodes)
-      : (nodes.length > 0 ? findClosestNode(ENTRANCE_GATE_LAT, ENTRANCE_GATE_LNG, nodes) : null);
+    const targetDistFromEntrance = getDistance(targetLat, targetLng, entranceLat, entranceLng);
+    const isTargetIsolated = targetDistFromEntrance > 500;
 
-    const entranceLat = closestEntrance ? closestEntrance.latitude : ENTRANCE_GATE_LAT;
-    const entranceLng = closestEntrance ? closestEntrance.longitude : ENTRANCE_GATE_LNG;
+    const destEndVirtualNode: NavigationNode = {
+      id: 'actual-end-virtual',
+      label: targetLabel,
+      latitude: targetLat,
+      longitude: targetLng,
+      floor: null,
+      type: 'store',
+      store_id: selectedDestinationStoreId || null,
+      created_at: new Date().toISOString()
+    };
+    const userStartVirtualNode: NavigationNode = {
+      id: 'actual-start-virtual',
+      label: startLabel,
+      latitude: startLat,
+      longitude: startLng,
+      floor: null,
+      type: 'poi',
+      store_id: null,
+      created_at: new Date().toISOString()
+    };
 
-    const distFromCampus = getDistance(startLat, startLng, CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG);
-    // User is physically outside the campus whenever their position exceeds the campus radius.
-    // Outside users route along real public roads via OSRM to the venue gate, then use node paths inside.
-    const isOutsideCampus = distFromCampus > CAMPUS_RADIUS;
-    setIsFarAway(isOutsideCampus); // keep UI state in sync
+    if (isTargetIsolated) {
+      const destKey = selectedDestinationStoreId || selectedDestinationNodeId || 'target-isolated';
+      const cached = lastOSRMRouteRef.current;
+      const canUseCache =
+        cached &&
+        cached.destId === destKey &&
+        getDistance(startLat, startLng, cached.startLat, cached.startLng) < 35;
+
+      let outdoorNodes: NavigationNode[] = [];
+      let osrmGuideSteps: string[] | null = null;
+      let osrmTotalDistance: number | null = null;
+
+      if (canUseCache) {
+        outdoorNodes = cached.nodes;
+        osrmGuideSteps = cached.guideSteps;
+        osrmTotalDistance = cached.totalDistance;
+      } else {
+        const osrmResult = await fetchOSRMRoute(
+          startLat,
+          startLng,
+          targetLat,
+          targetLng,
+          startLabel,
+          targetLabel
+        );
+        if (osrmResult && osrmResult.nodes.length > 1) {
+          outdoorNodes = osrmResult.nodes;
+          osrmGuideSteps = osrmResult.guideSteps;
+          osrmTotalDistance = osrmResult.totalDistanceMeters;
+          lastOSRMRouteRef.current = {
+            nodes: outdoorNodes,
+            guideSteps: osrmGuideSteps,
+            totalDistance: osrmTotalDistance,
+            startLat,
+            startLng,
+            destId: destKey,
+          };
+        } else if (cached && cached.destId === destKey) {
+          outdoorNodes = cached.nodes;
+          osrmGuideSteps = cached.guideSteps;
+          osrmTotalDistance = cached.totalDistance;
+        } else {
+          outdoorNodes = [userStartVirtualNode, destEndVirtualNode];
+        }
+      }
+
+      const outRoute: NavigationNode[] = [...outdoorNodes];
+      const lastNode = outRoute[outRoute.length - 1];
+      if (!lastNode || getDistance(lastNode.latitude, lastNode.longitude, targetLat, targetLng) > 5) {
+        outRoute.push(destEndVirtualNode);
+      }
+
+      setOutdoorSegmentCount(outRoute.length);
+      setCalculatedRoute(outRoute);
+      setNavigationActive(true);
+
+      const steps: string[] = [];
+      if (osrmGuideSteps && osrmGuideSteps.length > 0) {
+        steps.push(...osrmGuideSteps);
+      }
+      steps.push(`Arrive at ${targetLabel}`);
+      const distanceMeters = osrmTotalDistance ?? getDistance(startLat, startLng, targetLat, targetLng);
+      setTotalDistance(Math.round(distanceMeters));
+      setGuideSteps(steps);
+      return;
+    }
 
     let graphPath: NavigationNode[] = [];
     const connectedNodes = nodes.filter((n) => edges.some((e) => e.from_node_id === n.id || e.to_node_id === n.id));
@@ -1094,8 +1210,8 @@ export function MapPage() {
       null;
 
     if (nodes.length > 0 && edges.length > 0) {
-      if (isOutsideCampus) {
-        // Outside campus: compute indoor path from entrance gate to the target store
+      if (isOutsideVenue) {
+        // Outside venue: compute indoor path from best entrance gate to the target store
         graphPath = calculateShortestPathBetweenCoordinates(
           entranceLat,
           entranceLng,
@@ -1107,7 +1223,7 @@ export function MapPage() {
           explicitDestNodeId
         );
       } else {
-        // Strictly route inside campus along drawn walkway graph with dual edge-snapping
+        // Strictly route inside venue along drawn walkway graph with dual edge-snapping
         graphPath = calculateShortestPathBetweenCoordinates(
           startLat,
           startLng,
@@ -1123,15 +1239,13 @@ export function MapPage() {
 
     setSnappedToNode(null);
 
-    // 4. Outdoor segment via OSRM (only when user is outside campus)
+    // 4. Outdoor segment via OSRM (only when user is outside venue)
     let outdoorNodes: NavigationNode[] = [];
     let osrmGuideSteps: string[] | null = null;
     let osrmTotalDistance: number | null = null;
-    if (isOutsideCampus) {
-      const destKey = selectedDestinationStoreId || selectedDestinationNodeId || 'campus-gate';
+    if (isOutsideVenue) {
+      const destKey = `entrance-${bestEntrance.id}`;
       const cached = lastOSRMRouteRef.current;
-      // Re-use cached street route if user hasn't moved > 35 meters and destination hasn't changed.
-      // This prevents rapid GPS jitter from overwhelming public OSRM servers and getting rate-limited (HTTP 429).
       const canUseCache =
         cached &&
         cached.destId === destKey &&
@@ -1146,14 +1260,11 @@ export function MapPage() {
           startLat, startLng,
           entranceLat, entranceLng,
           startLabel,
-          closestEntrance?.label || 'School Entrance'
+          entranceLabel
         );
 
         if (osrmResult && osrmResult.nodes.length > 1) {
-          // Use all OSRM nodes except the last one (entrance) —
-          // the entrance is re-appended from the graph to ensure exact coordinate match.
           outdoorNodes = osrmResult.nodes.slice(0, -1);
-          // Preserve OSRM's rich turn-by-turn instructions for the guide panel
           osrmGuideSteps = osrmResult.guideSteps;
           osrmTotalDistance = osrmResult.totalDistanceMeters;
           lastOSRMRouteRef.current = {
@@ -1165,12 +1276,10 @@ export function MapPage() {
             destId: destKey,
           };
         } else if (cached && cached.destId === destKey) {
-          // Network or rate-limit failure on re-fetch: KEEP the previous street route! NEVER snap back to straight line!
           outdoorNodes = cached.nodes;
           osrmGuideSteps = cached.guideSteps;
           osrmTotalDistance = cached.totalDistance;
         } else {
-          // OSRM failed with no previous route — single virtual node (straight-line fallback to entrance)
           outdoorNodes = [{
             id: 'outdoor-start-virtual',
             label: startLabel,
@@ -1186,37 +1295,10 @@ export function MapPage() {
     }
 
     // 5. Assemble final route:
-    //    Outside campus: [OSRM outdoor nodes] → [Entrance Gate] → [School Node Paths] → [Store]
-    //    Inside campus:  [User position] → [...Drawn graph...] → [Store]
-
-    const userStartVirtualNode: NavigationNode = {
-      id: 'actual-start-virtual',
-      label: startLabel,
-      latitude: startLat,
-      longitude: startLng,
-      floor: graphPath[0]?.floor || null,
-      type: 'poi',
-      store_id: null,
-      created_at: new Date().toISOString()
-    };
-
-    const destEndVirtualNode: NavigationNode = {
-      id: 'actual-end-virtual',
-      label: targetLabel,
-      latitude: targetLat,
-      longitude: targetLng,
-      floor: graphPath[graphPath.length - 1]?.floor || null,
-      type: 'store',
-      store_id: selectedDestinationStoreId || null,
-      created_at: new Date().toISOString()
-    };
-
     const finalRoute: NavigationNode[] = [];
     let newOutdoorSegmentCount = 0;
 
-    if (isOutsideCampus) {
-      // ── OUTSIDE CAMPUS: Hybrid Route ────────────────────────────────────────
-      // Use OSRM until the entrance gate, then use node paths inside the school!
+    if (isOutsideVenue) {
       if (outdoorNodes.length > 0) {
         finalRoute.push(...outdoorNodes);
         newOutdoorSegmentCount = outdoorNodes.length;
@@ -1224,10 +1306,10 @@ export function MapPage() {
 
       const gateNode: NavigationNode = closestEntrance ? {
         ...closestEntrance,
-        label: closestEntrance.label || 'School Entrance Gate',
+        label: closestEntrance.label || entranceLabel,
       } : {
-        id: 'school-entrance-gate',
-        label: 'School Entrance Gate',
+        id: bestEntrance.id,
+        label: entranceLabel,
         latitude: entranceLat,
         longitude: entranceLng,
         floor: '1',
@@ -1243,7 +1325,6 @@ export function MapPage() {
         finalRoute.push(gateNode);
       }
 
-      // Append internal school node path from entrance gate to store
       if (graphPath.length > 0) {
         const firstIndoor = graphPath[0];
         const skipFirst = firstIndoor.id === gateNode.id ||
@@ -1258,9 +1339,6 @@ export function MapPage() {
         finalRoute.push(destEndVirtualNode);
       }
     } else {
-      // ── INSIDE CAMPUS ──────────────────────────────────────────────────────
-      // Path format:
-      // Store -> Closest point of path drawing -> User location (by drawn paths ONLY, no direct paths)
       if (graphPath.length > 0) {
         const distToFirstNode = getDistance(startLat, startLng, graphPath[0].latitude, graphPath[0].longitude);
         if (distToFirstNode > 1.5) {
@@ -1277,8 +1355,6 @@ export function MapPage() {
           finalRoute.push(destEndVirtualNode);
         }
       } else {
-        // Fallback: If no continuous path found, snap both start and end to closest drawn path points
-        // NEVER draw a direct straight line across the school / buildings!
         const startSnap = findClosestPointOnGraph(startLat, startLng, nodes, edges);
         const endSnap = findClosestPointOnGraph(targetLat, targetLng, nodes, edges);
         if (startSnap && endSnap) {
@@ -1318,12 +1394,11 @@ export function MapPage() {
       let distanceMeters = 0;
       const steps: string[] = [];
 
-      if (isOutsideCampus) {
-        // Outside campus: OSRM steps until entrance gate, then indoor node directions to store
+      if (isOutsideVenue) {
         if (osrmGuideSteps && osrmGuideSteps.length > 0) {
           steps.push(...osrmGuideSteps);
         }
-        steps.push(`🏫 Enter through ${closestEntrance?.label || 'School Entrance Gate'}`);
+        steps.push(`🏫 Enter through ${entranceLabel}`);
 
         const indoorNodesSlice = finalRoute.slice(newOutdoorSegmentCount);
         for (let i = 0; i < indoorNodesSlice.length - 1; i++) {
@@ -1344,7 +1419,6 @@ export function MapPage() {
           distanceMeters += getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
         }
       } else {
-        // Inside campus: guide steps are about reaching the store
         if (finalRoute.length > 1) {
           steps.push(`Start from ${finalRoute[0].label}`);
           for (let i = 0; i < finalRoute.length - 1; i++) {
@@ -2168,13 +2242,17 @@ export function MapPage() {
                     Quick Presets
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem' }}>
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start' }}
-                      onClick={() => handleSelectMockLocation('entrance')}
-                    >
-                      🚪 Entrance Gate
-                    </button>
+                    {getAllEntrancePoints(nodes, exhibitionSettings).map((ent) => (
+                      <button
+                        key={ent.id}
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+                        onClick={() => handleSelectMockLocation(ent.id)}
+                        title={ent.label}
+                      >
+                        🚪 {ent.label}
+                      </button>
+                    ))}
                     <button
                       className="btn btn-ghost btn-sm"
                       style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start' }}

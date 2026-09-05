@@ -439,7 +439,9 @@ export function calculateShortestPathWithSnapping(
   const endNode = nodes.find((n) => n.id === endNodeId);
   if (!endNode) return [];
 
-  const entranceNodes = nodes.filter((n) => n.type === 'entrance');
+  const entranceNodes = nodes.filter(
+    (n) => n.type === 'entrance' || n.label.toLowerCase().includes('entrance') || n.label.toLowerCase().includes('gate')
+  );
 
   // 1. Snapping to entrance fallback when GPS accuracy is too poor
   let actualStartLat = startLat;
@@ -977,4 +979,115 @@ export function computeGraphPathDistance(
   }
   return dist;
 }
+
+export interface EntranceCandidate {
+  id: string;
+  label: string;
+  latitude: number;
+  longitude: number;
+  node?: NavigationNode;
+}
+
+export function isEntranceNode(node: { label?: string; type?: string; latitude: number; longitude: number }): boolean {
+  if (node.type === 'entrance') return true;
+  const l = (node.label || '').toLowerCase();
+  if (l.includes('entrance') || l.includes('gate') || l.includes('entry') || l.includes('door')) return true;
+  // Specific known entrance coordinates (e.g. Uni entrance, Kalawana Entrance Gate)
+  if (Math.abs(node.latitude - 6.795354) < 0.001 && Math.abs(node.longitude - 79.89985) < 0.001) return true;
+  if (Math.abs(node.latitude - 6.535862) < 0.001 && Math.abs(node.longitude - 80.400348) < 0.001) return true;
+  return false;
+}
+
+export function getAllEntrancePoints(
+  nodes: NavigationNode[],
+  settings?: { entrance_latitude?: number; entrance_longitude?: number }
+): EntranceCandidate[] {
+  const result: EntranceCandidate[] = [];
+
+  // 1. Nodes from graph that are entrances
+  nodes.forEach((n) => {
+    if (isEntranceNode(n)) {
+      result.push({
+        id: n.id,
+        label: n.label,
+        latitude: n.latitude,
+        longitude: n.longitude,
+        node: n,
+      });
+    }
+  });
+
+  // 2. Ensure Uni entrance (6.795354, 79.89985) is present as candidate
+  const hasUniEntrance = result.some(
+    (e) => Math.abs(e.latitude - 6.795354) < 0.001 && Math.abs(e.longitude - 79.89985) < 0.001
+  );
+  if (!hasUniEntrance) {
+    const uniNode = nodes.find(
+      (n) => Math.abs(n.latitude - 6.795354) < 0.001 && Math.abs(n.longitude - 79.89985) < 0.001
+    );
+    result.push({
+      id: uniNode ? uniNode.id : 'uni-entrance-gate',
+      label: uniNode ? uniNode.label : 'Uni entrance',
+      latitude: 6.795354,
+      longitude: 79.89985,
+      node: uniNode,
+    });
+  }
+
+  // 3. Ensure Kalawana school entrance is present as candidate
+  const defLat = settings?.entrance_latitude || 6.535862;
+  const defLng = settings?.entrance_longitude || 80.400348;
+  const hasDefEntrance = result.some(
+    (e) => Math.abs(e.latitude - defLat) < 0.001 && Math.abs(e.longitude - defLng) < 0.001
+  );
+  if (!hasDefEntrance) {
+    const defNode = nodes.find(
+      (n) => Math.abs(n.latitude - defLat) < 0.001 && Math.abs(n.longitude - defLng) < 0.001
+    );
+    result.push({
+      id: defNode ? defNode.id : 'kalawana-entrance-gate',
+      label: defNode ? defNode.label : 'Entrance Gate',
+      latitude: defLat,
+      longitude: defLng,
+      node: defNode,
+    });
+  }
+
+  return result;
+}
+
+export function findShortestDistanceEntrance(
+  entrances: EntranceCandidate[],
+  startLat: number,
+  startLng: number,
+  targetLat: number,
+  targetLng: number
+): EntranceCandidate {
+  if (entrances.length === 0) {
+    return {
+      id: 'default-entrance',
+      label: 'Entrance Gate',
+      latitude: 6.535862,
+      longitude: 80.400348,
+    };
+  }
+
+  let best = entrances[0];
+  let minTotalDist = Infinity;
+
+  for (const ent of entrances) {
+    // Total geographic distance traveling through this entrance to reach target
+    const dStart = getDistance(startLat, startLng, ent.latitude, ent.longitude);
+    const dTarget = getDistance(ent.latitude, ent.longitude, targetLat, targetLng);
+    const totalDist = dStart + dTarget;
+
+    if (totalDist < minTotalDist) {
+      minTotalDist = totalDist;
+      best = ent;
+    }
+  }
+
+  return best;
+}
+
 
