@@ -2557,22 +2557,24 @@ html, body, #root {
   /* Leaflet injects its controls inside .leaflet-top.leaflet-left */
   .leaflet-top { margin-top: calc(52px + var(--safe-top, 0px)) !important; }
 
-  /* Search panel: cleanly pinned below topbar on mobile */
+  /* Remove top search bar on mobile as requested */
+  .map-search-panel {
+    display: none !important;
+  }
+
+  /* Left controls stack: compact container for Tour pill & badges */
   .map-left-controls-stack {
     top: calc(54px + var(--safe-top, 0px) + 0.5rem) !important;
     left: 0.75rem !important;
-    right: 0.75rem !important;
+    right: auto !important;
     width: auto !important;
     max-width: calc(100vw - 1.5rem) !important;
   }
 
-  .map-search-panel {
-    top: auto !important;
-    left: auto !important;
-    right: auto !important;
-    width: 100% !important;
-    max-height: 40vh !important;
-    border-radius: var(--radius-lg) !important;
+  /* Show mobile quick Tour action pill */
+  .map-mobile-tour-pill {
+    display: flex !important;
+    align-items: center !important;
   }
 
   /* Right controls stack (mock GPS) on mobile */

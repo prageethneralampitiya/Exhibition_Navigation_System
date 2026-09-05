@@ -1435,8 +1435,31 @@ export function MapPage() {
             )}
           </div>
 
-          {/* Mobile-only: bell icon inline */}
+          {/* Mobile-only: Tour button + boundary toggle + bell icon inline */}
           <div className="map-topbar-mobile-icons" style={{ display: 'none', gap: '0.35rem', alignItems: 'center', flexShrink: 0 }}>
+            <button
+              onClick={handleOpenTourPlanner}
+              className="btn btn-primary btn-sm"
+              style={{
+                padding: '0.25rem 0.6rem',
+                fontSize: '0.7rem',
+                fontWeight: 700,
+                borderRadius: '6px',
+                background: guidedTourActive
+                  ? 'linear-gradient(135deg, #10b981, #06b6d4)'
+                  : 'linear-gradient(135deg, #6366f1, #06b6d4)',
+                color: '#fff',
+                border: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.25rem',
+                boxShadow: '0 2px 6px rgba(99, 102, 241, 0.4)',
+              }}
+              title="Start guided tour"
+            >
+              <Compass size={13} />
+              <span>{guidedTourActive ? `${currentTourStopIndex + 1}/${tourStops.length}` : 'Start Tour'}</span>
+            </button>
             {profile?.role === 'admin' && (
               <button
                 onClick={handleToggleBoundaryVisibility}
@@ -1668,6 +1691,54 @@ export function MapPage() {
               pointerEvents: 'none',
             }}
           >
+            {/* Mobile Tour Floating Action Pill */}
+            <div className="map-mobile-tour-pill" style={{ pointerEvents: 'auto', display: 'none' }}>
+              <button
+                onClick={handleOpenTourPlanner}
+                className="btn btn-primary"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  fontSize: '0.82rem',
+                  fontWeight: 700,
+                  padding: '0.45rem 0.95rem',
+                  borderRadius: '24px',
+                  background: guidedTourActive
+                    ? 'linear-gradient(135deg, #10b981, #06b6d4)'
+                    : 'linear-gradient(135deg, #6366f1, #06b6d4)',
+                  color: '#ffffff',
+                  border: '1px solid rgba(255, 255, 255, 0.25)',
+                  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.45)',
+                  backdropFilter: 'blur(10px)',
+                  cursor: 'pointer',
+                }}
+              >
+                <Compass size={16} />
+                <span>{guidedTourActive ? `Stop ${currentTourStopIndex + 1}/${tourStops.length}: Next Stall` : '🧭 Start Tour'}</span>
+              </button>
+              {guidedTourActive && (
+                <button
+                  onClick={handleCancelTour}
+                  className="btn btn-ghost btn-sm"
+                  style={{
+                    marginLeft: '0.4rem',
+                    padding: '0.4rem 0.65rem',
+                    borderRadius: '20px',
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    background: 'rgba(239, 68, 68, 0.25)',
+                    color: '#fca5a5',
+                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+
             {/* Floating Search Panel */}
             <div
               className="map-search-panel"
