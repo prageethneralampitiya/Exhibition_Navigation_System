@@ -389,7 +389,11 @@ export function MapView({
     const centerLat = map.getCenter().lat;
     const metersPerPixel =
       (40075016.686 * Math.cos((centerLat * Math.PI) / 180)) / Math.pow(2, zoomLevel + 8);
-    const SCALE_HIDE_THRESHOLD = 1.25; // m/px → ~100 m scale bar (visible at zoom >= 17, hidden when exceeding 100m)
+    // At zoom 18 (~50m scale bar), metersPerPixel ≈ 0.59.
+    // At zoom 17 (~100m scale bar, the view in the user screenshot), metersPerPixel ≈ 1.19.
+    // Setting threshold to 0.85 hides store bubbles when zooming out to zoom 17 or further,
+    // so only the School landmark stays visible without cluttering the campus view.
+    const SCALE_HIDE_THRESHOLD = 0.85;
     if (metersPerPixel > SCALE_HIDE_THRESHOLD) return;
 
     // ── Zoom-responsive sizing for regular store bubbles ──────────────────────

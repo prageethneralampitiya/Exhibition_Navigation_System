@@ -211,6 +211,16 @@ export function MapPage() {
   // Tracks if the user has been prompted about guided tours on startup
   const hasPromptedRef = useRef(false);
 
+  // Cached OSRM street route so GPS jitters don't cause rate-limiting or route flickering
+  const lastOSRMRouteRef = useRef<{
+    nodes: NavigationNode[];
+    guideSteps: string[] | null;
+    totalDistance: number | null;
+    startLat: number;
+    startLng: number;
+    destId: string;
+  } | null>(null);
+
   // Bottom sheet drag state (Google Maps style)
   const [navSheetExpanded, setNavSheetExpanded] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -864,6 +874,7 @@ export function MapPage() {
       setNavigationActive(false);
       setOutdoorSegmentCount(0);
       lastLoggedDestinationRef.current = '';
+      lastOSRMRouteRef.current = null;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDestinationStoreId, selectedDestinationNodeId, userLat, userLng, mockMode, mockStartNodeId, nodes, edges]);
@@ -947,7 +958,9 @@ export function MapPage() {
       : (nodes.length > 0 ? findClosestNode(CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG, nodes) : null);
 
     const distFromCampus = getDistance(startLat, startLng, CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG);
-    const isOutsideCampus = exhibitionSettings.school_boundary_enabled !== false && distFromCampus > CAMPUS_RADIUS;
+    // User is physically outside the campus whenever their position exceeds the campus radius.
+    // Outside users route along real public roads via OSRM to the venue gate.
+    const isOutsideCampus = distFromCampus > CAMPUS_RADIUS;
     setIsFarAway(isOutsideCampus); // keep UI state in sync
 
     let graphPath: NavigationNode[] = [];
@@ -980,34 +993,62 @@ export function MapPage() {
     let osrmGuideSteps: string[] | null = null;
     let osrmTotalDistance: number | null = null;
     if (isOutsideCampus && closestEntrance) {
-      const entranceLat = closestEntrance.latitude;
-      const entranceLng = closestEntrance.longitude;
-      const osrmResult = await fetchOSRMRoute(
-        startLat, startLng,
-        entranceLat, entranceLng,
-        startLabel,
-        closestEntrance.label || 'School Entrance'
-      );
+      const destKey = selectedDestinationStoreId || selectedDestinationNodeId || 'campus-gate';
+      const cached = lastOSRMRouteRef.current;
+      // Re-use cached street route if user hasn't moved > 35 meters and destination hasn't changed.
+      // This prevents rapid GPS jitter from overwhelming public OSRM servers and getting rate-limited (HTTP 429).
+      const canUseCache =
+        cached &&
+        cached.destId === destKey &&
+        getDistance(startLat, startLng, cached.startLat, cached.startLng) < 35;
 
-      if (osrmResult && osrmResult.nodes.length > 1) {
-        // Use all OSRM nodes except the last one (entrance) —
-        // the entrance is re-appended from the graph to ensure exact coordinate match.
-        outdoorNodes = osrmResult.nodes.slice(0, -1);
-        // Preserve OSRM's rich turn-by-turn instructions for the guide panel
-        osrmGuideSteps = osrmResult.guideSteps;
-        osrmTotalDistance = osrmResult.totalDistanceMeters;
+      if (canUseCache) {
+        outdoorNodes = cached.nodes;
+        osrmGuideSteps = cached.guideSteps;
+        osrmTotalDistance = cached.totalDistance;
       } else {
-        // OSRM failed — single virtual node (straight-line fallback to entrance)
-        outdoorNodes = [{
-          id: 'outdoor-start-virtual',
-          label: startLabel,
-          latitude: startLat,
-          longitude: startLng,
-          floor: null,
-          type: 'poi',
-          store_id: null,
-          created_at: new Date().toISOString()
-        }];
+        const entranceLat = closestEntrance.latitude;
+        const entranceLng = closestEntrance.longitude;
+        const osrmResult = await fetchOSRMRoute(
+          startLat, startLng,
+          entranceLat, entranceLng,
+          startLabel,
+          closestEntrance.label || 'School Entrance'
+        );
+
+        if (osrmResult && osrmResult.nodes.length > 1) {
+          // Use all OSRM nodes except the last one (entrance) —
+          // the entrance is re-appended from the graph to ensure exact coordinate match.
+          outdoorNodes = osrmResult.nodes.slice(0, -1);
+          // Preserve OSRM's rich turn-by-turn instructions for the guide panel
+          osrmGuideSteps = osrmResult.guideSteps;
+          osrmTotalDistance = osrmResult.totalDistanceMeters;
+          lastOSRMRouteRef.current = {
+            nodes: outdoorNodes,
+            guideSteps: osrmGuideSteps,
+            totalDistance: osrmTotalDistance,
+            startLat,
+            startLng,
+            destId: destKey,
+          };
+        } else if (cached && cached.destId === destKey) {
+          // Network or rate-limit failure on re-fetch: KEEP the previous street route! NEVER snap back to straight line!
+          outdoorNodes = cached.nodes;
+          osrmGuideSteps = cached.guideSteps;
+          osrmTotalDistance = cached.totalDistance;
+        } else {
+          // OSRM failed with no previous route — single virtual node (straight-line fallback to entrance)
+          outdoorNodes = [{
+            id: 'outdoor-start-virtual',
+            label: startLabel,
+            latitude: startLat,
+            longitude: startLng,
+            floor: null,
+            type: 'poi',
+            store_id: null,
+            created_at: new Date().toISOString()
+          }];
+        }
       }
     }
 

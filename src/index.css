@@ -2560,13 +2560,14 @@ html, body, #root {
   .map-mock-active-banner .desktop-mock-text { display: none !important; }
   .map-mock-active-banner .mobile-mock-text { display: inline !important; }
 
-  /* Mobile GPS banner placement below topbar */
+  /* Mobile GPS banner placement cleanly below topbar + search panel */
   .gps-banner {
-    top: calc(54px + var(--safe-top, 0px) + 0.5rem) !important;
+    top: calc(54px + var(--safe-top, 0px) + 3.8rem) !important;
     width: calc(100% - 1.5rem) !important;
     max-width: 440px !important;
     left: 50% !important;
     transform: translateX(-50%) !important;
+    z-index: 1002 !important;
   }
 
   /* ── Mobile Map Bottom Controls Tiering (Above Bottom Nav Bar) ── */
@@ -2730,14 +2731,12 @@ html, body, #root {
     font-size: clamp(1rem, 4vw, 1.25rem) !important;
   }
 
-  /* GPS banner full width */
+  /* GPS banner width on small screen */
   .gps-banner {
-    top: var(--safe-top);
-    width: 100%;
-    max-width: 100%;
-    left: 0;
-    transform: none;
-    border-radius: 0;
+    top: calc(54px + var(--safe-top, 0px) + 3.8rem) !important;
+    width: calc(100% - 1rem) !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
   }
 }
 

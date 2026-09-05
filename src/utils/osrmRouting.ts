@@ -79,12 +79,24 @@ export async function fetchOSRMRoute(
   startLabel = 'Your Location',
   targetLabel = 'Destination'
 ): Promise<OSRMRouteResult | null> {
-  // Primary: public OSRM demo server (foot profile = same as walking)
-  // Secondary: router.project-osrm.org with driving (last resort, less accurate for pedestrians)
-  const ENDPOINTS = [
-    'https://router.project-osrm.org/route/v1/foot/',
-    'https://routing.openstreetmap.de/routed-foot/route/v1/driving/',
-  ];
+  // Approximate distance to choose the most suitable OSRM routing profile:
+  // For long outside trips (> 2.5km, like traveling between cities), driving profile routes along highways and major roads.
+  // For local outdoor walking (< 2.5km around the school/neighborhood), foot profile prioritizes footpaths and sidewalks.
+  const dLat = (endLat - startLat) * 111139;
+  const dLng = (endLng - startLng) * 111139 * Math.cos((startLat * Math.PI) / 180);
+  const straightLineDist = Math.hypot(dLat, dLng);
+
+  const ENDPOINTS = straightLineDist > 2500
+    ? [
+        'https://router.project-osrm.org/route/v1/driving/',
+        'https://routing.openstreetmap.de/routed-car/route/v1/driving/',
+        'https://router.project-osrm.org/route/v1/foot/',
+      ]
+    : [
+        'https://router.project-osrm.org/route/v1/foot/',
+        'https://routing.openstreetmap.de/routed-foot/route/v1/foot/',
+        'https://router.project-osrm.org/route/v1/driving/',
+      ];
 
   let data: any = null;
 
