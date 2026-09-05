@@ -204,6 +204,7 @@ export function AdminDashboardPage() {
         premises_center_longitude: parseFloat(premisesLng) || 80.401000,
         premises_radius_meters: parseFloat(premisesRadius) || 150,
         school_boundary_enabled: enabled,
+        show_school_boundary: enabled,
       };
 
       const announcementPayload = {
@@ -229,7 +230,7 @@ export function AdminDashboardPage() {
           setSettingsId(data[0].id);
         }
       }
-      setToastMessage(enabled ? 'School Boundary Enabled: Geofence restriction active' : 'School Boundary Disabled: Free visitor navigation enabled');
+      setToastMessage(enabled ? 'School Boundary Enabled: Showing on map' : 'School Boundary Disabled: Hidden from map');
       setTimeout(() => setToastMessage(null), 3500);
     } catch (err) {
       console.error('Error toggling school boundary:', err);
@@ -251,6 +252,7 @@ export function AdminDashboardPage() {
         premises_center_longitude: parseFloat(premisesLng),
         premises_radius_meters: parseFloat(premisesRadius),
         school_boundary_enabled: schoolBoundaryEnabled,
+        show_school_boundary: schoolBoundaryEnabled,
       };
 
       if (isNaN(payload.entrance_latitude) || isNaN(payload.entrance_longitude) || isNaN(payload.premises_radius_meters)) {
@@ -459,7 +461,7 @@ export function AdminDashboardPage() {
                       boxShadow: schoolBoundaryEnabled ? '0 0 8px #22c55e' : 'none',
                     }}
                   />
-                  {schoolBoundaryEnabled ? 'Boundary Active' : 'Boundary Disabled'}
+                  {schoolBoundaryEnabled ? 'Showing on Map' : 'Hidden from Map'}
                 </span>
               </div>
 
@@ -493,12 +495,12 @@ export function AdminDashboardPage() {
                     </div>
                     <div>
                       <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#f8fafc' }}>
-                        School Boundary Enforcement
+                        Show School Boundary on Map
                       </div>
                       <div style={{ fontSize: '0.72rem', color: 'var(--color-muted)', lineHeight: 1.3 }}>
                         {schoolBoundaryEnabled
-                          ? 'Enforced: Visitors outside campus see out-of-premises warning.'
-                          : 'Disabled: All visitors can navigate without geofence barriers.'}
+                          ? 'Showing on Map: School perimeter boundary lines & geofence are visible on visitor maps.'
+                          : 'Hidden from Map: The boundary lines and geofence circle are hidden from visitor maps.'}
                       </div>
                     </div>
                   </div>

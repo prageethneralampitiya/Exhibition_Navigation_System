@@ -183,41 +183,21 @@ export function MapView({
     boundaryLayerRef.current.clearLayers();
 
     if (showSchoolBoundary) {
-      // Kalawana School Grounds Perimeter Boundary polygon
-      const schoolGroundsCoords: L.LatLngTuple[] = [
-        [6.5342, 80.3992],
-        [6.5342, 80.4024],
-        [6.5365, 80.4024],
-        [6.5365, 80.3992],
-      ];
-
-      const boundaryPolygon = L.polygon(schoolGroundsCoords, {
-        color: '#a855f7',
-        weight: 2.5,
-        opacity: 0.85,
-        dashArray: '6, 6',
-        fillColor: '#6366f1',
-        fillOpacity: 0.08,
-      });
-
-      boundaryPolygon.bindTooltip('🏫 Kalawana School Grounds Boundary', {
-        permanent: false,
-        direction: 'center',
-        className: 'school-boundary-tooltip',
-      });
-
-      boundaryLayerRef.current.addLayer(boundaryPolygon);
-
       // Subtle geofence circle around premises center
       if (boundaryCenter && boundaryRadius) {
         const geofenceCircle = L.circle([boundaryCenter.lat, boundaryCenter.lng], {
           radius: boundaryRadius,
-          color: '#22d3ee',
-          weight: 1.5,
-          opacity: 0.45,
-          dashArray: '4, 6',
-          fillColor: '#22d3ee',
-          fillOpacity: 0.03,
+          color: '#06b6d4',
+          weight: 2,
+          opacity: 0.6,
+          dashArray: '6, 6',
+          fillColor: '#06b6d4',
+          fillOpacity: 0.04,
+        });
+        geofenceCircle.bindTooltip(`🌐 Venue Geofence (${Math.round(boundaryRadius)}m)`, {
+          permanent: false,
+          direction: 'top',
+          className: 'school-boundary-tooltip',
         });
         boundaryLayerRef.current.addLayer(geofenceCircle);
       }

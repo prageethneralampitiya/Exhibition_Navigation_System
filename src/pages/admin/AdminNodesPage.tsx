@@ -121,6 +121,7 @@ export function AdminNodesPage() {
       }
 
       parsed.school_boundary_enabled = nextState;
+      parsed.show_school_boundary = nextState;
 
       const announcementPayload = {
         title: 'System Exhibition Settings',
@@ -711,8 +712,8 @@ export function AdminNodesPage() {
             disabled={togglingBoundary}
             title={
               schoolBoundaryEnabled
-                ? 'School boundary is Active & Enforced. Click to disable geofence.'
-                : 'School boundary is Disabled (Free navigation). Click to enable.'
+                ? 'School boundary is Shown on map. Click to hide.'
+                : 'School boundary is Hidden from map. Click to show.'
             }
             style={{
               display: 'flex',
@@ -730,7 +731,7 @@ export function AdminNodesPage() {
             }}
           >
             {schoolBoundaryEnabled ? <ShieldCheck size={16} /> : <ShieldAlert size={16} />}
-            <span>Boundary: {schoolBoundaryEnabled ? 'Active' : 'Disabled'}</span>
+            <span>Boundary: {schoolBoundaryEnabled ? 'Shown on Map' : 'Hidden from Map'}</span>
           </button>
 
           <button className="btn btn-ghost" onClick={handleOpenDrawPath} style={{ border: '1px dashed var(--color-accent)', color: 'var(--color-accent)' }}>

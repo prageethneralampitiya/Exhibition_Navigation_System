@@ -248,43 +248,6 @@ export function Map3DPage() {
 
 
 
-      // ── Kalawana School Grounds Perimeter Boundary ─────────
-      m.addSource('school-campus-boundary', {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
-          properties: {},
-          geometry: {
-            type: 'Polygon',
-            coordinates: [[
-              [80.3992, 6.5342],
-              [80.4024, 6.5342],
-              [80.4024, 6.5365],
-              [80.3992, 6.5365],
-              [80.3992, 6.5342],
-            ]],
-          },
-        },
-      });
-
-      m.addLayer({
-        id: 'school-boundary-fill',
-        type: 'fill',
-        source: 'school-campus-boundary',
-        paint: { 'fill-color': '#6366f1', 'fill-opacity': 0.08 },
-      });
-
-      m.addLayer({
-        id: 'school-boundary-line',
-        type: 'line',
-        source: 'school-campus-boundary',
-        paint: {
-          'line-color': '#a855f7',
-          'line-width': 3,
-          'line-opacity': 0.9,
-          'line-dasharray': [4, 2],
-        },
-      });
     });
 
     return () => {

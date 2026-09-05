@@ -236,6 +236,50 @@ html, body, #root {
   box-shadow: var(--shadow-glow);
 }
 
+/* ── Map Page Layout Container ────────────────────────── */
+.map-page-wrapper {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── School Boundary Styles ────────────────────────── */
+.school-boundary-badge {
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(168, 85, 247, 0.6);
+  color: #e9d5ff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 12px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.school-boundary-tooltip {
+  background: rgba(15, 23, 42, 0.92) !important;
+  color: #f8fafc !important;
+  border: 1px solid rgba(168, 85, 247, 0.6) !important;
+  border-radius: 8px !important;
+  padding: 4px 10px !important;
+  font-size: 0.75rem !important;
+  font-weight: 700 !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4) !important;
+}
+.school-boundary-tooltip::before {
+  border-top-color: rgba(168, 85, 247, 0.6) !important;
+}
+
 /* ── GPS Banner ──────────────────────────────────────── */
 .gps-banner {
   position: fixed;
@@ -2498,8 +2542,16 @@ html, body, #root {
   /* Hide the subtitle text on mobile to save vertical space */
   .map-brand-text span { display: none !important; }
 
-  /* Show the mobile bottom nav bar */
-  .map-mobile-bottomnav { display: flex !important; }
+  /* Show the mobile bottom nav bar pinned firmly to screen bottom */
+  .map-mobile-bottomnav {
+    display: flex !important;
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    z-index: 1001 !important;
+  }
 
   /* ── Fix Leaflet zoom buttons hidden behind topbar ── */
   /* Leaflet injects its controls inside .leaflet-top.leaflet-left */

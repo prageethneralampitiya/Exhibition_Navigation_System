@@ -378,7 +378,9 @@ export function MapPage() {
             premises_center_latitude: parsed.premises_center_latitude ?? 6.535472,
             premises_center_longitude: parsed.premises_center_longitude ?? 80.401000,
             premises_radius_meters: parsed.premises_radius_meters ?? 150.0,
-            school_boundary_enabled: parsed.school_boundary_enabled !== false,
+            school_boundary_enabled: parsed.show_school_boundary !== undefined
+              ? parsed.show_school_boundary !== false
+              : parsed.school_boundary_enabled !== false,
           });
         } catch (jsonErr) {
           console.warn('Error parsing settings JSON:', jsonErr);
@@ -1237,6 +1239,54 @@ export function MapPage() {
       }
     }
   };
+
+  const handleToggleBoundaryVisibility = async () => {
+    const nextState = !exhibitionSettings.school_boundary_enabled;
+    setExhibitionSettings((prev) => ({
+      ...prev,
+      school_boundary_enabled: nextState,
+    }));
+
+    try {
+      const { data: settingsRes } = await supabase
+        .from('announcements')
+        .select('*')
+        .eq('type', 'settings')
+        .limit(1);
+
+      let parsed: any = {};
+      let settingsId: string | null = null;
+      if (settingsRes && settingsRes.length > 0) {
+        settingsId = settingsRes[0].id;
+        try {
+          parsed = JSON.parse(settingsRes[0].message);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      parsed.school_boundary_enabled = nextState;
+      parsed.show_school_boundary = nextState;
+
+      const payload = {
+        title: 'System Exhibition Settings',
+        message: JSON.stringify(parsed),
+        type: 'settings',
+        is_active: true,
+      };
+
+      if (settingsId) {
+        await supabase
+          .from('announcements')
+          .update({ ...payload, updated_at: new Date().toISOString() })
+          .eq('id', settingsId);
+      } else {
+        await supabase.from('announcements').insert(payload);
+      }
+    } catch (err) {
+      console.error('Error toggling boundary visibility:', err);
+    }
+  };
   
   // Extract unique categories from stores for the map legend
   const mapCategories = stores.reduce<Array<{ id: string; name: string; color: string | null }>>((acc, store) => {
@@ -1263,7 +1313,7 @@ export function MapPage() {
   return (
     <>
       <GPSPermissionBanner />
-      <div className="home-page" style={{ height: '100vh', display: 'flex', flexDirection: 'column', gap: 0, padding: 0 }}>
+      <div className="map-page-wrapper">
         
         {/* Top Floating Control Bar */}
         <header className="glass map-topbar" style={{
@@ -1360,14 +1410,50 @@ export function MapPage() {
               Stores
             </Link>
             {profile?.role === 'admin' && (
-              <a href="/admin/" className="btn btn-ghost btn-sm" style={{ padding: '0.35rem 0.65rem', border: '1px dashed var(--color-warning)', color: 'var(--color-warning)', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
-                Admin
-              </a>
+              <>
+                <button
+                  onClick={handleToggleBoundaryVisibility}
+                  className="btn btn-ghost btn-sm"
+                  style={{
+                    padding: '0.35rem 0.65rem',
+                    border: `1px solid ${exhibitionSettings.school_boundary_enabled ? 'rgba(168, 85, 247, 0.5)' : 'rgba(255, 255, 255, 0.15)'}`,
+                    color: exhibitionSettings.school_boundary_enabled ? '#c084fc' : 'var(--color-muted)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                  }}
+                  title="Admin: Click to toggle boundary visibility on map"
+                >
+                  🏫 Boundary: {exhibitionSettings.school_boundary_enabled ? 'ON' : 'OFF'}
+                </button>
+                <a href="/admin/" className="btn btn-ghost btn-sm" style={{ padding: '0.35rem 0.65rem', border: '1px dashed var(--color-warning)', color: 'var(--color-warning)', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                  Admin
+                </a>
+              </>
             )}
           </div>
 
           {/* Mobile-only: bell icon inline */}
           <div className="map-topbar-mobile-icons" style={{ display: 'none', gap: '0.35rem', alignItems: 'center', flexShrink: 0 }}>
+            {profile?.role === 'admin' && (
+              <button
+                onClick={handleToggleBoundaryVisibility}
+                className="btn btn-ghost btn-sm"
+                style={{
+                  padding: '0.25rem 0.5rem',
+                  fontSize: '0.68rem',
+                  fontWeight: 700,
+                  borderRadius: '6px',
+                  border: `1px solid ${exhibitionSettings.school_boundary_enabled ? '#a855f7' : 'rgba(255,255,255,0.2)'}`,
+                  color: exhibitionSettings.school_boundary_enabled ? '#c084fc' : '#94a3b8',
+                }}
+                title="Toggle boundary on map"
+              >
+                🏫 {exhibitionSettings.school_boundary_enabled ? 'ON' : 'OFF'}
+              </button>
+            )}
             <button
               onClick={handleOpenAnnouncements}
               className="btn btn-ghost btn-sm btn-icon"
@@ -1385,7 +1471,7 @@ export function MapPage() {
         {/* Mobile bottom quick-nav bar */}
         <nav className="map-mobile-bottomnav" style={{
           display: 'none',
-          position: 'absolute',
+          position: 'fixed',
           bottom: 0,
           left: 0,
           right: 0,
