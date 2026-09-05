@@ -22,6 +22,7 @@ interface MapView3DProps {
   showGraphMesh?: boolean;
   nodes?: NavigationNode[];
   edges?: NavigationEdge[];
+  showSchoolBoundary?: boolean;
 }
 
 export function MapView3D({
@@ -35,6 +36,7 @@ export function MapView3D({
   showGraphMesh = false,
   nodes = [],
   edges = [],
+  showSchoolBoundary = true,
 }: MapView3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -128,6 +130,46 @@ export function MapView3D({
         });
       }
 
+      // ── Kalawana School Grounds Perimeter Boundary ─────────
+      if (!m.getSource('school-campus-boundary')) {
+        m.addSource('school-campus-boundary', {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            properties: {},
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[
+                [80.3992, 6.5342],
+                [80.4024, 6.5342],
+                [80.4024, 6.5365],
+                [80.3992, 6.5365],
+                [80.3992, 6.5342],
+              ]],
+            },
+          },
+        });
+
+        m.addLayer({
+          id: 'school-boundary-fill',
+          type: 'fill',
+          source: 'school-campus-boundary',
+          paint: { 'fill-color': '#6366f1', 'fill-opacity': 0.08 },
+        });
+
+        m.addLayer({
+          id: 'school-boundary-line',
+          type: 'line',
+          source: 'school-campus-boundary',
+          paint: {
+            'line-color': '#a855f7',
+            'line-width': 3,
+            'line-opacity': 0.9,
+            'line-dasharray': [4, 2],
+          },
+        });
+      }
+
       setMapLoaded(true);
     });
 
@@ -143,6 +185,19 @@ export function MapView3D({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally run once — lat/lng on mount only
+
+  // ── Sync School Boundary Visibility ──────────────────────────
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !mapLoaded) return;
+    const visibility = showSchoolBoundary ? 'visible' : 'none';
+    if (m.getLayer('school-boundary-fill')) {
+      m.setLayoutProperty('school-boundary-fill', 'visibility', visibility);
+    }
+    if (m.getLayer('school-boundary-line')) {
+      m.setLayoutProperty('school-boundary-line', 'visibility', visibility);
+    }
+  }, [mapLoaded, showSchoolBoundary]);
 
   // ── 2. Re-centre when parent signals recenter (no active route) ─
   useEffect(() => {

@@ -144,12 +144,13 @@ export function MapPage() {
 
   // Settings & Guided Tour states
   const [exhibitionSettings, setExhibitionSettings] = useState({
-    entrance_latitude: 6.535472,
-    entrance_longitude: 80.401000,
+    entrance_latitude: 6.53586,
+    entrance_longitude: 80.40035,
     entrance_threshold_meters: 20.0,
     premises_center_latitude: 6.535472,
     premises_center_longitude: 80.401000,
     premises_radius_meters: 150.0,
+    school_boundary_enabled: true,
   });
   const exhibitionSettingsRef = useRef(exhibitionSettings);
   useEffect(() => {
@@ -306,8 +307,8 @@ export function MapPage() {
         id: 'kalawana-national-school-landmark',
         name: 'Kalawana National School',
         description: 'Kalawana National School (Central College) · GCP2+5C6, Kalawana',
-        latitude: 6.535472,
-        longitude: 80.401000,
+        latitude: 6.535850,
+        longitude: 80.400900,
         floor_level: 1,
         is_active: true,
         categories: {
@@ -361,12 +362,13 @@ export function MapPage() {
         try {
           const parsed = JSON.parse(settingsData[0].message);
           setExhibitionSettings({
-            entrance_latitude: entranceNode?.latitude ?? parsed.entrance_latitude ?? 6.535472,
-            entrance_longitude: entranceNode?.longitude ?? parsed.entrance_longitude ?? 80.401000,
+            entrance_latitude: entranceNode?.latitude ?? parsed.entrance_latitude ?? 6.53586,
+            entrance_longitude: entranceNode?.longitude ?? parsed.entrance_longitude ?? 80.40035,
             entrance_threshold_meters: parsed.entrance_threshold_meters ?? 20.0,
             premises_center_latitude: parsed.premises_center_latitude ?? 6.535472,
             premises_center_longitude: parsed.premises_center_longitude ?? 80.401000,
             premises_radius_meters: parsed.premises_radius_meters ?? 150.0,
+            school_boundary_enabled: parsed.school_boundary_enabled !== false,
           });
         } catch (jsonErr) {
           console.warn('Error parsing settings JSON:', jsonErr);
@@ -457,13 +459,17 @@ export function MapPage() {
 
         // Proximity and Premises Bounds Checks
         const currentSettings = exhibitionSettingsRef.current;
-        const distToCenter = getDistance(lat, lng, currentSettings.premises_center_latitude, currentSettings.premises_center_longitude);
-        const far = distToCenter > currentSettings.premises_radius_meters;
-        
-        if (bypassBoundaryCheckRef.current) {
+        if (currentSettings.school_boundary_enabled === false) {
           setIsFarAway(false);
         } else {
-          setIsFarAway(far);
+          const distToCenter = getDistance(lat, lng, currentSettings.premises_center_latitude, currentSettings.premises_center_longitude);
+          const far = distToCenter > currentSettings.premises_radius_meters;
+          
+          if (bypassBoundaryCheckRef.current) {
+            setIsFarAway(false);
+          } else {
+            setIsFarAway(far);
+          }
         }
       },
       (error) => {
@@ -482,13 +488,17 @@ export function MapPage() {
       if (node) {
         setUserLat(node.latitude);
         setUserLng(node.longitude);
-        const distToCenter = getDistance(node.latitude, node.longitude, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
-        const far = distToCenter > exhibitionSettings.premises_radius_meters;
-        
-        if (bypassBoundaryCheckRef.current) {
+        if (exhibitionSettings.school_boundary_enabled === false) {
           setIsFarAway(false);
         } else {
-          setIsFarAway(far);
+          const distToCenter = getDistance(node.latitude, node.longitude, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
+          const far = distToCenter > exhibitionSettings.premises_radius_meters;
+          
+          if (bypassBoundaryCheckRef.current) {
+            setIsFarAway(false);
+          } else {
+            setIsFarAway(far);
+          }
         }
       }
     }
@@ -499,13 +509,17 @@ export function MapPage() {
       setUserLat(lat);
       setUserLng(lng);
 
-      const distToCenter = getDistance(lat, lng, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
-      const far = distToCenter > exhibitionSettings.premises_radius_meters;
-      
-      if (bypassBoundaryCheckRef.current) {
+      if (exhibitionSettings.school_boundary_enabled === false) {
         setIsFarAway(false);
       } else {
-        setIsFarAway(far);
+        const distToCenter = getDistance(lat, lng, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
+        const far = distToCenter > exhibitionSettings.premises_radius_meters;
+        
+        if (bypassBoundaryCheckRef.current) {
+          setIsFarAway(false);
+        } else {
+          setIsFarAway(far);
+        }
       }
     }
   }, [mockMode, exhibitionSettings]);
@@ -522,8 +536,8 @@ export function MapPage() {
             n.label.toLowerCase().includes('node 1') ||
             n.label.toLowerCase().includes('entrance')
         ) || nodes[0];
-      const lat = entranceNode ? entranceNode.latitude : (exhibitionSettings.entrance_latitude || 6.535472);
-      const lng = entranceNode ? entranceNode.longitude : (exhibitionSettings.entrance_longitude || 80.401000);
+      const lat = entranceNode ? entranceNode.latitude : (exhibitionSettings.entrance_latitude || 6.53586);
+      const lng = entranceNode ? entranceNode.longitude : (exhibitionSettings.entrance_longitude || 80.40035);
       setUserLat(lat);
       setUserLng(lng);
       setIsFarAway(false);
@@ -538,21 +552,27 @@ export function MapPage() {
       const lng = exhibitionSettings.premises_center_longitude + 0.006;
       setUserLat(lat);
       setUserLng(lng);
-      if (!bypassBoundaryCheckRef.current) {
+      if (exhibitionSettings.school_boundary_enabled !== false && !bypassBoundaryCheckRef.current) {
         setIsFarAway(true);
+      } else {
+        setIsFarAway(false);
       }
     } else {
       const node = nodes.find(n => n.id === presetOrNodeId);
       if (node) {
         setUserLat(node.latitude);
         setUserLng(node.longitude);
-        const distToCenter = getDistance(node.latitude, node.longitude, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
-        const far = distToCenter > exhibitionSettings.premises_radius_meters;
-        
-        if (bypassBoundaryCheckRef.current) {
+        if (exhibitionSettings.school_boundary_enabled === false) {
           setIsFarAway(false);
         } else {
-          setIsFarAway(far);
+          const distToCenter = getDistance(node.latitude, node.longitude, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
+          const far = distToCenter > exhibitionSettings.premises_radius_meters;
+          
+          if (bypassBoundaryCheckRef.current) {
+            setIsFarAway(false);
+          } else {
+            setIsFarAway(far);
+          }
         }
       }
     }
@@ -661,8 +681,8 @@ export function MapPage() {
           startLatVal = entranceNode.latitude;
           startLngVal = entranceNode.longitude;
         } else {
-          startLatVal = exhibitionSettings.entrance_latitude || 6.535472;
-          startLngVal = exhibitionSettings.entrance_longitude || 80.401000;
+          startLatVal = exhibitionSettings.entrance_latitude || 6.53586;
+          startLngVal = exhibitionSettings.entrance_longitude || 80.40035;
         }
       }
     }
@@ -918,14 +938,16 @@ export function MapPage() {
     const CAMPUS_CENTER_LAT = exhibitionSettings.premises_center_latitude || 6.535472;
     const CAMPUS_CENTER_LNG = exhibitionSettings.premises_center_longitude || 80.401000;
 
-    // Find best entrance node (type === 'entrance') — the handoff point between outdoor and indoor
+    // Find best entrance node (type === 'entrance') — the handoff point between outdoor and indoor.
+    // Use the entrance closest to the USER's position, not the campus center,
+    // so multi-entrance campuses route to the correct gate.
     const entranceNodes = nodes.filter((n) => n.type === 'entrance');
     const closestEntrance = entranceNodes.length > 0
-      ? findClosestNode(CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG, entranceNodes)
+      ? findClosestNode(startLat, startLng, entranceNodes)
       : (nodes.length > 0 ? findClosestNode(CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG, nodes) : null);
 
     const distFromCampus = getDistance(startLat, startLng, CAMPUS_CENTER_LAT, CAMPUS_CENTER_LNG);
-    const isOutsideCampus = distFromCampus > CAMPUS_RADIUS;
+    const isOutsideCampus = exhibitionSettings.school_boundary_enabled !== false && distFromCampus > CAMPUS_RADIUS;
     setIsFarAway(isOutsideCampus); // keep UI state in sync
 
     let graphPath: NavigationNode[] = [];
@@ -955,6 +977,8 @@ export function MapPage() {
 
     // 4. Outdoor segment via OSRM (only when user is outside campus)
     let outdoorNodes: NavigationNode[] = [];
+    let osrmGuideSteps: string[] | null = null;
+    let osrmTotalDistance: number | null = null;
     if (isOutsideCampus && closestEntrance) {
       const entranceLat = closestEntrance.latitude;
       const entranceLng = closestEntrance.longitude;
@@ -966,10 +990,14 @@ export function MapPage() {
       );
 
       if (osrmResult && osrmResult.nodes.length > 1) {
-        // Use OSRM nodes but exclude the last one (entrance) since graphPath already starts there
+        // Use all OSRM nodes except the last one (entrance) —
+        // the entrance is re-appended from the graph to ensure exact coordinate match.
         outdoorNodes = osrmResult.nodes.slice(0, -1);
+        // Preserve OSRM's rich turn-by-turn instructions for the guide panel
+        osrmGuideSteps = osrmResult.guideSteps;
+        osrmTotalDistance = osrmResult.totalDistanceMeters;
       } else {
-        // OSRM failed — straight line from user to entrance as fallback
+        // OSRM failed — single virtual node (straight-line fallback to entrance)
         outdoorNodes = [{
           id: 'outdoor-start-virtual',
           label: startLabel,
@@ -1095,8 +1123,21 @@ export function MapPage() {
       const steps: string[] = [];
 
       if (isOutsideCampus) {
-        // Outside campus: guide steps are about reaching the entrance gate
-        if (finalRoute.length > 1) {
+        // Outside campus: prefer OSRM's rich turn-by-turn guide steps.
+        // Fall back to heading-based steps if OSRM had no steps data.
+        if (osrmGuideSteps && osrmGuideSteps.length > 1) {
+          steps.push(...osrmGuideSteps);
+          distanceMeters = osrmTotalDistance ?? 0;
+          // Add total from remaining finalRoute nodes not in OSRM (entrance extra segment)
+          for (let i = 0; i < finalRoute.length - 1; i++) {
+            const from = finalRoute[i];
+            const to = finalRoute[i + 1];
+            // Only count any entrance gap not covered by OSRM
+            if (i >= outdoorNodes.length) {
+              distanceMeters += getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
+            }
+          }
+        } else if (finalRoute.length > 1) {
           steps.push(`Start from ${finalRoute[0].label}`);
           for (let i = 0; i < finalRoute.length - 1; i++) {
             const from = finalRoute[i];
@@ -1235,10 +1276,12 @@ export function MapPage() {
             >
               📍 Kalawana School
             </button>
+            {/* 3D View Link Button (hidden from UI) */}
             <Link
               to="/map3d"
               className="btn btn-sm"
               style={{
+                display: 'none',
                 padding: '0.35rem 0.65rem',
                 background: 'rgba(168, 85, 247, 0.15)',
                 color: '#a855f7',
@@ -1338,7 +1381,8 @@ export function MapPage() {
 
         {/* Full Screen Map Canvas Container */}
         <div style={{ flex: 1, width: '100%', height: '100%', position: 'relative' }}>
-          {mapTheme === '3d' ? (
+          {/* 3D Map View hidden from UI, preserved in codebase */}
+          <div style={{ display: 'none' }}>
             <MapView3D
               latitude={mapCenterLat}
               longitude={mapCenterLng}
@@ -1349,9 +1393,10 @@ export function MapPage() {
               showGraphMesh={showMesh}
               nodes={nodes}
               edges={edges}
+              showSchoolBoundary={exhibitionSettings.school_boundary_enabled}
             />
-          ) : (
-            <MapView
+          </div>
+          <MapView
               latitude={mapCenterLat}
               longitude={mapCenterLng}
               stores={stores}
@@ -1359,7 +1404,7 @@ export function MapPage() {
               userLng={userLng}
               userHeading={mockMode ? null : userHeading}
               route={calculatedRoute}
-              theme={mapTheme as 'dark' | 'streets' | 'light'}
+              theme={(mapTheme === '3d' ? 'dark' : mapTheme) as 'dark' | 'streets' | 'light'}
               showGraphMesh={showMesh}
               nodes={nodes}
               edges={edges}
@@ -1367,13 +1412,18 @@ export function MapPage() {
               outdoorSegmentCount={outdoorSegmentCount}
               tourStops={guidedTourActive ? tourStops : []}
               visitedStallIds={visitedStallIds}
+              showSchoolBoundary={exhibitionSettings.school_boundary_enabled}
+              boundaryCenter={{
+                lat: exhibitionSettings.premises_center_latitude,
+                lng: exhibitionSettings.premises_center_longitude,
+              }}
+              boundaryRadius={exhibitionSettings.premises_radius_meters}
               onSelectStore={(storeId) => {
                 setSelectedDestinationStoreId(storeId);
                 const st = stores.find(s => s.id === storeId);
                 if (st) setStoreSearchQuery(st.name);
               }}
             />
-          )}
 
           {/* Floating Recenter Location Button */}
           <button
@@ -1381,8 +1431,8 @@ export function MapPage() {
             className="btn btn-primary map-recenter-btn"
             style={{
               position: 'absolute',
-              bottom: navigationActive ? '230px' : '20px',
-              right: '20px',
+              bottom: navigationActive ? '270px' : '114px',
+              right: '16px',
               zIndex: 1000,
               borderRadius: '50%',
               width: '46px',
@@ -1402,8 +1452,8 @@ export function MapPage() {
           {/* Floating Category Legend overlay */}
           <div className="glass map-legend-panel" style={{
             position: 'absolute',
-            bottom: navigationActive ? '230px' : '20px',
-            left: '20px',
+            bottom: navigationActive ? '230px' : '44px',
+            left: '16px',
             zIndex: 1000,
             padding: showLegend ? '0.75rem 1rem' : '0.5rem 0.75rem',
             borderRadius: '10px',
@@ -1476,213 +1526,141 @@ export function MapPage() {
             )}
           </div>
 
-          {/* Floating Search Panel */}
-          <div className="map-search-panel" style={{
-            position: 'absolute',
-            top: '4.85rem',
-            left: '1rem',
-            width: '320px',
-            maxHeight: '350px',
-            zIndex: 999,
-            display: 'flex',
-            flexDirection: 'column',
-          }}>
-            <div className="glass" style={{ padding: '0.5rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', borderRadius: '12px' }}>
-              <Search size={16} color="var(--color-muted)" />
-              <input
-                type="text"
-                placeholder="Search target store/booth..."
-                className="search-input"
-                style={{ background: 'transparent', border: 'none', width: '100%', outline: 'none', padding: '0.25rem 0' }}
-                value={storeSearchQuery}
-                onChange={(e) => setStoreSearchQuery(e.target.value)}
-                onFocus={() => setIsSearchFocused(true)}
-              />
-              {storeSearchQuery && (
-                <button
-                  onClick={() => {
-                    setStoreSearchQuery('');
-                    setSelectedDestinationStoreId('');
-                  }}
-                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                >
-                  <X size={14} color="var(--color-muted)" />
-                </button>
-              )}
-            </div>
-
-            {/* Live dropdown results */}
-            {isSearchFocused && filteredSearchStores.length > 0 && (
-              <div className="glass" style={{
-                marginTop: '0.35rem',
-                background: 'var(--color-surface)',
-                borderRadius: '8px',
-                maxHeight: '200px',
-                overflowY: 'auto',
-                padding: '0.25rem 0',
+          {/* Left Floating Controls Stack (Search & Alerts) */}
+          <div
+            className="map-left-controls-stack"
+            style={{
+              position: 'absolute',
+              top: '4.85rem',
+              left: '1rem',
+              width: '320px',
+              zIndex: 999,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.65rem',
+              pointerEvents: 'none',
+            }}
+          >
+            {/* Floating Search Panel */}
+            <div
+              className="map-search-panel"
+              style={{
+                width: '100%',
+                maxHeight: '350px',
                 display: 'flex',
                 flexDirection: 'column',
-              }}>
-                {filteredSearchStores.map((st) => (
-                  <button
-                    key={st.id}
-                    onClick={() => {
-                      setSelectedDestinationStoreId(st.id);
-                      setStoreSearchQuery(st.name);
-                      setIsSearchFocused(false);
-                    }}
-                    style={{
-                      background: 'transparent',
-                      border: 'none',
-                      textAlign: 'left',
-                      padding: '0.65rem 1rem',
-                      color: 'var(--color-text)',
-                      fontSize: '0.85rem',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      transition: 'background 0.2s',
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.03)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    <span>{st.name}</span>
-                    <span style={{ fontSize: '0.7rem', color: 'var(--color-muted)' }}>Floor {st.floor || '1'}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Map Controls (Theme & Admin Graph Mesh toggle) */}
-          <div className="glass map-controls-panel" style={{
-            position: 'absolute',
-            top: '4.85rem',
-            right: '1rem',
-            width: '200px',
-            zIndex: 999,
-            padding: '0.75rem',
-            borderRadius: '12px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.65rem'
-          }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 700, marginBottom: '0.25rem', textTransform: 'uppercase' }}>
-                Map Style
-              </label>
-              <select
-                className="form-select"
-                style={{ fontSize: '0.8rem', padding: '0.35rem 0.5rem', width: '100%' }}
-                value={mapTheme}
-                onChange={(e) => setMapTheme(e.target.value as any)}
-              >
-                <option value="dark">Dark Matter</option>
-                <option value="streets">OSM Streets</option>
-                <option value="light">Positron Light</option>
-                <option value="3d">🏙️ 3D Buildings</option>
-              </select>
-            </div>
-
-            {profile?.role === 'admin' && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+                pointerEvents: 'auto',
+              }}
+            >
+              <div className="glass" style={{ padding: '0.5rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', borderRadius: '12px' }}>
+                <Search size={16} color="var(--color-muted)" />
                 <input
-                  type="checkbox"
-                  id="mesh-toggle"
-                  checked={showMesh}
-                  onChange={(e) => setShowMesh(e.target.checked)}
-                  style={{ cursor: 'pointer' }}
+                  type="text"
+                  placeholder="Search target store/booth..."
+                  className="search-input"
+                  style={{ background: 'transparent', border: 'none', width: '100%', outline: 'none', padding: '0.25rem 0' }}
+                  value={storeSearchQuery}
+                  onChange={(e) => setStoreSearchQuery(e.target.value)}
+                  onFocus={() => setIsSearchFocused(true)}
                 />
-                <label htmlFor="mesh-toggle" style={{ fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}>
-                  Show Path Nodes
-                </label>
+                {storeSearchQuery && (
+                  <button
+                    onClick={() => {
+                      setStoreSearchQuery('');
+                      setSelectedDestinationStoreId('');
+                    }}
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                  >
+                    <X size={14} color="var(--color-muted)" />
+                  </button>
+                )}
               </div>
-            )}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
-              <label style={{ display: 'block', fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
-                Guided Tour
-              </label>
-              <button
-                className="btn btn-primary btn-sm"
-                style={{ width: '100%', fontSize: '0.8rem', padding: '0.35rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
-                onClick={handleOpenTourPlanner}
-              >
-                <Compass size={14} />
-                {guidedTourActive ? 'Restart Tour' : 'Start Tour'}
-              </button>
-              <button
-                className="btn btn-ghost btn-sm"
-                style={{ width: '100%', fontSize: '0.75rem', padding: '0.3rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.08)' }}
-                onClick={handleOpenTourPlanner}
-              >
-                <CheckSquare size={13} />
-                <span>Visited Tracker ({visitedStallIds.length}/{(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).length})</span>
-              </button>
-              {guidedTourActive && (
-                <button
-                  className="btn btn-ghost btn-sm"
-                  style={{ width: '100%', fontSize: '0.75rem', padding: '0.25rem 0.5rem', color: 'var(--color-danger)' }}
-                  onClick={handleCancelTour}
-                >
-                  Cancel Tour
-                </button>
+              {/* Live dropdown results */}
+              {isSearchFocused && filteredSearchStores.length > 0 && (
+                <div className="glass" style={{
+                  marginTop: '0.35rem',
+                  background: 'var(--color-surface)',
+                  borderRadius: '8px',
+                  maxHeight: '200px',
+                  overflowY: 'auto',
+                  padding: '0.25rem 0',
+                  display: 'flex',
+                  flexDirection: 'column',
+                }}>
+                  {filteredSearchStores.map((st) => (
+                    <button
+                      key={st.id}
+                      onClick={() => {
+                        setSelectedDestinationStoreId(st.id);
+                        setStoreSearchQuery(st.name);
+                        setIsSearchFocused(false);
+                      }}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        textAlign: 'left',
+                        padding: '0.65rem 1rem',
+                        color: 'var(--color-text)',
+                        fontSize: '0.85rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        transition: 'background 0.2s',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.03)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                    >
+                      <span>{st.name}</span>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--color-muted)' }}>Floor {st.floor || '1'}</span>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
-            {/* Testing / Mock Location Mode Toggle Button */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
-              <label style={{ display: 'block', fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
-                Testing Tools
-              </label>
-              <button
-                className="btn btn-sm"
-                style={{
-                  width: '100%',
-                  fontSize: '0.78rem',
-                  padding: '0.35rem 0.5rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.35rem',
-                  background: mockMode ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                  border: `1px solid ${mockMode ? 'rgba(245, 158, 11, 0.5)' : 'var(--color-border)'}`,
-                  color: mockMode ? '#fbbf24' : 'var(--color-text)',
-                  fontWeight: 700
-                }}
-                onClick={() => {
-                  setMockMode(prev => {
-                    const next = !prev;
-                    if (next && (userLat === null || userLng === null)) {
-                      const entranceNode =
-                        nodes.find(
-                          (n) =>
-                            n.type === 'entrance' ||
-                            n.label.toLowerCase().includes('node 1') ||
-                            n.label.toLowerCase().includes('entrance')
-                        ) || nodes[0];
-                      if (entranceNode) {
-                        setUserLat(entranceNode.latitude);
-                        setUserLng(entranceNode.longitude);
-                      } else {
-                        setUserLat(exhibitionSettings.entrance_latitude || 6.535472);
-                        setUserLng(exhibitionSettings.entrance_longitude || 80.401000);
-                      }
-                      setIsFarAway(false);
-                    }
-                    return next;
-                  });
-                }}
-              >
-                <Navigation size={13} />
-                <span>{mockMode ? '📍 Mock Location ON' : '🎯 Enable Mock GPS'}</span>
-              </button>
-            </div>
+
+            {/* Boundary Check Bypassed Badge */}
+            {bypassBoundaryCheck && exhibitionSettings.school_boundary_enabled !== false && (
+              <div className="glass" style={{
+                padding: '0.45rem 0.75rem',
+                borderRadius: '20px',
+                background: 'rgba(234, 179, 8, 0.15)',
+                border: '1px solid rgba(234, 179, 8, 0.4)',
+                color: '#fde047',
+                fontSize: '0.75rem',
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                backdropFilter: 'blur(8px)',
+                pointerEvents: 'auto',
+                width: 'fit-content',
+                boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
+              }}>
+                <span>⚠️ Premises Boundary Bypassed</span>
+                <button
+                  onClick={() => setBypassBoundaryCheck(false)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    fontWeight: 800,
+                    fontSize: '0.85rem',
+                    lineHeight: 1
+                  }}
+                  title="Restore boundary check"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Active Mock Location Top Banner */}
           {mockMode && (
-            <div className="glass" style={{
+            <div className="glass map-mock-active-banner" style={{
               position: 'absolute',
               top: '1rem',
               left: '50%',
@@ -1699,12 +1677,14 @@ export function MapPage() {
               alignItems: 'center',
               gap: '0.75rem',
               boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-              backdropFilter: 'blur(10px)'
+              backdropFilter: 'blur(10px)',
+              whiteSpace: 'nowrap',
             }}>
-              <span>📍 Mock Location Mode Active — Tap map to set location</span>
+              <span className="desktop-mock-text">📍 Mock Location Mode Active — Tap map to set location</span>
+              <span className="mobile-mock-text" style={{ display: 'none' }}>📍 Mock GPS Active (Tap map)</span>
               <button
                 className="btn btn-ghost btn-sm"
-                style={{ padding: '0.15rem 0.5rem', fontSize: '0.72rem', color: '#fff', background: 'rgba(255,255,255,0.12)', borderRadius: '12px' }}
+                style={{ padding: '0.15rem 0.5rem', fontSize: '0.72rem', color: '#fff', background: 'rgba(255,255,255,0.12)', borderRadius: '12px', flexShrink: 0 }}
                 onClick={() => setMockMode(false)}
               >
                 Use Real GPS
@@ -1712,141 +1692,242 @@ export function MapPage() {
             </div>
           )}
 
-          {/* Interactive Mock Location Control Panel */}
-          {mockMode && (
-            <div className="glass map-mock-panel" style={{
+          {/* Right Floating Controls Stack (Settings, Tour & Mock GPS) */}
+          <div
+            className="map-right-controls-stack"
+            style={{
               position: 'absolute',
-              top: profile?.role === 'admin' ? '18rem' : '15rem',
+              top: '4.85rem',
               right: '1rem',
               width: '220px',
               zIndex: 999,
-              padding: '0.85rem',
-              borderRadius: '14px',
               display: 'flex',
               flexDirection: 'column',
-              gap: '0.6rem',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
-              border: '1px solid rgba(245, 158, 11, 0.4)',
-              background: 'rgba(15, 23, 42, 0.88)',
-              backdropFilter: 'blur(12px)'
+              gap: '0.65rem',
+              maxHeight: 'calc(100vh - 6.5rem)',
+              overflowY: 'auto',
+              pointerEvents: 'none',
+              scrollbarWidth: 'none',
+            }}
+          >
+            {/* Map Controls (Theme, Guided Tour & Testing Tools) */}
+            <div className="glass map-controls-panel" style={{
+              width: '100%',
+              pointerEvents: 'auto',
+              padding: '0.75rem',
+              borderRadius: '12px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.65rem'
             }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.72rem', color: '#fbbf24', fontWeight: 800, letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                  📍 SET MOCK LOCATION
-                </span>
-                <button
-                  onClick={() => setMockMode(false)}
-                  style={{ background: 'none', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
-                  title="Exit Mock Mode"
-                >
-                  ✕ Exit
-                </button>
-              </div>
-
-              {/* Quick Location Presets */}
               <div>
-                <label style={{ display: 'block', fontSize: '0.62rem', color: 'var(--color-muted)', fontWeight: 700, marginBottom: '0.35rem', textTransform: 'uppercase' }}>
-                  Quick Presets
+                <label style={{ display: 'block', fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 700, marginBottom: '0.25rem', textTransform: 'uppercase' }}>
+                  Map Style
                 </label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem' }}>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start' }}
-                    onClick={() => handleSelectMockLocation('entrance')}
-                  >
-                    🚪 Entrance Gate
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start' }}
-                    onClick={() => handleSelectMockLocation('center')}
-                  >
-                    🏛️ Venue Center
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start', color: '#f87171' }}
-                    onClick={() => handleSelectMockLocation('outside')}
-                  >
-                    ⚠️ Far Outside
-                  </button>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start', color: '#22c55e' }}
-                    onClick={() => {
-                      if (nodes.length > 0) handleSelectMockLocation(nodes[0].id);
-                    }}
-                  >
-                    📍 Node #1
-                  </button>
-                </div>
+                <select
+                  className="form-select"
+                  style={{ fontSize: '0.8rem', padding: '0.35rem 0.5rem', width: '100%' }}
+                  value={mapTheme}
+                  onChange={(e) => setMapTheme(e.target.value as any)}
+                >
+                  <option value="dark">Dark Matter</option>
+                  <option value="streets">OSM Streets</option>
+                  <option value="light">Positron Light</option>
+                  <option value="3d" style={{ display: 'none' }}>🏙️ 3D Buildings</option>
+                </select>
               </div>
 
-              {/* Node Dropdown Select */}
-              {nodes.length > 0 && (
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.62rem', color: 'var(--color-muted)', fontWeight: 700, marginBottom: '0.25rem', textTransform: 'uppercase' }}>
-                    Select Navigation Node
+              {profile?.role === 'admin' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+                  <input
+                    type="checkbox"
+                    id="mesh-toggle"
+                    checked={showMesh}
+                    onChange={(e) => setShowMesh(e.target.checked)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <label htmlFor="mesh-toggle" style={{ fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}>
+                    Show Path Nodes
                   </label>
-                  <select
-                    className="form-select"
-                    style={{ fontSize: '0.78rem', padding: '0.35rem 0.5rem', width: '100%' }}
-                    value={mockStartNodeId}
-                    onChange={(e) => handleSelectMockLocation(e.target.value)}
-                  >
-                    <option value="">-- Choose Node --</option>
-                    {nodes.map((node) => (
-                      <option key={node.id} value={node.id}>
-                        {node.label} ({node.type})
-                      </option>
-                    ))}
-                  </select>
                 </div>
               )}
 
-              <div style={{ fontSize: '0.68rem', color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.08)', padding: '0.35rem 0.5rem', borderRadius: '6px', lineHeight: 1.4 }}>
-                💡 <strong>Tip:</strong> Tap anywhere on the map to set your user marker to that exact location!
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+                <label style={{ display: 'block', fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
+                  Guided Tour
+                </label>
+                <button
+                  className="btn btn-primary btn-sm"
+                  style={{ width: '100%', fontSize: '0.8rem', padding: '0.35rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
+                  onClick={handleOpenTourPlanner}
+                >
+                  <Compass size={14} />
+                  {guidedTourActive ? 'Restart Tour' : 'Start Tour'}
+                </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ width: '100%', fontSize: '0.75rem', padding: '0.3rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.08)' }}
+                  onClick={handleOpenTourPlanner}
+                >
+                  <CheckSquare size={13} />
+                  <span>Visited Tracker ({visitedStallIds.length}/{(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).length})</span>
+                </button>
+                {guidedTourActive && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ width: '100%', fontSize: '0.75rem', padding: '0.25rem 0.5rem', color: 'var(--color-danger)' }}
+                    onClick={handleCancelTour}
+                  >
+                    Cancel Tour
+                  </button>
+                )}
+              </div>
+
+              {/* Testing / Mock Location Mode Toggle Button */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+                <label style={{ display: 'block', fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
+                  Testing Tools
+                </label>
+                <button
+                  className="btn btn-sm"
+                  style={{
+                    width: '100%',
+                    fontSize: '0.78rem',
+                    padding: '0.35rem 0.5rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '0.35rem',
+                    background: mockMode ? 'rgba(245, 158, 11, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                    border: `1px solid ${mockMode ? 'rgba(245, 158, 11, 0.5)' : 'var(--color-border)'}`,
+                    color: mockMode ? '#fbbf24' : 'var(--color-text)',
+                    fontWeight: 700
+                  }}
+                  onClick={() => {
+                    setMockMode(prev => {
+                      const next = !prev;
+                      if (next && (userLat === null || userLng === null)) {
+                        const entranceNode =
+                          nodes.find(
+                            (n) =>
+                              n.type === 'entrance' ||
+                              n.label.toLowerCase().includes('node 1') ||
+                              n.label.toLowerCase().includes('entrance')
+                          ) || nodes[0];
+                        if (entranceNode) {
+                          setUserLat(entranceNode.latitude);
+                          setUserLng(entranceNode.longitude);
+                        } else {
+                          setUserLat(exhibitionSettings.entrance_latitude || 6.53586);
+                          setUserLng(exhibitionSettings.entrance_longitude || 80.40035);
+                        }
+                        setIsFarAway(false);
+                      }
+                      return next;
+                    });
+                  }}
+                >
+                  <Navigation size={13} />
+                  <span>{mockMode ? '📍 Mock Location ON' : '🎯 Enable Mock GPS'}</span>
+                </button>
               </div>
             </div>
-          )}
 
-          {/* Boundary Check Bypassed Badge */}
-          {bypassBoundaryCheck && (
-            <div className="glass" style={{
-              position: 'absolute',
-              top: profile?.role === 'admin' ? '12.25rem' : '9.5rem',
-              left: '1rem',
-              zIndex: 999,
-              padding: '0.45rem 0.75rem',
-              borderRadius: '20px',
-              background: 'rgba(234, 179, 8, 0.15)',
-              border: '1px solid rgba(234, 179, 8, 0.4)',
-              color: '#fde047',
-              fontSize: '0.75rem',
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              backdropFilter: 'blur(8px)'
-            }}>
-              <span>⚠️ Premises Boundary Bypassed</span>
-              <button
-                onClick={() => setBypassBoundaryCheck(false)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#fff',
-                  cursor: 'pointer',
-                  fontWeight: 800,
-                  fontSize: '0.85rem',
-                  lineHeight: 1
-                }}
-                title="Restore boundary check"
-              >
-                ✕
-              </button>
-            </div>
-          )}
+            {/* Interactive Mock Location Control Panel */}
+            {mockMode && (
+              <div className="glass map-mock-panel" style={{
+                width: '100%',
+                pointerEvents: 'auto',
+                padding: '0.85rem',
+                borderRadius: '14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.6rem',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+                border: '1px solid rgba(245, 158, 11, 0.4)',
+                background: 'rgba(15, 23, 42, 0.92)',
+                backdropFilter: 'blur(14px)'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.72rem', color: '#fbbf24', fontWeight: 800, letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                    📍 SET MOCK LOCATION
+                  </span>
+                  <button
+                    onClick={() => setMockMode(false)}
+                    style={{ background: 'none', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}
+                    title="Exit Mock Mode"
+                  >
+                    ✕ Exit
+                  </button>
+                </div>
+
+                {/* Quick Location Presets */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.62rem', color: 'var(--color-muted)', fontWeight: 700, marginBottom: '0.35rem', textTransform: 'uppercase' }}>
+                    Quick Presets
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem' }}>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start' }}
+                      onClick={() => handleSelectMockLocation('entrance')}
+                    >
+                      🚪 Entrance Gate
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start' }}
+                      onClick={() => handleSelectMockLocation('center')}
+                    >
+                      🏛️ Venue Center
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start', color: '#f87171' }}
+                      onClick={() => handleSelectMockLocation('outside')}
+                    >
+                      ⚠️ Far Outside
+                    </button>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.4rem', justifyContent: 'flex-start', color: '#22c55e' }}
+                      onClick={() => {
+                        if (nodes.length > 0) handleSelectMockLocation(nodes[0].id);
+                      }}
+                    >
+                      📍 Node #1
+                    </button>
+                  </div>
+                </div>
+
+                {/* Node Dropdown Select */}
+                {nodes.length > 0 && (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.62rem', color: 'var(--color-muted)', fontWeight: 700, marginBottom: '0.25rem', textTransform: 'uppercase' }}>
+                      Select Navigation Node
+                    </label>
+                    <select
+                      className="form-select"
+                      style={{ fontSize: '0.78rem', padding: '0.35rem 0.5rem', width: '100%' }}
+                      value={mockStartNodeId}
+                      onChange={(e) => handleSelectMockLocation(e.target.value)}
+                    >
+                      <option value="">-- Choose Node --</option>
+                      {nodes.map((node) => (
+                        <option key={node.id} value={node.id}>
+                          {node.label} ({node.type})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div style={{ fontSize: '0.68rem', color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.08)', padding: '0.35rem 0.5rem', borderRadius: '6px', lineHeight: 1.4 }}>
+                  💡 <strong>Tip:</strong> Tap anywhere on the map to set your user marker to that exact location!
+                </div>
+              </div>
+            )}
+          </div>
 
 
           {/* Bottom Navigation Panel — Google Maps-style draggable bottom sheet */}
@@ -2114,7 +2195,7 @@ export function MapPage() {
           )}
 
           {/* New Modals for Boundary & Tour check */}
-          {isFarAway && (
+          {isFarAway && exhibitionSettings.school_boundary_enabled !== false && (
             <div style={{
               position: 'fixed',
               inset: 0,

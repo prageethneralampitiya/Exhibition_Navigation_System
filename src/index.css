@@ -2505,39 +2505,99 @@ html, body, #root {
   /* Leaflet injects its controls inside .leaflet-top.leaflet-left */
   .leaflet-top { margin-top: calc(52px + var(--safe-top, 0px)) !important; }
 
-  /* Search panel: left side above bottom nav */
+  /* Search panel: cleanly pinned below topbar on mobile */
+  .map-left-controls-stack {
+    top: calc(54px + var(--safe-top, 0px) + 0.5rem) !important;
+    left: 0.75rem !important;
+    right: 0.75rem !important;
+    width: auto !important;
+    max-width: calc(100vw - 1.5rem) !important;
+  }
+
   .map-search-panel {
     top: auto !important;
-    bottom: calc(56px + var(--safe-bottom, 0px) + 0.5rem) !important;
-    left: 0.75rem !important;
-    right: 4.5rem !important;
-    width: auto !important;
-    max-height: 45vh !important;
+    left: auto !important;
+    right: auto !important;
+    width: 100% !important;
+    max-height: 40vh !important;
     border-radius: var(--radius-lg) !important;
+  }
+
+  /* Right controls stack (mock GPS) on mobile */
+  .map-right-controls-stack {
+    top: calc(54px + var(--safe-top, 0px) + 0.5rem) !important;
+    right: 0.75rem !important;
+    width: min(320px, calc(100vw - 1.5rem)) !important;
+    max-height: calc(100vh - 200px) !important;
+    z-index: 1002 !important;
   }
 
   /* Controls panel (theme switcher): hidden on mobile */
   .map-controls-panel { display: none !important; }
 
-  /* Mock location panel: bottom-left above bottom nav */
+  /* Mock location panel inside stack on mobile */
   .map-mock-panel {
     top: auto !important;
-    bottom: calc(56px + var(--safe-bottom, 0px) + 0.5rem) !important;
-    left: 0.75rem !important;
+    bottom: auto !important;
+    left: auto !important;
     right: auto !important;
-    width: calc(50vw - 1.25rem) !important;
+    width: 100% !important;
   }
 
-  /* Legend panel: above bottom nav */
-  .map-legend-panel {
-    bottom: calc(56px + var(--safe-bottom, 0px) + 0.5rem) !important;
+  /* Active mock banner on mobile */
+  .map-mock-active-banner {
+    top: calc(52px + var(--safe-top, 0px) + 0.35rem) !important;
     left: 0.75rem !important;
+    right: 0.75rem !important;
+    width: auto !important;
+    max-width: calc(100vw - 1.5rem) !important;
+    transform: none !important;
+    padding: 0.35rem 0.65rem !important;
+    font-size: 0.72rem !important;
+    justify-content: space-between !important;
   }
 
-  /* Recenter button: above bottom nav */
-  .map-recenter-btn {
-    bottom: calc(56px + var(--safe-bottom, 0px) + 0.75rem) !important;
+  .map-mock-active-banner .desktop-mock-text { display: none !important; }
+  .map-mock-active-banner .mobile-mock-text { display: inline !important; }
+
+  /* Mobile GPS banner placement below topbar */
+  .gps-banner {
+    top: calc(54px + var(--safe-top, 0px) + 0.5rem) !important;
+    width: calc(100% - 1.5rem) !important;
+    max-width: 440px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+  }
+
+  /* ── Mobile Map Bottom Controls Tiering (Above Bottom Nav Bar) ── */
+  /* Tier 1: Scale bar on left, Zoom badge on right (just above bottom nav) */
+  .leaflet-control-scale {
+    margin-left: 0.75rem !important;
+    margin-bottom: calc(58px + var(--safe-bottom, 0px)) !important;
+  }
+
+  .map-zoom-badge {
+    bottom: calc(58px + var(--safe-bottom, 0px)) !important;
     right: 0.75rem !important;
+  }
+
+  /* Tier 2: Legend panel on left, Zoom buttons on right */
+  .map-legend-panel {
+    bottom: calc(88px + var(--safe-bottom, 0px)) !important;
+    left: 0.75rem !important;
+    z-index: 1000 !important;
+  }
+
+  .leaflet-control-zoom {
+    margin-bottom: calc(88px + var(--safe-bottom, 0px)) !important;
+    margin-right: 0.75rem !important;
+  }
+
+  /* Tier 3: Recenter button on right */
+  .map-recenter-btn {
+    bottom: calc(156px + var(--safe-bottom, 0px)) !important;
+    right: 0.75rem !important;
+    z-index: 1000 !important;
   }
 
   /* ── Bottom Sheet Nav Panel ─────────────────────── */
@@ -2784,7 +2844,26 @@ html, body, #root {
   border-radius: 8px !important;
   overflow: hidden;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
-  margin-bottom: 50px !important;
+  margin-bottom: 42px !important;
+  margin-right: 16px !important;
+}
+
+.leaflet-control-scale {
+  margin-left: 16px !important;
+  margin-bottom: 14px !important;
+  border: none !important;
+}
+
+.leaflet-control-scale-line {
+  background: rgba(15, 23, 42, 0.82) !important;
+  backdrop-filter: blur(8px) !important;
+  border: 1px solid var(--color-border) !important;
+  border-top: none !important;
+  color: var(--color-text) !important;
+  font-size: 0.65rem !important;
+  font-weight: 700 !important;
+  padding: 2px 5px !important;
+  border-radius: 0 0 4px 4px !important;
 }
 
 .leaflet-control-zoom a {
@@ -2807,3 +2886,44 @@ html, body, #root {
   user-select: none;
   -webkit-user-drag: none;
 }
+
+/* ── Clean Dark Basemap Filter (Completely eliminates CARTO watermark) ── */
+.map-tiles-dark {
+  filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+}
+
+/* ── Mobile Map Layout Precision Overrides (≤ 768px) ──────────────── */
+@media (max-width: 768px) {
+  /* Scale bar: bottom-left above mobile bottom nav */
+  .leaflet-control-scale {
+    margin-left: 12px !important;
+    margin-bottom: calc(64px + var(--safe-bottom, 0px)) !important;
+  }
+
+  /* Zoom badge: bottom-right above mobile bottom nav */
+  .map-zoom-badge {
+    bottom: calc(64px + var(--safe-bottom, 0px)) !important;
+    right: 12px !important;
+  }
+
+  /* Legend panel: stacked cleanly above scale bar */
+  .map-legend-panel {
+    bottom: calc(96px + var(--safe-bottom, 0px)) !important;
+    left: 12px !important;
+    z-index: 1000 !important;
+  }
+
+  /* Zoom controls: stacked cleanly above zoom badge */
+  .leaflet-control-zoom {
+    margin-bottom: calc(96px + var(--safe-bottom, 0px)) !important;
+    margin-right: 12px !important;
+  }
+
+  /* Recenter button: stacked cleanly above zoom controls */
+  .map-recenter-btn {
+    bottom: calc(168px + var(--safe-bottom, 0px)) !important;
+    right: 12px !important;
+    z-index: 1000 !important;
+  }
+}
+

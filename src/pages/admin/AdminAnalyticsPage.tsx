@@ -211,8 +211,10 @@ export function AdminAnalyticsPage() {
         attributionControl: false,
       });
 
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', {
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 20,
+        className: 'map-tiles-dark',
+        subdomains: ['a', 'b', 'c'],
       }).addTo(map);
 
       const heatGroup = L.featureGroup().addTo(map);

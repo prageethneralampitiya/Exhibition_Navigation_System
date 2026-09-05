@@ -29,6 +29,9 @@ interface MapViewProps {
   outdoorSegmentCount?: number;
   tourStops?: Store[];
   visitedStallIds?: string[];
+  showSchoolBoundary?: boolean;
+  boundaryCenter?: { lat: number; lng: number };
+  boundaryRadius?: number;
 }
 
 export function MapView({
@@ -49,6 +52,9 @@ export function MapView({
   outdoorSegmentCount = 0,
   tourStops = [],
   visitedStallIds = [],
+  showSchoolBoundary = true,
+  boundaryCenter,
+  boundaryRadius,
 }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<L.Map | null>(null);
@@ -72,6 +78,7 @@ export function MapView({
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const routeLayerRef = useRef<L.FeatureGroup | null>(null);
   const meshLayerRef = useRef<L.FeatureGroup | null>(null);
+  const boundaryLayerRef = useRef<L.FeatureGroup | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
   // Tracks the last destination node ID whose bounds we fitted, so we only
@@ -144,6 +151,9 @@ export function MapView({
     const meshLayer = L.featureGroup().addTo(newMap);
     meshLayerRef.current = meshLayer;
 
+    const boundaryLayer = L.featureGroup().addTo(newMap);
+    boundaryLayerRef.current = boundaryLayer;
+
     setMap(newMap);
 
     // Clean up on unmount
@@ -156,9 +166,63 @@ export function MapView({
       markersLayerRef.current = null;
       routeLayerRef.current = null;
       meshLayerRef.current = null;
+      if (boundaryLayerRef.current) {
+        boundaryLayerRef.current.remove();
+        boundaryLayerRef.current = null;
+      }
       tileLayerRef.current = null;
     };
   }, []); // Run once on mount only — do NOT include lat/lng/zoom here
+
+  // ── School Campus Boundary Layer ─────────────────────────────
+  useEffect(() => {
+    if (!map) return;
+    if (!boundaryLayerRef.current) {
+      boundaryLayerRef.current = L.featureGroup().addTo(map);
+    }
+    boundaryLayerRef.current.clearLayers();
+
+    if (showSchoolBoundary) {
+      // Kalawana School Grounds Perimeter Boundary polygon
+      const schoolGroundsCoords: L.LatLngTuple[] = [
+        [6.5342, 80.3992],
+        [6.5342, 80.4024],
+        [6.5365, 80.4024],
+        [6.5365, 80.3992],
+      ];
+
+      const boundaryPolygon = L.polygon(schoolGroundsCoords, {
+        color: '#a855f7',
+        weight: 2.5,
+        opacity: 0.85,
+        dashArray: '6, 6',
+        fillColor: '#6366f1',
+        fillOpacity: 0.08,
+      });
+
+      boundaryPolygon.bindTooltip('🏫 Kalawana School Grounds Boundary', {
+        permanent: false,
+        direction: 'center',
+        className: 'school-boundary-tooltip',
+      });
+
+      boundaryLayerRef.current.addLayer(boundaryPolygon);
+
+      // Subtle geofence circle around premises center
+      if (boundaryCenter && boundaryRadius) {
+        const geofenceCircle = L.circle([boundaryCenter.lat, boundaryCenter.lng], {
+          radius: boundaryRadius,
+          color: '#22d3ee',
+          weight: 1.5,
+          opacity: 0.45,
+          dashArray: '4, 6',
+          fillColor: '#22d3ee',
+          fillOpacity: 0.03,
+        });
+        boundaryLayerRef.current.addLayer(geofenceCircle);
+      }
+    }
+  }, [map, showSchoolBoundary, boundaryCenter, boundaryRadius]);
 
   // 2. Tile Layer Theme Manager
   useEffect(() => {
@@ -169,14 +233,25 @@ export function MapView({
       tileLayerRef.current.remove();
     }
 
-    let url = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png';
-    if (theme === 'streets') {
+    let url = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    let className = '';
+
+    if (theme === 'dark') {
       url = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+      className = 'map-tiles-dark';
+    } else if (theme === 'streets') {
+      url = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+      className = '';
     } else if (theme === 'light') {
-      url = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png';
+      url = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
+      className = '';
     }
 
-    const tileLayer = L.tileLayer(url, { maxZoom: 20 });
+    const tileLayer = L.tileLayer(url, {
+      maxZoom: 20,
+      className,
+      subdomains: ['a', 'b', 'c'],
+    });
     tileLayer.addTo(map);
     tileLayerRef.current = tileLayer;
 
@@ -197,156 +272,143 @@ export function MapView({
     }
   }, [map, latitude, longitude, zoom, route.length]);
 
-  // 4. Render Store Markers
+  // 4. Render Store Markers — pinned at exact real coordinates, zoom-responsive size
   useEffect(() => {
     const markersLayer = markersLayerRef.current;
     if (!map || !markersLayer) return;
 
-    // Clear existing markers
     markersLayer.clearLayers();
 
-    stores.forEach((store) => {
-      if (store.latitude === null || store.longitude === null) return;
+    const zoomLevel = map.getZoom();
 
-      const isSchool = store.id === 'kalawana-national-school-landmark' || store.name.toLowerCase().includes('kalawana');
+    const activeStores = stores.filter((s) => s.latitude !== null && s.longitude !== null);
+
+    // ── School landmark: always visible at every zoom level ──────────────────
+    // Rendered before the scale guard so the venue pin stays on screen even
+    // when zoomed far out, giving users a reference point to navigate toward.
+    const schoolStores = activeStores.filter(
+      (s) =>
+        s.id === 'kalawana-national-school-landmark' ||
+        s.name.toLowerCase().includes('kalawana') ||
+        s.name.toLowerCase().includes('school')
+    );
+
+    // If no school store in active list, provide default Kalawana National School landmark
+    const fallbackSchoolStore = {
+      id: 'kalawana-national-school-landmark',
+      name: 'Kalawana National School',
+      description: 'Kalawana National School (Central College) · GCP2+5C6, Kalawana',
+      latitude: 6.53585,
+      longitude: 80.4009,
+      floor_level: 1,
+      is_active: true,
+      categories: {
+        id: 'school-cat',
+        name: 'Education / School',
+        color: '#a855f7',
+      },
+    };
+
+    const effectiveSchoolStores = schoolStores.length > 0 ? schoolStores : [fallbackSchoolStore as any];
+    const regularStores = activeStores.filter(
+      (s) =>
+        s.id !== 'kalawana-national-school-landmark' &&
+        !s.name.toLowerCase().includes('kalawana') &&
+        !s.name.toLowerCase().includes('school')
+    );
+
+    const addMarker = (store: typeof activeStores[0], pinDiameter: number, showPulse: boolean, pulseSize: number, fontSize: number, badgeSize: number, badgeFontSize: number, borderWidth: number) => {
+      const isSchool = effectiveSchoolStores.some((s) => s.id === store.id);
       const catColor = isSchool ? '#a855f7' : (store.categories?.color || 'var(--color-primary)');
       const isDestination = route.length > 0 && route[route.length - 1].store_id === store.id;
-
-      // Tour stop index & visited status
+      const pinRadius = Math.round(pinDiameter / 2);
       const tourStopIdx = tourStops.findIndex((s) => s.id === store.id);
       const isTourStop = tourStopIdx !== -1;
       const isVisited = visitedStallIds.includes(store.id);
 
-      // Custom HTML pin (adds pulse effect if this store is the destination or Kalawana School)
       const customIcon = L.divIcon({
         className: 'custom-map-pin-wrapper',
         html: `
-          <div style="position: relative; display: flex; align-items: center; justify-content: center; width: 34px; height: 34px;">
-            ${isDestination || isSchool || (isTourStop && !isVisited) ? `
-              <div style="
-                position: absolute;
-                width: 48px;
-                height: 48px;
-                border-radius: 50%;
-                background: ${catColor};
-                opacity: 0.4;
-                animation: map-pin-pulse 1.8s infinite ease-in-out;
-              "></div>
+          <div style="position:relative;display:flex;align-items:center;justify-content:center;width:${pinDiameter}px;height:${pinDiameter}px;">
+            ${(isDestination || (isTourStop && !isVisited)) && showPulse ? `
+              <div style="position:absolute;width:${pulseSize}px;height:${pulseSize}px;border-radius:50%;background:${catColor};opacity:0.4;animation:map-pin-pulse 1.8s infinite ease-in-out;"></div>
             ` : ''}
-            <div style="
-              width: 30px;
-              height: 30px;
-              border-radius: 50%;
-              background: ${isVisited ? '#16a34a' : catColor};
-              border: 2.5px solid #fff;
-              box-shadow: 0 2px 10px rgba(0,0,0,0.6);
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              color: #fff;
-              font-size: ${isSchool ? '0.9rem' : '0.75rem'};
-              font-weight: 800;
-              z-index: 10;
-              overflow: hidden;
-            ">
-              ${isSchool ? '🏫' : (store.logo_url ? `
-                <img src="${store.logo_url}" alt="${store.name}" style="width: 100%; height: 100%; object-fit: cover; display: block;" />
-              ` : `
-                ${store.name[0]}
-              `)}
+            <div style="width:${pinDiameter}px;height:${pinDiameter}px;border-radius:50%;background:${isVisited ? '#16a34a' : catColor};border:${borderWidth}px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;color:#fff;font-size:${isSchool ? Math.max(10, fontSize + 2) : fontSize}px;font-weight:800;z-index:10;overflow:hidden;">
+              ${isSchool ? '🏫' : (store.logo_url
+                ? `<img src="${store.logo_url}" alt="${store.name}" style="width:100%;height:100%;object-fit:cover;display:block;" />`
+                : store.name[0]
+              )}
             </div>
-            ${isTourStop ? `
-              <div style="
-                position: absolute;
-                top: -6px;
-                right: -6px;
-                background: ${isVisited ? '#22c55e' : '#22d3ee'};
-                color: ${isVisited ? '#fff' : '#0f172a'};
-                font-size: 0.65rem;
-                font-weight: 900;
-                width: 17px;
-                height: 17px;
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                border: 1.5px solid #fff;
-                box-shadow: 0 2px 6px rgba(0,0,0,0.5);
-                z-index: 20;
-              ">
+            ${isTourStop && pinDiameter >= 14 ? `
+              <div style="position:absolute;top:${-Math.round(badgeSize * 0.3)}px;right:${-Math.round(badgeSize * 0.3)}px;background:${isVisited ? '#22c55e' : '#22d3ee'};color:${isVisited ? '#fff' : '#0f172a'};font-size:${badgeFontSize}px;font-weight:900;width:${badgeSize}px;height:${badgeSize}px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.45);z-index:20;">
                 ${isVisited ? '✓' : tourStopIdx + 1}
               </div>
             ` : ''}
           </div>
-          <style>
-            @keyframes map-pin-pulse {
-              0% { transform: scale(0.6); opacity: 0.7; }
-              100% { transform: scale(1.6); opacity: 0; }
-            }
-          </style>
+          <style>@keyframes map-pin-pulse{0%{transform:scale(0.6);opacity:0.7}100%{transform:scale(1.6);opacity:0}}</style>
         `,
-        iconSize: [34, 34],
-        iconAnchor: [17, 17],
+        iconSize: [pinDiameter, pinDiameter],
+        iconAnchor: [pinRadius, pinRadius],
       });
 
-      const marker = L.marker([store.latitude, store.longitude], { icon: customIcon });
-
-      // Info bubble popup with detail link
+      const marker = L.marker([store.latitude!, store.longitude!], { icon: customIcon });
+      if (isSchool) {
+        marker.bindTooltip('🏫 Kalawana National School', {
+          permanent: false,
+          direction: 'top',
+          offset: [0, -pinRadius],
+          className: 'school-landmark-tooltip',
+        });
+      }
       marker.bindPopup(`
-        <div style="color: #0b0f1a; padding: 0.3rem; font-family: sans-serif; min-width: 160px;">
-          <h4 style="margin: 0 0 0.25rem 0; font-weight: 800; font-size: 0.95rem; line-height: 1.2;">${store.name}</h4>
-          <p style="margin: 0 0 0.5rem 0; font-size: 0.75rem; color: #64748b;">
+        <div style="color:#0b0f1a;padding:0.3rem;font-family:sans-serif;min-width:160px;">
+          <h4 style="margin:0 0 0.25rem 0;font-weight:800;font-size:0.95rem;line-height:1.2;">${store.name}</h4>
+          <p style="margin:0 0 0.5rem 0;font-size:0.75rem;color:#64748b;">
             ${isSchool ? 'GCP2+5C6, Kalawana · Sri Lanka' : `Floor: ${store.floor || '1'} · ${store.categories?.name || 'Exhibitor'}`}
           </p>
           ${isSchool ? `
-            <a href="/map3d" style="
-              display: block;
-              background: linear-gradient(135deg, #a855f7, #6366f1);
-              color: #fff;
-              padding: 0.4rem;
-              border-radius: 6px;
-              font-size: 0.75rem;
-              font-weight: 700;
-              text-decoration: none;
-              text-align: center;
-              box-shadow: 0 2px 8px rgba(168,85,247,0.3);
-            ">🏫 Open 3D School Map</a>
+            <a href="/map3d" style="display:none;">🏫 Open 3D School Map</a>
           ` : `
-            <div style="display: flex; flex-direction: column; gap: 0.35rem;">
-              <button onclick="window.__onNavigateToStore && window.__onNavigateToStore('${store.id}')" style="
-                display: block;
-                width: 100%;
-                background: linear-gradient(135deg, #06b6d4, #3b82f6);
-                color: #fff;
-                padding: 0.38rem 0.5rem;
-                border: none;
-                border-radius: 6px;
-                font-size: 0.75rem;
-                font-weight: 700;
-                cursor: pointer;
-                text-align: center;
-                box-shadow: 0 2px 6px rgba(6,182,212,0.3);
-              ">🧭 Navigate Here</button>
-              <a href="/stores/${store.id}" style="
-                display: block;
-                background: rgba(255,255,255,0.08);
-                border: 1px solid rgba(0,0,0,0.1);
-                color: #334155;
-                padding: 0.3rem;
-                border-radius: 6px;
-                font-size: 0.72rem;
-                font-weight: 600;
-                text-decoration: none;
-                text-align: center;
-              ">View Profile</a>
+            <div style="display:flex;flex-direction:column;gap:0.35rem;">
+              <button onclick="window.__onNavigateToStore && window.__onNavigateToStore('${store.id}')" style="display:block;width:100%;background:linear-gradient(135deg,#06b6d4,#3b82f6);color:#fff;padding:0.38rem 0.5rem;border:none;border-radius:6px;font-size:0.75rem;font-weight:700;cursor:pointer;text-align:center;">🧭 Navigate Here</button>
+              <a href="/stores/${store.id}" style="display:block;background:rgba(255,255,255,0.08);border:1px solid rgba(0,0,0,0.1);color:#334155;padding:0.3rem;border-radius:6px;font-size:0.72rem;font-weight:600;text-decoration:none;text-align:center;">View Profile</a>
             </div>
           `}
         </div>
       `);
-
       markersLayer.addLayer(marker);
-    });
-  }, [map, stores, route, onSelectStore, tourStops, visitedStallIds]);
+    };
+
+    // School pin is always a fixed comfortable size regardless of zoom
+    const schoolPinSize = 30;
+    effectiveSchoolStores.forEach((store) =>
+      addMarker(store, schoolPinSize, true, schoolPinSize + 16, 14, 16, 9, 2)
+    );
+
+    // ── Scale guard: hide regular store bubbles beyond ~100 m scale ───────────
+    const centerLat = map.getCenter().lat;
+    const metersPerPixel =
+      (40075016.686 * Math.cos((centerLat * Math.PI) / 180)) / Math.pow(2, zoomLevel + 8);
+    const SCALE_HIDE_THRESHOLD = 1.25; // m/px → ~100 m scale bar (visible at zoom >= 17, hidden when exceeding 100m)
+    if (metersPerPixel > SCALE_HIDE_THRESHOLD) return;
+
+    // ── Zoom-responsive sizing for regular store bubbles ──────────────────────
+    const BASE_ZOOM = 18;
+    const zoomDelta = zoomLevel - BASE_ZOOM;
+    const rawSize = 22 + zoomDelta * 3;
+    const pinDiameter = Math.max(10, Math.min(28, rawSize));
+    const fontSize = Math.max(7, Math.min(12, Math.round(pinDiameter * 0.42)));
+    const badgeSize = Math.max(10, Math.round(pinDiameter * 0.55));
+    const badgeFontSize = Math.max(6, Math.round(badgeSize * 0.55));
+    const borderWidth = pinDiameter >= 18 ? 2 : 1.5;
+    const showPulse = zoomLevel >= 16;
+    const pulseSize = pinDiameter + 16;
+
+    regularStores.forEach((store) =>
+      addMarker(store, pinDiameter, showPulse, pulseSize, fontSize, badgeSize, badgeFontSize, borderWidth)
+    );
+  }, [map, currentZoom, stores, route, tourStops, visitedStallIds]);
+
 
   // 5. Render User Location Marker (with Direction Cone)
   useEffect(() => {
@@ -590,26 +652,29 @@ export function MapView({
         }}
       />
       {map && (
-        <div style={{
-          position: 'absolute',
-          bottom: '16px',
-          right: '16px',
-          background: 'rgba(11, 15, 26, 0.85)',
-          backdropFilter: 'blur(4px)',
-          border: '1px solid var(--color-border)',
-          padding: '4px 8px',
-          borderRadius: '6px',
-          fontSize: '0.72rem',
-          fontWeight: '700',
-          color: 'var(--color-text)',
-          zIndex: 1000,
-          pointerEvents: 'none',
-          letterSpacing: '0.04em',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '4px'
-        }}>
+        <div
+          className="map-zoom-badge"
+          style={{
+            position: 'absolute',
+            bottom: '14px',
+            right: '16px',
+            background: 'rgba(11, 15, 26, 0.85)',
+            backdropFilter: 'blur(4px)',
+            border: '1px solid var(--color-border)',
+            padding: '3px 7px',
+            borderRadius: '6px',
+            fontSize: '0.7rem',
+            fontWeight: '700',
+            color: 'var(--color-text)',
+            zIndex: 1000,
+            pointerEvents: 'none',
+            letterSpacing: '0.04em',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px'
+          }}
+        >
           <span style={{ color: 'var(--color-accent)' }}>ZOOM:</span>
           <span>{currentZoom.toFixed(1)}x</span>
         </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CalendarDays, Store, Megaphone, Users, Activity, Settings } from 'lucide-react';
+import { CalendarDays, Store, Megaphone, Users, Activity, Settings, ShieldCheck, ShieldAlert, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { StatCard } from '../../components/admin/StatCard';
 
@@ -37,9 +37,11 @@ export function AdminDashboardPage() {
   const [premisesLat, setPremisesLat] = useState('6.535472');
   const [premisesLng, setPremisesLng] = useState('80.401000');
   const [premisesRadius, setPremisesRadius] = useState('150');
+  const [schoolBoundaryEnabled, setSchoolBoundaryEnabled] = useState(true);
   
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -89,12 +91,13 @@ export function AdminDashboardPage() {
           setSettingsId(s.id);
           try {
             const parsed = JSON.parse(s.message);
-            setEntranceLat(String(parsed.entrance_latitude ?? '6.535472'));
-            setEntranceLng(String(parsed.entrance_longitude ?? '80.401000'));
+            setEntranceLat(String(parsed.entrance_latitude ?? '6.53586'));
+            setEntranceLng(String(parsed.entrance_longitude ?? '80.40035'));
             setEntranceThreshold(String(parsed.entrance_threshold_meters ?? '20'));
             setPremisesLat(String(parsed.premises_center_latitude ?? '6.535472'));
             setPremisesLng(String(parsed.premises_center_longitude ?? '80.401000'));
             setPremisesRadius(String(parsed.premises_radius_meters ?? '150'));
+            setSchoolBoundaryEnabled(parsed.school_boundary_enabled !== false);
           } catch (e) {
             console.error('Error parsing settings:', e);
           }
@@ -189,6 +192,53 @@ export function AdminDashboardPage() {
     loadDashboardData();
   }, []);
 
+  const handleQuickToggleBoundary = async (enabled: boolean) => {
+    setSchoolBoundaryEnabled(enabled);
+    setSettingsSaving(true);
+    try {
+      const payload = {
+        entrance_latitude: parseFloat(entranceLat) || 6.53586,
+        entrance_longitude: parseFloat(entranceLng) || 80.40035,
+        entrance_threshold_meters: parseFloat(entranceThreshold) || 20,
+        premises_center_latitude: parseFloat(premisesLat) || 6.535472,
+        premises_center_longitude: parseFloat(premisesLng) || 80.401000,
+        premises_radius_meters: parseFloat(premisesRadius) || 150,
+        school_boundary_enabled: enabled,
+      };
+
+      const announcementPayload = {
+        title: 'System Exhibition Settings',
+        message: JSON.stringify(payload),
+        type: 'settings',
+        is_active: true,
+      };
+
+      if (settingsId) {
+        const { error } = await supabase
+          .from('announcements')
+          .update({ ...announcementPayload, updated_at: new Date().toISOString() })
+          .eq('id', settingsId);
+        if (error) throw error;
+      } else {
+        const { data, error } = await supabase
+          .from('announcements')
+          .insert(announcementPayload)
+          .select();
+        if (error) throw error;
+        if (data && data[0]) {
+          setSettingsId(data[0].id);
+        }
+      }
+      setToastMessage(enabled ? 'School Boundary Enabled: Geofence restriction active' : 'School Boundary Disabled: Free visitor navigation enabled');
+      setTimeout(() => setToastMessage(null), 3500);
+    } catch (err) {
+      console.error('Error toggling school boundary:', err);
+      alert('Failed to update school boundary status.');
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setSettingsSaving(true);
@@ -199,7 +249,8 @@ export function AdminDashboardPage() {
         entrance_threshold_meters: parseFloat(entranceThreshold),
         premises_center_latitude: parseFloat(premisesLat),
         premises_center_longitude: parseFloat(premisesLng),
-        premises_radius_meters: parseFloat(premisesRadius)
+        premises_radius_meters: parseFloat(premisesRadius),
+        school_boundary_enabled: schoolBoundaryEnabled,
       };
 
       if (isNaN(payload.entrance_latitude) || isNaN(payload.entrance_longitude) || isNaN(payload.premises_radius_meters)) {
@@ -230,7 +281,8 @@ export function AdminDashboardPage() {
           setSettingsId(data[0].id);
         }
       }
-      alert('Navigation settings saved successfully!');
+      setToastMessage('Navigation & boundary settings saved successfully!');
+      setTimeout(() => setToastMessage(null), 3500);
     } catch (err) {
       console.error('Error saving settings:', err);
       alert('Error saving settings.');
@@ -379,8 +431,128 @@ export function AdminDashboardPage() {
             </div>
 
             {/* Premises Boundaries Settings */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--color-success)', margin: 0 }}>Premises Boundaries</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--color-success)', margin: 0 }}>Premises & School Boundary</h3>
+                
+                {/* Active / Inactive status pill */}
+                <span
+                  style={{
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    padding: '0.2rem 0.6rem',
+                    borderRadius: '20px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    background: schoolBoundaryEnabled ? 'rgba(34, 197, 94, 0.15)' : 'rgba(234, 179, 8, 0.15)',
+                    color: schoolBoundaryEnabled ? '#4ade80' : '#facc15',
+                    border: `1px solid ${schoolBoundaryEnabled ? 'rgba(34, 197, 94, 0.3)' : 'rgba(234, 179, 8, 0.3)'}`,
+                  }}
+                >
+                  <span
+                    style={{
+                      width: '6px',
+                      height: '6px',
+                      borderRadius: '50%',
+                      background: schoolBoundaryEnabled ? '#22c55e' : '#eab308',
+                      boxShadow: schoolBoundaryEnabled ? '0 0 8px #22c55e' : 'none',
+                    }}
+                  />
+                  {schoolBoundaryEnabled ? 'Boundary Active' : 'Boundary Disabled'}
+                </span>
+              </div>
+
+              {/* School Boundary Toggle Card */}
+              <div
+                style={{
+                  background: schoolBoundaryEnabled ? 'rgba(34, 197, 94, 0.05)' : 'rgba(255, 255, 255, 0.03)',
+                  border: `1px solid ${schoolBoundaryEnabled ? 'rgba(34, 197, 94, 0.25)' : 'rgba(255, 255, 255, 0.08)'}`,
+                  borderRadius: '10px',
+                  padding: '0.85rem 1rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.6rem',
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <div
+                      style={{
+                        padding: '0.4rem',
+                        borderRadius: '8px',
+                        background: schoolBoundaryEnabled ? 'rgba(34, 197, 94, 0.15)' : 'rgba(148, 163, 184, 0.12)',
+                        color: schoolBoundaryEnabled ? '#22c55e' : '#94a3b8',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {schoolBoundaryEnabled ? <ShieldCheck size={20} /> : <ShieldAlert size={20} />}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#f8fafc' }}>
+                        School Boundary Enforcement
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--color-muted)', lineHeight: 1.3 }}>
+                        {schoolBoundaryEnabled
+                          ? 'Enforced: Visitors outside campus see out-of-premises warning.'
+                          : 'Disabled: All visitors can navigate without geofence barriers.'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Toggle Switch */}
+                  <label
+                    style={{
+                      position: 'relative',
+                      display: 'inline-block',
+                      width: '46px',
+                      height: '24px',
+                      flexShrink: 0,
+                      cursor: 'pointer',
+                    }}
+                    title={schoolBoundaryEnabled ? 'Click to disable school boundary' : 'Click to enable school boundary'}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={schoolBoundaryEnabled}
+                      onChange={(e) => handleQuickToggleBoundary(e.target.checked)}
+                      style={{ opacity: 0, width: 0, height: 0 }}
+                    />
+                    <span
+                      style={{
+                        position: 'absolute',
+                        cursor: 'pointer',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: schoolBoundaryEnabled ? '#22c55e' : '#334155',
+                        transition: '0.3s',
+                        borderRadius: '24px',
+                        boxShadow: schoolBoundaryEnabled ? '0 0 10px rgba(34, 197, 94, 0.4)' : 'none',
+                      }}
+                    >
+                      <span
+                        style={{
+                          position: 'absolute',
+                          content: '""',
+                          height: '18px',
+                          width: '18px',
+                          left: schoolBoundaryEnabled ? '24px' : '3px',
+                          bottom: '3px',
+                          backgroundColor: '#ffffff',
+                          transition: '0.3s',
+                          borderRadius: '50%',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                        }}
+                      />
+                    </span>
+                  </label>
+                </div>
+              </div>
 
               <div className="form-group">
                 <label className="form-label" htmlFor="premises-lat" style={{ fontSize: '0.75rem' }}>Center Latitude *</label>
@@ -422,6 +594,25 @@ export function AdminDashboardPage() {
               </div>
             </div>
           </div>
+
+          {toastMessage && (
+            <div
+              style={{
+                background: 'rgba(34, 197, 94, 0.15)',
+                border: '1px solid rgba(34, 197, 94, 0.3)',
+                color: '#4ade80',
+                padding: '0.6rem 1rem',
+                borderRadius: '8px',
+                fontSize: '0.85rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+              }}
+            >
+              <CheckCircle2 size={16} />
+              <span>{toastMessage}</span>
+            </div>
+          )}
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
             <button

@@ -98,9 +98,8 @@ export function HomePage() {
   };
 
   return (
-    <>
-      <GPSPermissionBanner />
-      <div className="profile-page home-enhanced" style={{ maxWidth: 880, paddingBottom: '4rem' }}>
+    <div className="profile-page home-enhanced" style={{ maxWidth: 880, paddingBottom: '4rem' }}>
+      <GPSPermissionBanner inFlow />
 
         {/* ── Premium Header ─────────────────────────────────── */}
         <header className="home-header-enhanced">
@@ -239,11 +238,13 @@ export function HomePage() {
             Open Map
             <ArrowRight size={15} />
           </Link>
+          {/* 3D School button hidden from UI, preserved in codebase */}
           <Link
             to="/map3d"
             id="home-open-3d-btn"
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+              display: 'none',
+              alignItems: 'center', gap: '0.4rem',
               padding: '0.6rem 1.1rem', borderRadius: 10, fontWeight: 600, fontSize: '0.85rem',
               background: 'linear-gradient(135deg, #6366f1, #a855f7)',
               color: '#fff', textDecoration: 'none',
@@ -446,6 +447,5 @@ export function HomePage() {
 
         </div>
       </div>
-    </>
   );
 }

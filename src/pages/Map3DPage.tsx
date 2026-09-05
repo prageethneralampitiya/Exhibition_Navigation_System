@@ -51,8 +51,9 @@ export function Map3DPage() {
   const initialSavedRef = useRef<CalibrationConfig>(getSavedCalibration());
   const [showCalibrationModal, setShowCalibrationModal] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [schoolBoundaryEnabled, setSchoolBoundaryEnabled] = useState(true);
 
-  // Sync calibration from Supabase database on mount for cross-browser consistency
+  // Sync calibration and school boundary settings from Supabase database
   useEffect(() => {
     fetchCalibrationFromSupabase().then((remoteConfig) => {
       if (remoteConfig) {
@@ -63,7 +64,38 @@ export function Map3DPage() {
         customLayerRef.current?.setCalibration(remoteConfig, false);
       }
     });
+
+    supabase
+      .from('announcements')
+      .select('message')
+      .eq('type', 'settings')
+      .limit(1)
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          try {
+            const parsed = JSON.parse(data[0].message);
+            if (parsed.school_boundary_enabled !== undefined) {
+              setSchoolBoundaryEnabled(parsed.school_boundary_enabled !== false);
+            }
+          } catch (e) {
+            console.error('Error parsing settings:', e);
+          }
+        }
+      });
   }, []);
+
+  // Sync boundary layer visibility
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !mapLoaded) return;
+    const visibility = schoolBoundaryEnabled ? 'visible' : 'none';
+    if (m.getLayer('school-boundary-fill')) {
+      m.setLayoutProperty('school-boundary-fill', 'visibility', visibility);
+    }
+    if (m.getLayer('school-boundary-line')) {
+      m.setLayoutProperty('school-boundary-line', 'visibility', visibility);
+    }
+  }, [mapLoaded, schoolBoundaryEnabled]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);

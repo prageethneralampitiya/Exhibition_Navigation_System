@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Edit2, Trash2, Search, Check, Navigation2, Network, Link2, RefreshCw } from 'lucide-react';
+import { Plus, Edit2, Trash2, Search, Check, Navigation2, Network, Link2, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react';
 import { supabase, type NavigationNode, type NavigationEdge, type Store, type NodeType } from '../../lib/supabase';
 import { AdminTable } from '../../components/admin/AdminTable';
 import { AdminModal } from '../../components/admin/AdminModal';
@@ -14,6 +14,8 @@ export function AdminNodesPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'nodes' | 'edges'>('nodes');
+  const [schoolBoundaryEnabled, setSchoolBoundaryEnabled] = useState(true);
+  const [togglingBoundary, setTogglingBoundary] = useState(false);
 
   // Modals state
   const [isNodeModalOpen, setIsNodeModalOpen] = useState(false);
@@ -62,7 +64,7 @@ export function AdminNodesPage() {
   async function loadAllData() {
     try {
       setLoading(true);
-      const [nodesRes, edgesRes, storesRes] = await Promise.all([
+      const [nodesRes, edgesRes, storesRes, settingsRes] = await Promise.all([
         supabase.from('navigation_nodes').select('*').order('label'),
         supabase.from('navigation_edges').select(`
           *,
@@ -70,6 +72,7 @@ export function AdminNodesPage() {
           to_node:to_node_id (id, label)
         `),
         supabase.from('stores').select('*').order('name'),
+        supabase.from('announcements').select('*').eq('type', 'settings').limit(1),
       ]);
 
       const sortedNodes = (nodesRes.data || []).sort((a, b) =>
@@ -78,12 +81,75 @@ export function AdminNodesPage() {
       setNodes(sortedNodes);
       setEdges(edgesRes.data || []);
       setStores(storesRes.data || []);
+
+      if (settingsRes.data && settingsRes.data.length > 0) {
+        try {
+          const parsed = JSON.parse(settingsRes.data[0].message);
+          setSchoolBoundaryEnabled(parsed.school_boundary_enabled !== false);
+        } catch (e) {
+          console.error('Error parsing settings:', e);
+        }
+      }
     } catch (err) {
       console.error('Error loading navigation nodes page data:', err);
     } finally {
       setLoading(false);
     }
   }
+
+  const handleToggleSchoolBoundary = async () => {
+    try {
+      setTogglingBoundary(true);
+      const nextState = !schoolBoundaryEnabled;
+      
+      // Fetch latest settings record
+      const { data: settingsRes } = await supabase
+        .from('announcements')
+        .select('*')
+        .eq('type', 'settings')
+        .limit(1);
+
+      let parsed: any = {};
+      let settingsId: string | null = null;
+      if (settingsRes && settingsRes.length > 0) {
+        settingsId = settingsRes[0].id;
+        try {
+          parsed = JSON.parse(settingsRes[0].message);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      parsed.school_boundary_enabled = nextState;
+
+      const announcementPayload = {
+        title: 'System Exhibition Settings',
+        message: JSON.stringify(parsed),
+        type: 'settings',
+        is_active: true,
+      };
+
+      if (settingsId) {
+        const { error } = await supabase
+          .from('announcements')
+          .update({ ...announcementPayload, updated_at: new Date().toISOString() })
+          .eq('id', settingsId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('announcements')
+          .insert(announcementPayload);
+        if (error) throw error;
+      }
+
+      setSchoolBoundaryEnabled(nextState);
+    } catch (err) {
+      console.error('Error toggling school boundary:', err);
+      alert('Failed to update school boundary status.');
+    } finally {
+      setTogglingBoundary(false);
+    }
+  };
 
   async function cleanOrphanedPathNodes() {
     try {
@@ -637,7 +703,36 @@ export function AdminNodesPage() {
           <p>Map out indoor pathways, exits, and waypoints</p>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* School Boundary Quick Toggle */}
+          <button
+            className="btn btn-ghost"
+            onClick={handleToggleSchoolBoundary}
+            disabled={togglingBoundary}
+            title={
+              schoolBoundaryEnabled
+                ? 'School boundary is Active & Enforced. Click to disable geofence.'
+                : 'School boundary is Disabled (Free navigation). Click to enable.'
+            }
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.45rem',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              padding: '0.45rem 0.8rem',
+              borderRadius: '8px',
+              border: `1px solid ${schoolBoundaryEnabled ? 'rgba(34, 197, 94, 0.4)' : 'rgba(234, 179, 8, 0.4)'}`,
+              background: schoolBoundaryEnabled ? 'rgba(34, 197, 94, 0.08)' : 'rgba(234, 179, 8, 0.08)',
+              color: schoolBoundaryEnabled ? '#4ade80' : '#facc15',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            {schoolBoundaryEnabled ? <ShieldCheck size={16} /> : <ShieldAlert size={16} />}
+            <span>Boundary: {schoolBoundaryEnabled ? 'Active' : 'Disabled'}</span>
+          </button>
+
           <button className="btn btn-ghost" onClick={handleOpenDrawPath} style={{ border: '1px dashed var(--color-accent)', color: 'var(--color-accent)' }}>
             <Network size={16} />
             Draw Path

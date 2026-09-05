@@ -13,9 +13,63 @@ export interface OSRMRouteResult {
   guideSteps: string[];
 }
 
+/** OSRM v5 maneuver → human-readable turn instruction */
+function maneuverToText(type: string, modifier?: string, name?: string): string {
+  const road = name && name.trim() ? ` onto ${name}` : '';
+  switch (type) {
+    case 'depart': return `Head out${road}`;
+    case 'arrive': return `Arrive at destination`;
+    case 'turn': {
+      const dir = modifier === 'left' ? 'Turn left' :
+                  modifier === 'right' ? 'Turn right' :
+                  modifier === 'slight left' ? 'Slight left' :
+                  modifier === 'slight right' ? 'Slight right' :
+                  modifier === 'sharp left' ? 'Sharp left' :
+                  modifier === 'sharp right' ? 'Sharp right' :
+                  modifier === 'uturn' ? 'Make a U-turn' : 'Continue';
+      return `${dir}${road}`;
+    }
+    case 'continue': return `Continue${road}`;
+    case 'merge': return `Merge${modifier ? ` ${modifier}` : ''}${road}`;
+    case 'fork': return `At the fork, keep ${modifier || 'straight'}${road}`;
+    case 'end of road': return `At the end of road, turn ${modifier || 'right'}${road}`;
+    case 'roundabout': return `Enter roundabout${road}`;
+    case 'rotary': return `Enter rotary${road}`;
+    case 'roundabout turn': return `At the roundabout, turn ${modifier || 'right'}${road}`;
+    case 'exit roundabout': return `Exit the roundabout${road}`;
+    case 'exit rotary': return `Exit the rotary${road}`;
+    default: return `Continue${road}`;
+  }
+}
+
+/**
+ * Attempt to fetch a walking route from a given OSRM endpoint.
+ * Returns parsed data or null on failure.
+ */
+async function tryOSRMEndpoint(
+  baseUrl: string,
+  startLng: number,
+  startLat: number,
+  endLng: number,
+  endLat: number,
+  timeoutMs: number
+): Promise<any | null> {
+  try {
+    const url = `${baseUrl}${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson&steps=true`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (data.code !== 'Ok' || !data.routes || data.routes.length === 0) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Fetch a walking route from OSRM public API between start and end coordinates.
- * Returns null if network fails or no route is found.
+ * Tries the public OSRM server first, then falls back to a secondary endpoint.
+ * Returns null if all attempts fail or no route is found.
  */
 export async function fetchOSRMRoute(
   startLat: number,
@@ -25,29 +79,35 @@ export async function fetchOSRMRoute(
   startLabel = 'Your Location',
   targetLabel = 'Destination'
 ): Promise<OSRMRouteResult | null> {
+  // Primary: public OSRM demo server (foot profile = same as walking)
+  // Secondary: router.project-osrm.org with driving (last resort, less accurate for pedestrians)
+  const ENDPOINTS = [
+    'https://router.project-osrm.org/route/v1/foot/',
+    'https://routing.openstreetmap.de/routed-foot/route/v1/driving/',
+  ];
+
+  let data: any = null;
+
+  for (const endpoint of ENDPOINTS) {
+    data = await tryOSRMEndpoint(endpoint, startLng, startLat, endLng, endLat, 8000);
+    if (data) break;
+  }
+
+  if (!data) {
+    console.warn('All OSRM endpoints failed — no street route available.');
+    return null;
+  }
+
   try {
-    const url = `https://router.project-osrm.org/route/v1/foot/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson&steps=true`;
-
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(4000), // 4s timeout fallback
-    });
-
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    if (!data.routes || data.routes.length === 0) return null;
-
     const route = data.routes[0];
-    const geometry = route.geometry; // GeoJSON LineString coordinates: [[lng, lat], ...]
+    const geometry = route.geometry; // GeoJSON LineString: [[lng, lat], ...]
     const distanceMeters = Math.round(route.distance || 0);
 
-    if (!geometry || !geometry.coordinates || geometry.coordinates.length === 0) {
-      return null;
-    }
+    if (!geometry?.coordinates?.length) return null;
 
     const coords: [number, number][] = geometry.coordinates;
 
-    // Convert GeoJSON [lng, lat] array to NavigationNode[]
+    // Convert GeoJSON [lng, lat] pairs → NavigationNode[]
     const nodes: NavigationNode[] = coords.map((c, idx) => {
       const isStart = idx === 0;
       const isEnd = idx === coords.length - 1;
@@ -67,35 +127,34 @@ export async function fetchOSRMRoute(
       };
     });
 
-    // Build turn guidance steps
-    const steps: string[] = [];
-    if (route.legs && route.legs[0] && route.legs[0].steps) {
-      steps.push(`Start from ${startLabel}`);
-      const osrmSteps = route.legs[0].steps;
+    // Build turn guidance from OSRM v5 leg steps
+    const steps: string[] = [`Start from ${startLabel}`];
+    const leg = route.legs?.[0];
 
-      osrmSteps.forEach((step: any) => {
-        if (step.maneuver && step.instruction) {
-          steps.push(step.instruction);
-        } else if (step.name) {
-          steps.push(`Follow ${step.name} for ${Math.round(step.distance)}m`);
+    if (leg?.steps?.length) {
+      leg.steps.forEach((step: any) => {
+        const maneuver = step.maneuver;
+        if (!maneuver) return;
+        // Skip depart (already handled) and arrive (added separately)
+        if (maneuver.type === 'arrive') return;
+
+        const dist = step.distance > 0 ? ` (${Math.round(step.distance)}m)` : '';
+        const instruction = maneuverToText(maneuver.type, maneuver.modifier, step.name);
+        if (instruction && step.distance > 3) {
+          steps.push(`${instruction}${dist}`);
         }
       });
-
-      steps.push(`Arrive at ${targetLabel}`);
     } else {
+      // Fallback: compass heading when steps are unavailable
       const heading = getHeading(startLat, startLng, endLat, endLng);
-      steps.push(`Start from ${startLabel}`);
-      steps.push(`Head ${heading} along street network for ${distanceMeters} meters to ${targetLabel}`);
-      steps.push(`Arrive at ${targetLabel}`);
+      steps.push(`Head ${heading} along street network for ${distanceMeters}m`);
     }
 
-    return {
-      nodes,
-      totalDistanceMeters: distanceMeters,
-      guideSteps: steps,
-    };
+    steps.push(`🏫 Arrive at ${targetLabel}`);
+
+    return { nodes, totalDistanceMeters: distanceMeters, guideSteps: steps };
   } catch (err) {
-    console.warn('OSRM outdoor street routing unavailable, falling back to graph/direct routing:', err);
+    console.warn('Error parsing OSRM route response:', err);
     return null;
   }
 }

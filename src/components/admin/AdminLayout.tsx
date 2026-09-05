@@ -123,7 +123,7 @@ export function AdminLayout({ children }: { children: ReactNode }) {
                   className="admin-nav-item"
                   onClick={() => setMobileOpen(false)}
                   title={collapsed ? '3D Calibration' : undefined}
-                  style={{ color: '#c084fc' }}
+                  style={{ display: 'none', color: '#c084fc' }}
                 >
                   <span className="nav-icon"><Maximize2 size={18} /></span>
                   <span className="admin-nav-label">3D Calibration</span>
