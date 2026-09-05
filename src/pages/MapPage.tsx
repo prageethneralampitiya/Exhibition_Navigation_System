@@ -2875,12 +2875,34 @@ export function MapPage() {
 
           {showChecklistPrompt && (
             <AdminModal
-              title="📋 Select Stalls to Visit (Tour Planner)"
+              title="📋 Guided Tour Planner"
               onClose={() => setShowChecklistPrompt(false)}
+              footer={
+                <div style={{ display: 'flex', gap: '0.6rem', width: '100%', justifyContent: 'flex-end', alignItems: 'center' }}>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ padding: '0.45rem 1rem', fontSize: '0.85rem' }}
+                    onClick={() => setShowChecklistPrompt(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    style={{ padding: '0.45rem 1.25rem', fontSize: '0.85rem', fontWeight: 700 }}
+                    disabled={tourSelectedStallIds.length === 0}
+                    onClick={() => {
+                      setShowChecklistPrompt(false);
+                      generateGuidedTourRoute(tourSelectedStallIds);
+                    }}
+                  >
+                    🚀 Start Tour ({tourSelectedStallIds.length} {tourSelectedStallIds.length === 1 ? 'Stall' : 'Stalls'})
+                  </button>
+                </div>
+              }
             >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxHeight: '75vh' }}>
-                <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', margin: 0, lineHeight: 1.5 }}>
-                  Choose which stalls you want to visit on your guided tour. By default, <strong>ALL stalls are selected</strong> for the shortest optimal path.
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: 1, minHeight: 0 }}>
+                <p style={{ fontSize: '0.82rem', color: 'var(--color-muted)', margin: 0, lineHeight: 1.4 }}>
+                  Choose which stalls you want to visit on your tour. By default, <strong>all stalls are selected</strong> for the shortest optimal path.
                 </p>
 
                 {/* Stats & Quick Actions Toolbar */}
@@ -2889,27 +2911,27 @@ export function MapPage() {
                   flexWrap: 'wrap',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  gap: '0.5rem',
-                  padding: '0.6rem 0.85rem',
+                  gap: '0.4rem',
+                  padding: '0.45rem 0.65rem',
                   background: 'rgba(255, 255, 255, 0.03)',
                   border: '1px solid var(--color-border)',
                   borderRadius: '10px'
                 }}>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', fontSize: '0.8rem', fontWeight: 700 }}>
-                    <span style={{ color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.15)', padding: '0.2rem 0.5rem', borderRadius: '6px' }}>
-                      🎯 In Tour: {tourSelectedStallIds.length} / {(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).length}
+                  <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', fontSize: '0.78rem', fontWeight: 700 }}>
+                    <span style={{ color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.15)', padding: '0.15rem 0.45rem', borderRadius: '6px' }}>
+                      🎯 In Tour: {tourSelectedStallIds.length}/{(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).length}
                     </span>
                     {visitedStallIds.length > 0 && (
-                      <span style={{ color: '#22c55e', background: 'rgba(34, 197, 94, 0.12)', padding: '0.2rem 0.5rem', borderRadius: '6px' }}>
-                        ✓ Visited: {visitedStallIds.length}
+                      <span style={{ color: '#22c55e', background: 'rgba(34, 197, 94, 0.12)', padding: '0.15rem 0.45rem', borderRadius: '6px' }}>
+                        ✓ {visitedStallIds.length} Visited
                       </span>
                     )}
                   </div>
 
-                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
                     <button
                       className="btn btn-ghost btn-sm"
-                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem', color: 'var(--color-accent)' }}
+                      style={{ fontSize: '0.7rem', padding: '0.2rem 0.45rem', color: 'var(--color-accent)', minHeight: 'unset' }}
                       onClick={() => {
                         const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
                         const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS;
@@ -2920,21 +2942,21 @@ export function MapPage() {
                     </button>
                     <button
                       className="btn btn-ghost btn-sm"
-                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem', color: '#38bdf8' }}
+                      style={{ fontSize: '0.7rem', padding: '0.2rem 0.45rem', color: '#38bdf8', minHeight: 'unset' }}
                       onClick={() => {
                         const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
                         const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS;
                         setTourSelectedStallIds(listToUse.filter(s => !visitedStallIds.includes(s.id)).map(s => s.id));
                       }}
                     >
-                      Unvisited Only
+                      Unvisited
                     </button>
                     <button
                       className="btn btn-ghost btn-sm"
-                      style={{ fontSize: '0.72rem', padding: '0.25rem 0.55rem', color: 'var(--color-warning)' }}
+                      style={{ fontSize: '0.7rem', padding: '0.2rem 0.45rem', color: 'var(--color-warning)', minHeight: 'unset' }}
                       onClick={() => setTourSelectedStallIds([])}
                     >
-                      Deselect All
+                      Deselect
                     </button>
                   </div>
                 </div>
@@ -2946,19 +2968,20 @@ export function MapPage() {
                   placeholder="🔍 Search stalls by name or category..."
                   value={checklistSearchQuery}
                   onChange={(e) => setChecklistSearchQuery(e.target.value)}
-                  style={{ fontSize: '0.85rem', padding: '0.45rem 0.75rem' }}
+                  style={{ fontSize: '0.82rem', padding: '0.4rem 0.65rem' }}
                 />
 
                 <div style={{
                   flex: 1,
+                  minHeight: '160px',
+                  maxHeight: '42vh',
                   overflowY: 'auto',
                   border: '1px solid var(--color-border)',
                   borderRadius: '10px',
-                  padding: '0.5rem',
+                  padding: '0.4rem',
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '0.4rem',
-                  maxHeight: '320px'
+                  gap: '0.35rem'
                 }}>
                   {(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0
                     ? stores.filter(s => s.id !== 'kalawana-national-school-landmark')
@@ -2979,8 +3002,8 @@ export function MapPage() {
                           style={{
                             display: 'flex',
                             alignItems: 'center',
-                            gap: '0.75rem',
-                            padding: '0.65rem 0.85rem',
+                            gap: '0.65rem',
+                            padding: '0.55rem 0.75rem',
                             borderRadius: '8px',
                             background: isSelected ? 'rgba(34, 211, 238, 0.08)' : 'rgba(255, 255, 255, 0.02)',
                             cursor: 'pointer',
@@ -2991,7 +3014,7 @@ export function MapPage() {
                           <input
                             type="checkbox"
                             checked={isSelected}
-                            style={{ width: 18, height: 18, accentColor: '#22d3ee', cursor: 'pointer' }}
+                            style={{ width: 18, height: 18, accentColor: '#22d3ee', cursor: 'pointer', flexShrink: 0 }}
                             onChange={() => {
                               if (isSelected) {
                                 setTourSelectedStallIds(tourSelectedStallIds.filter(id => id !== store.id));
@@ -3000,29 +3023,29 @@ export function MapPage() {
                               }
                             }}
                           />
-                          <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: '0.9rem', fontWeight: 700, color: isSelected ? 'var(--color-text)' : 'var(--color-muted)' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.4rem' }}>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 700, color: isSelected ? 'var(--color-text)' : 'var(--color-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {store.name}
                               </span>
-                              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', flexShrink: 0 }}>
                                 {isVisited && (
-                                  <span style={{ fontSize: '0.68rem', color: '#22c55e', fontWeight: 700, background: 'rgba(34, 197, 94, 0.15)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                                  <span style={{ fontSize: '0.65rem', color: '#22c55e', fontWeight: 700, background: 'rgba(34, 197, 94, 0.15)', padding: '0.1rem 0.35rem', borderRadius: '4px' }}>
                                     ✓ Visited
                                   </span>
                                 )}
                                 {isSelected ? (
-                                  <span style={{ fontSize: '0.68rem', color: '#22d3ee', fontWeight: 700, background: 'rgba(34, 211, 238, 0.15)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                                  <span style={{ fontSize: '0.65rem', color: '#22d3ee', fontWeight: 700, background: 'rgba(34, 211, 238, 0.15)', padding: '0.1rem 0.35rem', borderRadius: '4px' }}>
                                     🎯 In Tour
                                   </span>
                                 ) : (
-                                  <span style={{ fontSize: '0.68rem', color: 'var(--color-muted)', fontWeight: 600, background: 'rgba(255, 255, 255, 0.05)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+                                  <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 600, background: 'rgba(255, 255, 255, 0.05)', padding: '0.1rem 0.35rem', borderRadius: '4px' }}>
                                     ⏭️ Excluded
                                   </span>
                                 )}
                               </div>
                             </div>
-                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.15rem', fontSize: '0.72rem', color: 'var(--color-muted)' }}>
+                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.15rem', fontSize: '0.7rem', color: 'var(--color-muted)' }}>
                               {store.categories?.name && <span>🏷️ {store.categories.name}</span>}
                               {store.floor && <span>📍 Floor {store.floor}</span>}
                             </div>
@@ -3030,26 +3053,6 @@ export function MapPage() {
                         </label>
                       );
                     })}
-                </div>
-
-                {/* Footer Actions */}
-                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => setShowChecklistPrompt(false)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="btn btn-primary"
-                    disabled={tourSelectedStallIds.length === 0}
-                    onClick={() => {
-                      setShowChecklistPrompt(false);
-                      generateGuidedTourRoute(tourSelectedStallIds);
-                    }}
-                  >
-                    🚀 Start Shortest Tour ({tourSelectedStallIds.length} Stalls)
-                  </button>
                 </div>
               </div>
             </AdminModal>
