@@ -30,12 +30,12 @@ import { MapView3D } from '../components/MapView3D';
 import { getCampusStoreLocation } from '../components/KalawanaSchool3DLayer';
 import {
   calculateShortestPathBetweenCoordinates,
-  findClosestNode,
   findClosestPointOnGraph,
   getDistance,
   getHeading,
   getAllEntrancePoints,
   findShortestDistanceEntrance,
+  isPointNearVenueGraph,
 } from '../utils/dijkstra';
 import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
@@ -93,6 +93,31 @@ const DEFAULT_DEMO_STALLS: StoreType[] = [
     categories: { id: 'cat-food', name: 'Food & Dining', color: '#f59e0b' }
   }
 ] as any[];
+
+/**
+ * Normalizes navigation nodes:
+ * - Marks entrance nodes based on exact label or precise coordinates (~5m)
+ * - NEVER overwrites coordinates of general path nodes
+ */
+function normalizeNavigationNodes(navigationNodes: NavigationNode[]): NavigationNode[] {
+  return navigationNodes.map((n) => {
+    const labelLower = (n.label || '').toLowerCase().trim();
+    if (labelLower === 'uni entrance' || labelLower === 'university entrance') {
+      return { ...n, latitude: 6.795359, longitude: 79.899868, type: 'entrance' };
+    }
+    if (labelLower === 'entrance gate' || labelLower === 'school entrance') {
+      return { ...n, latitude: 6.535862, longitude: 80.400348, type: 'entrance' };
+    }
+    // Coordinate-based (tight ~5m threshold): only mark type, NEVER overwrite coordinates
+    if (Math.abs(n.latitude - 6.795359) < 0.00005 && Math.abs(n.longitude - 79.899868) < 0.00005) {
+      return { ...n, type: 'entrance' };
+    }
+    if (Math.abs(n.latitude - 6.535862) < 0.00005 && Math.abs(n.longitude - 80.400348) < 0.00005) {
+      return { ...n, type: 'entrance' };
+    }
+    return n;
+  });
+}
 
 export function MapPage() {
   const { profile } = useAuth();
@@ -229,6 +254,11 @@ export function MapPage() {
     destId: string;
   } | null>(null);
 
+  // Last GPS position used for tour route calculation — prevents recalculating on every minor GPS jitter
+  const lastTourRoutePositionRef = useRef<{ lat: number; lng: number; stopId: string } | null>(null);
+  // Minimum distance the user must move (metres) before the tour leg route updates
+  const TOUR_REROUTE_THRESHOLD_METERS = 5;
+
   // Bottom sheet drag state (Google Maps style)
   const [navSheetExpanded, setNavSheetExpanded] = useState(false);
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -291,13 +321,22 @@ export function MapPage() {
     loadNavigationResources();
     startLocationTracking();
 
+    // Realtime subscription: auto-refresh nodes/edges when admin saves new path nodes
+    const graphChannel = supabase
+      .channel('map-graph-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'navigation_nodes' }, refreshGraphData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'navigation_edges' }, refreshGraphData)
+      .subscribe();
+
     const gpsFilter = filterRef.current;
     return () => {
       if (geoWatchIdRef.current !== null) {
         navigator.geolocation.clearWatch(geoWatchIdRef.current);
       }
       gpsFilter.reset();
+      supabase.removeChannel(graphChannel);
     };
+
   }, []);
 
   async function loadNavigationResources() {
@@ -356,8 +395,12 @@ export function MapPage() {
       });
 
       setStores(processedStores);
+
+      const normalizedNodes = normalizeNavigationNodes(navigationNodes);
+
+
       // Sort navigation nodes naturally in ascending order (Node 1, Node 2, ...)
-      const sortedNodes = [...navigationNodes].sort((a, b) =>
+      const sortedNodes = [...normalizedNodes].sort((a, b) =>
         a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' })
       );
       setNodes(sortedNodes);
@@ -419,6 +462,31 @@ export function MapPage() {
       console.error('Error fetching navigation data:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  /** Lightweight graph refresh — only re-fetches nodes + edges, not stores/settings.
+   *  Called by the realtime subscription whenever the admin saves new path nodes. */
+  async function refreshGraphData() {
+    try {
+      const [nodesRes, edgesRes] = await Promise.all([
+        supabase.from('navigation_nodes').select('*'),
+        supabase.from('navigation_edges').select('*'),
+      ]);
+
+      const navigationNodes = nodesRes.data || [];
+      const navigationEdges = edgesRes.data || [];
+
+      const normalizedNodes = normalizeNavigationNodes(navigationNodes);
+
+      const sortedNodes = [...normalizedNodes].sort((a, b) =>
+        a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' })
+      );
+
+      setNodes(sortedNodes);
+      setEdges(navigationEdges);
+    } catch (err) {
+      console.warn('Graph auto-refresh failed:', err);
     }
   }
 
@@ -617,8 +685,10 @@ export function MapPage() {
     const entranceLabel = bestEntrance.label;
 
     const VENUE_RADIUS = exhibitionSettings.premises_radius_meters || 150;
-    const isOutsideVenue = getDistance(fromLat, fromLng, entranceLat, entranceLng) > VENUE_RADIUS;
-    const isTargetIsolated = getDistance(targetLat, targetLng, entranceLat, entranceLng) > 500;
+    const isNearGraph = isPointNearVenueGraph(fromLat, fromLng, nodes, edges, 65);
+    const isOutsideVenue = !isNearGraph && getDistance(fromLat, fromLng, entranceLat, entranceLng) > VENUE_RADIUS;
+    const isTargetNearGraph = isPointNearVenueGraph(targetLat, targetLng, nodes, edges, 65);
+    const isTargetIsolated = !isTargetNearGraph && getDistance(targetLat, targetLng, entranceLat, entranceLng) > 500;
 
     const storeTargetVirtualNode: NavigationNode = {
       id: `store-stop-${targetStore.id}`,
@@ -922,6 +992,7 @@ export function MapPage() {
       setTourStops(orderedTourStops);
       setCurrentTourStopIndex(0);
       lastPromptedStopIdRef.current = null;
+      lastTourRoutePositionRef.current = null;
       setArrivedStopPrompt(null);
       setSelectedDestinationStoreId('');
       setSelectedDestinationNodeId('');
@@ -936,24 +1007,20 @@ export function MapPage() {
     }
   };
 
-  const handleMarkCurrentStopVisited = () => {
-    if (!guidedTourActive || tourStops.length === 0) return;
-    const currentStop = tourStops[currentTourStopIndex];
-    if (currentStop) {
-      const updatedVisited = Array.from(new Set([...visitedStallIds, currentStop.id]));
-      setVisitedStallIds(updatedVisited);
-      setArrivedStopPrompt(null);
+  const handleMarkStopVisited = (storeToMark: StoreType) => {
+    const updatedVisited = Array.from(new Set([...visitedStallIds, storeToMark.id]));
+    setVisitedStallIds(updatedVisited);
+    setArrivedStopPrompt(null);
 
-      if (currentTourStopIndex + 1 < tourStops.length) {
-        const nextIndex = currentTourStopIndex + 1;
-        setCurrentTourStopIndex(nextIndex);
+    // If guided tour is active
+    if (guidedTourActive && tourStops.length > 0) {
+      const currentStop = tourStops[currentTourStopIndex];
+      const isCurrentPlannedStop = currentStop && currentStop.id === storeToMark.id;
 
-        // Start next leg from user's current GPS location if available, otherwise from the visited stall
-        const fromLat = userLat !== null ? userLat : (currentStop.latitude || 6.535472);
-        const fromLng = userLng !== null ? userLng : (currentStop.longitude || 80.401000);
+      // Check if all tour stops are now visited
+      const allTourStopsVisited = tourStops.every((s) => updatedVisited.includes(s.id));
 
-        routeToTourStop(fromLat, fromLng, tourStops[nextIndex], nextIndex, tourStops.length);
-      } else {
+      if (allTourStopsVisited) {
         setGuidedTourActive(false);
         setCalculatedRoute([]);
         setNavigationActive(false);
@@ -962,7 +1029,59 @@ export function MapPage() {
           totalVisited: updatedVisited.length,
         });
         setShowTourCompletedModal(true);
+        return;
       }
+
+      if (isCurrentPlannedStop) {
+        // Find next unvisited stop index sequentially
+        let nextIndex = currentTourStopIndex + 1;
+        while (nextIndex < tourStops.length && updatedVisited.includes(tourStops[nextIndex].id)) {
+          nextIndex++;
+        }
+        if (nextIndex < tourStops.length) {
+          setCurrentTourStopIndex(nextIndex);
+          const fromLat = userLat !== null ? userLat : (storeToMark.latitude || 6.535472);
+          const fromLng = userLng !== null ? userLng : (storeToMark.longitude || 80.401000);
+          routeToTourStop(fromLat, fromLng, tourStops[nextIndex], nextIndex, tourStops.length);
+        } else {
+          // Check for any remaining unvisited stop from beginning of tour
+          const remainingIndex = tourStops.findIndex((s) => !updatedVisited.includes(s.id));
+          if (remainingIndex >= 0) {
+            setCurrentTourStopIndex(remainingIndex);
+            const fromLat = userLat !== null ? userLat : (storeToMark.latitude || 6.535472);
+            const fromLng = userLng !== null ? userLng : (storeToMark.longitude || 80.401000);
+            routeToTourStop(fromLat, fromLng, tourStops[remainingIndex], remainingIndex, tourStops.length);
+          } else {
+            setGuidedTourActive(false);
+            setCalculatedRoute([]);
+            setNavigationActive(false);
+            setCompletedTourStats({
+              totalStalls: tourStops.length,
+              totalVisited: updatedVisited.length,
+            });
+            setShowTourCompletedModal(true);
+          }
+        }
+      } else {
+        // User marked a different stall as visited during tour (e.g. visited stall 3 before stall 2)
+        // Keep active tour route directed towards current unvisited tour stop
+        if (currentStop) {
+          const fromLat = userLat !== null ? userLat : (storeToMark.latitude || 6.535472);
+          const fromLng = userLng !== null ? userLng : (storeToMark.longitude || 80.401000);
+          routeToTourStop(fromLat, fromLng, currentStop, currentTourStopIndex, tourStops.length);
+        }
+      }
+    } else {
+      // Outside guided tour mode
+      if (selectedDestinationStoreId === storeToMark.id) {
+        setSelectedDestinationStoreId('');
+      }
+    }
+  };
+
+  const handleMarkCurrentStopVisited = () => {
+    if (tourStops[currentTourStopIndex]) {
+      handleMarkStopVisited(tourStops[currentTourStopIndex]);
     }
   };
 
@@ -974,29 +1093,61 @@ export function MapPage() {
     setCurrentTourStopIndex(0);
     setArrivedStopPrompt(null);
     lastPromptedStopIdRef.current = null;
+    lastTourRoutePositionRef.current = null;
   };
 
-  // Automatic Proximity Arrival Detector during guided tour
+  // Automatic Proximity Arrival Detector (7m radius) — works in tour mode and general exploration
+  const TOUR_ARRIVAL_THRESHOLD_METERS = 7;
   useEffect(() => {
-    if (!guidedTourActive || tourStops.length === 0) return;
     if (userLat === null || userLng === null) return;
-    const currentStop = tourStops[currentTourStopIndex];
-    if (!currentStop) return;
+    if (stores.length === 0) return;
 
-    const stopIdx = stores.findIndex((s) => s.id === currentStop.id);
-    const campusPos = getCampusStoreLocation(currentStop, stopIdx >= 0 ? stopIdx : 0);
-    const targetLat = currentStop.latitude ?? campusPos.lat;
-    const targetLng = currentStop.longitude ?? campusPos.lng;
+    const realStores = stores.filter((s) => s.id !== 'kalawana-national-school-landmark');
+    if (realStores.length === 0) return;
 
-    if (targetLat && targetLng) {
-      const dist = getDistance(userLat, userLng, targetLat, targetLng);
-      // Prompt when within 15 meters of target store and hasn't been prompted yet
-      if (dist <= 15 && lastPromptedStopIdRef.current !== currentStop.id && !visitedStallIds.includes(currentStop.id)) {
-        lastPromptedStopIdRef.current = currentStop.id;
-        setArrivedStopPrompt(currentStop);
+    // Find the closest unvisited store within TOUR_ARRIVAL_THRESHOLD_METERS (7m)
+    let closestStore: StoreType | null = null;
+    let closestDist = Infinity;
+
+    for (let idx = 0; idx < realStores.length; idx++) {
+      const store = realStores[idx];
+      if (visitedStallIds.includes(store.id)) continue;
+
+      const campusPos = getCampusStoreLocation(store, idx);
+      const targetLat = store.latitude ?? campusPos.lat;
+      const targetLng = store.longitude ?? campusPos.lng;
+
+      if (targetLat != null && targetLng != null) {
+        const d = getDistance(userLat, userLng, targetLat, targetLng);
+        if (d <= TOUR_ARRIVAL_THRESHOLD_METERS && d < closestDist) {
+          closestDist = d;
+          closestStore = store;
+        }
       }
     }
-  }, [userLat, userLng, guidedTourActive, tourStops, currentTourStopIndex, visitedStallIds, stores]);
+
+    if (closestStore) {
+      if (lastPromptedStopIdRef.current !== closestStore.id) {
+        lastPromptedStopIdRef.current = closestStore.id;
+        setArrivedStopPrompt(closestStore);
+      }
+    } else if (lastPromptedStopIdRef.current) {
+      // If user moved away (> 14m) from the last prompted store, reset ref and dismiss the card
+      // so they can be prompted again upon returning
+      const lastStore = realStores.find((s) => s.id === lastPromptedStopIdRef.current);
+      if (lastStore) {
+        const sIdx = realStores.indexOf(lastStore);
+        const campusPos = getCampusStoreLocation(lastStore, sIdx >= 0 ? sIdx : 0);
+        const tLat = lastStore.latitude ?? campusPos.lat;
+        const tLng = lastStore.longitude ?? campusPos.lng;
+        if (tLat != null && tLng != null && getDistance(userLat, userLng, tLat, tLng) > 14) {
+          lastPromptedStopIdRef.current = null;
+          // Auto-dismiss the prompt card — user has walked away from this stall
+          setArrivedStopPrompt(null);
+        }
+      }
+    }
+  }, [userLat, userLng, visitedStallIds, stores]);
 
   // Handle deep-linking navigation targets via ?to= query parameters
   // Handle deep-linking navigation targets via query parameters
@@ -1018,7 +1169,34 @@ export function MapPage() {
   useEffect(() => {
     if (selectedDestinationStoreId || selectedDestinationNodeId) {
       calculateRoutePath();
+    } else if (guidedTourActive && tourStops.length > 0) {
+      // Maintain guided tour route and update current leg as user walks with GPS.
+      // Throttle: only recalculate when stop changes OR user moved >= TOUR_REROUTE_THRESHOLD_METERS.
+      const currentStop = tourStops[currentTourStopIndex];
+      if (currentStop) {
+        let fromLat = userLat;
+        let fromLng = userLng;
+        if (fromLat === null || fromLng === null) {
+          if (mockStartNodeId) {
+            const mockNode = nodes.find((n) => n.id === mockStartNodeId);
+            if (mockNode) {
+              fromLat = mockNode.latitude;
+              fromLng = mockNode.longitude;
+            }
+          }
+        }
+        if (fromLat !== null && fromLng !== null) {
+          const lastPos = lastTourRoutePositionRef.current;
+          const stopChanged = !lastPos || lastPos.stopId !== currentStop.id;
+          const movedEnough = !lastPos || getDistance(fromLat, fromLng, lastPos.lat, lastPos.lng) >= TOUR_REROUTE_THRESHOLD_METERS;
+          if (stopChanged || movedEnough) {
+            lastTourRoutePositionRef.current = { lat: fromLat, lng: fromLng, stopId: currentStop.id };
+            routeToTourStop(fromLat, fromLng, currentStop, currentTourStopIndex, tourStops.length);
+          }
+        }
+      }
     } else {
+      lastTourRoutePositionRef.current = null;
       setCalculatedRoute([]);
       setTotalDistance(0);
       setGuideSteps([]);
@@ -1028,7 +1206,7 @@ export function MapPage() {
       lastOSRMRouteRef.current = null;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDestinationStoreId, selectedDestinationNodeId, userLat, userLng, mockMode, mockStartNodeId, nodes, edges]);
+  }, [selectedDestinationStoreId, selectedDestinationNodeId, userLat, userLng, mockMode, mockStartNodeId, nodes, edges, guidedTourActive, currentTourStopIndex, tourStops]);
 
   // Compute route path
   async function calculateRoutePath() {
@@ -1106,11 +1284,13 @@ export function MapPage() {
 
     const VENUE_RADIUS = exhibitionSettings.premises_radius_meters || 150;
     const distFromEntrance = getDistance(startLat, startLng, entranceLat, entranceLng);
-    const isOutsideVenue = distFromEntrance > VENUE_RADIUS;
+    const isNearGraph = isPointNearVenueGraph(startLat, startLng, nodes, edges, 65);
+    const isOutsideVenue = !isNearGraph && distFromEntrance > VENUE_RADIUS;
     setIsFarAway(isOutsideVenue); // keep UI state in sync
 
+    const isTargetNearGraph = isPointNearVenueGraph(targetLat, targetLng, nodes, edges, 65);
     const targetDistFromEntrance = getDistance(targetLat, targetLng, entranceLat, entranceLng);
-    const isTargetIsolated = targetDistFromEntrance > 500;
+    const isTargetIsolated = !isTargetNearGraph && targetDistFromEntrance > 500;
 
     const destEndVirtualNode: NavigationNode = {
       id: 'actual-end-virtual',
@@ -1201,12 +1381,10 @@ export function MapPage() {
     }
 
     let graphPath: NavigationNode[] = [];
-    const connectedNodes = nodes.filter((n) => edges.some((e) => e.from_node_id === n.id || e.to_node_id === n.id));
 
     const explicitDestNodeId =
       selectedDestinationNodeId ||
       (selectedDestinationStoreId ? nodes.find((n) => n.store_id === selectedDestinationStoreId)?.id : null) ||
-      (connectedNodes.length > 0 ? findClosestNode(targetLat, targetLng, connectedNodes)?.id : null) ||
       null;
 
     if (nodes.length > 0 && edges.length > 0) {
@@ -1590,6 +1768,24 @@ export function MapPage() {
               title="Center on Kalawana National School"
             >
               📍 Kalawana School
+            </button>
+            <button
+              onClick={() => {
+                setMapCenterLat(6.796300);
+                setMapCenterLng(79.900000);
+              }}
+              className="btn btn-sm"
+              style={{
+                padding: '0.35rem 0.65rem',
+                background: 'linear-gradient(135deg, #06b6d4, #3b82f6)',
+                color: '#fff',
+                border: 'none',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+              title="Center on University of Moratuwa"
+            >
+              📍 Uni Campus
             </button>
             {/* 3D View Link Button (hidden from UI) */}
             <Link
@@ -2674,7 +2870,9 @@ export function MapPage() {
                       letterSpacing: '0.05em',
                     }}
                   >
-                    🎯 Arrived at Stop {currentTourStopIndex + 1} of {tourStops.length}
+                    {guidedTourActive && tourStops.length > 0 && tourStops[currentTourStopIndex]?.id === arrivedStopPrompt.id
+                      ? `🎯 Arrived at Stop ${currentTourStopIndex + 1} of ${tourStops.length}`
+                      : '📍 Near Exhibition Stall'}
                   </span>
                   <h4
                     style={{
@@ -2693,7 +2891,11 @@ export function MapPage() {
               </div>
 
               <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--color-muted)', lineHeight: 1.45 }}>
-                Have you finished visiting <strong>{arrivedStopPrompt.name}</strong>? Mark as visited to see the route to the next store!
+                {guidedTourActive && tourStops.length > 0 && tourStops[currentTourStopIndex]?.id === arrivedStopPrompt.id ? (
+                  <>Have you finished visiting <strong>{arrivedStopPrompt.name}</strong>? Mark as visited to see the route to the next store!</>
+                ) : (
+                  <>Visiting <strong>{arrivedStopPrompt.name}</strong>? Mark as visited to track your exhibition progress!</>
+                )}
               </p>
 
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.1rem' }}>
@@ -2702,7 +2904,9 @@ export function MapPage() {
                   style={{ flex: 1, fontSize: '0.78rem' }}
                   onClick={() => setArrivedStopPrompt(null)}
                 >
-                  Still Visiting
+                  {guidedTourActive && tourStops.length > 0 && tourStops[currentTourStopIndex]?.id === arrivedStopPrompt.id
+                    ? 'Still Visiting'
+                    : 'Not Now'}
                 </button>
                 <button
                   className="btn btn-primary btn-sm"
@@ -2719,11 +2923,13 @@ export function MapPage() {
                     boxShadow: '0 2px 8px rgba(34, 197, 94, 0.35)',
                   }}
                   onClick={() => {
-                    handleMarkCurrentStopVisited();
+                    handleMarkStopVisited(arrivedStopPrompt);
                   }}
                 >
                   <Check size={14} />
-                  {currentTourStopIndex + 1 < tourStops.length ? 'Visited → Next Stop' : 'Finish Tour 🎉'}
+                  {guidedTourActive && tourStops.length > 0 && tourStops[currentTourStopIndex]?.id === arrivedStopPrompt.id
+                    ? (currentTourStopIndex + 1 < tourStops.length ? 'Visited → Next Stop' : 'Finish Tour 🎉')
+                    : 'Mark as Visited ✓'}
                 </button>
               </div>
             </div>

@@ -239,7 +239,11 @@ export function DrawPathMapPicker({
 
     // ── 3. Store pins (visual context only) ───────────────────────────────────
     stores.forEach((store, storeIdx) => {
-      const pos = getCampusStoreLocation(store, storeIdx);
+      const campusPos = getCampusStoreLocation(store, storeIdx);
+      // Use actual GPS coordinates from DB if present; fall back to campus-grid placement
+      const pinLat = (store.latitude != null && !isNaN(store.latitude)) ? store.latitude : campusPos.lat;
+      const pinLng = (store.longitude != null && !isNaN(store.longitude)) ? store.longitude : campusPos.lng;
+
       const isSchool =
         store.id === 'kalawana-national-school-landmark' ||
         store.name.toLowerCase().includes('kalawana');
@@ -250,7 +254,8 @@ export function DrawPathMapPicker({
         ? `<img src="${store.logo_url}" alt="${store.name}" style="width:100%;height:100%;object-fit:cover;" />`
         : (store.name[0] || '🏪');
 
-      const pin = L.marker([pos.lat, pos.lng], {
+      const pin = L.marker([pinLat, pinLng], {
+
         icon: L.divIcon({
           html: `<div style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;background:${catColor};border:2.5px solid #fff;border-radius:50%;color:#fff;font-size:${isSchool ? '0.8rem' : '0.65rem'};font-weight:800;box-shadow:0 2px 8px rgba(0,0,0,0.55);overflow:hidden;">${inner}</div>`,
           className: 'custom-store-pin',

@@ -119,8 +119,6 @@ export function findClosestPointOnGraph(
 ): GraphSnapResult | null {
   if (nodes.length === 0) return null;
 
-  const NODE_SNAP_THRESHOLD = 15; // metres — prioritize exact store entrance/walkway nodes within 15m
-
   const nodeMap = new Map(nodes.map((n) => [n.id, n]));
   const connectedNodeIds = new Set<string>();
   edges.forEach((e) => {
@@ -148,12 +146,8 @@ export function findClosestPointOnGraph(
     }
   }
 
-  // If a connected node is within 15m of the target, snap directly to that node
-  if (best && best.snapDist <= NODE_SNAP_THRESHOLD) {
-    return best;
-  }
-
-  // 2. Otherwise, check all edge segments (projects point onto segment and endpoints)
+  // 2. Check all edge segments — if an edge segment projection is closer than the nearest node,
+  // snap directly onto that edge segment (or to its endpoint if within 2m).
   for (const edge of edges) {
     const nodeA = nodeMap.get(edge.from_node_id);
     const nodeB = nodeMap.get(edge.to_node_id);
@@ -992,9 +986,9 @@ export function isEntranceNode(node: { label?: string; type?: string; latitude: 
   if (node.type === 'entrance') return true;
   const l = (node.label || '').toLowerCase();
   if (l.includes('entrance') || l.includes('gate') || l.includes('entry') || l.includes('door')) return true;
-  // Specific known entrance coordinates (e.g. Uni entrance, Kalawana Entrance Gate)
-  if (Math.abs(node.latitude - 6.795354) < 0.001 && Math.abs(node.longitude - 79.89985) < 0.001) return true;
-  if (Math.abs(node.latitude - 6.535862) < 0.001 && Math.abs(node.longitude - 80.400348) < 0.001) return true;
+  // Specific known entrance coordinates (tight ~5m threshold)
+  if (Math.abs(node.latitude - 6.795359) < 0.00005 && Math.abs(node.longitude - 79.899868) < 0.00005) return true;
+  if (Math.abs(node.latitude - 6.535862) < 0.00005 && Math.abs(node.longitude - 80.400348) < 0.00005) return true;
   return false;
 }
 
@@ -1017,19 +1011,19 @@ export function getAllEntrancePoints(
     }
   });
 
-  // 2. Ensure Uni entrance (6.795354, 79.89985) is present as candidate
+  // 2. Ensure Uni entrance (6.795359, 79.899868) is present as candidate
   const hasUniEntrance = result.some(
-    (e) => Math.abs(e.latitude - 6.795354) < 0.001 && Math.abs(e.longitude - 79.89985) < 0.001
+    (e) => Math.abs(e.latitude - 6.795359) < 0.00005 && Math.abs(e.longitude - 79.899868) < 0.00005
   );
   if (!hasUniEntrance) {
     const uniNode = nodes.find(
-      (n) => Math.abs(n.latitude - 6.795354) < 0.001 && Math.abs(n.longitude - 79.89985) < 0.001
+      (n) => Math.abs(n.latitude - 6.795359) < 0.00005 && Math.abs(n.longitude - 79.899868) < 0.00005
     );
     result.push({
       id: uniNode ? uniNode.id : 'uni-entrance-gate',
       label: uniNode ? uniNode.label : 'Uni entrance',
-      latitude: 6.795354,
-      longitude: 79.89985,
+      latitude: 6.795359,
+      longitude: 79.899868,
       node: uniNode,
     });
   }
@@ -1038,11 +1032,11 @@ export function getAllEntrancePoints(
   const defLat = settings?.entrance_latitude || 6.535862;
   const defLng = settings?.entrance_longitude || 80.400348;
   const hasDefEntrance = result.some(
-    (e) => Math.abs(e.latitude - defLat) < 0.001 && Math.abs(e.longitude - defLng) < 0.001
+    (e) => Math.abs(e.latitude - defLat) < 0.00005 && Math.abs(e.longitude - defLng) < 0.00005
   );
   if (!hasDefEntrance) {
     const defNode = nodes.find(
-      (n) => Math.abs(n.latitude - defLat) < 0.001 && Math.abs(n.longitude - defLng) < 0.001
+      (n) => Math.abs(n.latitude - defLat) < 0.00005 && Math.abs(n.longitude - defLng) < 0.00005
     );
     result.push({
       id: defNode ? defNode.id : 'kalawana-entrance-gate',
@@ -1090,4 +1084,20 @@ export function findShortestDistanceEntrance(
   return best;
 }
 
+/**
+ * Checks if a given geographic coordinate is within reasonable walking proximity
+ * (e.g. within 65 meters) of any drawn connected node or path in the venue graph.
+ * If true, the user is already on the venue premises and can route directly via Dijkstra.
+ */
+export function isPointNearVenueGraph(
+  lat: number,
+  lng: number,
+  nodes: NavigationNode[],
+  edges: NavigationEdge[],
+  thresholdMeters = 65
+): boolean {
+  if (nodes.length === 0) return false;
+  const snap = findClosestPointOnGraph(lat, lng, nodes, edges);
+  return snap !== null && snap.snapDist <= thresholdMeters;
+}
 
