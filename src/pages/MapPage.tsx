@@ -19,6 +19,7 @@ import {
   Moon,
   Map as MapIcon,
   Satellite,
+  Layers,
 } from 'lucide-react';
 import { AdminModal } from '../components/admin/AdminModal';
 import { useAuth } from '../contexts/AuthContext';
@@ -177,6 +178,25 @@ export function MapPage() {
   const [outdoorSegmentCount, setOutdoorSegmentCount] = useState(0);
   const [mapTheme, setMapTheme] = useState<'dark' | 'streets' | 'light' | '3d' | 'satellite'>('satellite');
   const [showMesh, setShowMesh] = useState(false);
+  const [showMapStylesMenu, setShowMapStylesMenu] = useState(false);
+  const mapStylesMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close map style popover when clicking/touching outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent | TouchEvent) {
+      if (mapStylesMenuRef.current && !mapStylesMenuRef.current.contains(e.target as Node)) {
+        setShowMapStylesMenu(false);
+      }
+    }
+    if (showMapStylesMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [showMapStylesMenu]);
 
   // Settings & Guided Tour states
   const [exhibitionSettings, setExhibitionSettings] = useState({
@@ -2081,8 +2101,9 @@ export function MapPage() {
             <Navigation size={18} style={{ transform: 'rotate(45deg)' }} />
           </button>
 
-          {/* Floating Map Style Picker — replaces legacy Legend button */}
+          {/* Floating Map Style Standard Button (Left Side) */}
           <div
+            ref={mapStylesMenuRef}
             className="map-style-picker"
             style={{
               position: 'absolute',
@@ -2092,49 +2113,91 @@ export function MapPage() {
               transition: 'bottom 0.3s ease',
             }}
           >
-            <div className="glass" style={{
-              borderRadius: '10px',
-              overflow: 'hidden',
-              boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-              display: 'flex',
-              flexDirection: 'row',
-              gap: 0,
-            }}>
-              {([
-                { value: 'light',     label: 'Light',     Icon: Sun       },
-                { value: 'dark',      label: 'Dark',      Icon: Moon      },
-                { value: 'streets',   label: 'Street',    Icon: MapIcon   },
-                { value: 'satellite', label: 'Satellite', Icon: Satellite },
-              ] as const).map((opt, i, arr) => (
-                <button
-                  key={opt.value}
-                  onClick={() => setMapTheme(opt.value)}
-                  title={opt.label}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '3px',
-                    padding: '0.4rem 0.65rem',
-                    background: mapTheme === opt.value
-                      ? 'rgba(99,102,241,0.22)'
-                      : 'transparent',
-                    border: 'none',
-                    borderRight: i < arr.length - 1 ? '1px solid var(--color-border)' : 'none',
-                    borderBottom: mapTheme === opt.value ? '2px solid #818cf8' : '2px solid transparent',
-                    color: mapTheme === opt.value ? '#818cf8' : 'var(--color-muted)',
-                    cursor: 'pointer',
-                    lineHeight: 1,
-                    transition: 'all 0.15s',
-                    minWidth: 50,
-                  }}
-                >
-                  <opt.Icon size={15} />
-                  <span style={{ fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', marginTop: 1 }}>{opt.label}</span>
-                </button>
-              ))}
-            </div>
+            {/* Popover Style Selector */}
+            {showMapStylesMenu && (
+              <div
+                className="glass"
+                style={{
+                  position: 'absolute',
+                  bottom: '52px',
+                  left: '0',
+                  borderRadius: '12px',
+                  padding: '0.4rem',
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+                  border: '1px solid var(--color-border)',
+                  background: 'rgba(11, 15, 26, 0.95)',
+                  backdropFilter: 'blur(16px)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.25rem',
+                  minWidth: '135px',
+                  zIndex: 1002,
+                  animation: 'fadeIn 0.15s ease-out',
+                }}
+              >
+                <div style={{ padding: '0.2rem 0.5rem 0.3rem 0.5rem', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-muted)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                  Map Style
+                </div>
+                {([
+                  { value: 'satellite', label: 'Satellite', Icon: Satellite },
+                  { value: 'light',     label: 'Light',     Icon: Sun       },
+                  { value: 'dark',      label: 'Dark',      Icon: Moon      },
+                  { value: 'streets',   label: 'Street',    Icon: MapIcon   },
+                ] as const).map((opt) => {
+                  const isActive = mapTheme === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      onClick={() => {
+                        setMapTheme(opt.value);
+                        setShowMapStylesMenu(false);
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.45rem 0.6rem',
+                        borderRadius: '8px',
+                        background: isActive ? 'rgba(99, 102, 241, 0.22)' : 'transparent',
+                        border: isActive ? '1px solid rgba(99, 102, 241, 0.5)' : '1px solid transparent',
+                        color: isActive ? '#a5b4fc' : 'var(--color-text)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <opt.Icon size={16} color={isActive ? '#818cf8' : 'var(--color-muted)'} />
+                      <span style={{ fontSize: '0.8rem', fontWeight: isActive ? 700 : 500 }}>{opt.label}</span>
+                      {isActive && <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: '#818cf8' }}>✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Standard Circular Floating Button */}
+            <button
+              onClick={() => setShowMapStylesMenu(!showMapStylesMenu)}
+              className="glass"
+              style={{
+                width: '42px',
+                height: '42px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                border: showMapStylesMenu ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
+                background: showMapStylesMenu ? 'rgba(99, 102, 241, 0.25)' : 'rgba(11, 15, 26, 0.85)',
+                color: showMapStylesMenu ? '#a5b4fc' : 'var(--color-text)',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+                transition: 'all 0.2s ease',
+              }}
+              title="Change Map Style"
+              aria-label="Change Map Style"
+            >
+              <Layers size={19} />
+            </button>
           </div>
 
           {/* Left Floating Controls Stack (Search & Alerts) */}
