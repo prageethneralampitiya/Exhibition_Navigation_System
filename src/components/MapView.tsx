@@ -50,7 +50,7 @@ export function MapView({
   userLng = null,
   userHeading = null,
   route = [],
-  theme = 'dark',
+  theme = 'satellite',
   showGraphMesh = false,
   nodes = [],
   edges = [],
@@ -93,7 +93,7 @@ export function MapView({
   const lastFittedDestRef = useRef<string | null>(null);
   const isUserInteractingRef = useRef(false);
   const prevCenterRef = useRef<{ lat: number; lng: number }>({ lat: latitude, lng: longitude });
-  // Satellite / street toggle state — driven by the `theme` prop from parent
+  // Satellite / street toggle state — driven by the `theme` prop from parent (default: satellite)
   const [tileMode, setTileMode] = useState<TileMode>(theme === 'satellite' ? 'satellite' : 'street');
   useEffect(() => {
     setTileMode(theme === 'satellite' ? 'satellite' : 'street');
@@ -302,9 +302,43 @@ export function MapView({
         !s.name.toLowerCase().includes('school')
     );
 
+    // Helper to detect facility type and assign dedicated emoji and theme color
+    const getFacilityMeta = (name: string = '', categoryName: string = '') => {
+      const combined = `${name} ${categoryName}`.toLowerCase();
+      if (combined.includes('canteen') || combined.includes('cafeteria') || combined.includes('food') || combined.includes('dining')) {
+        return { emoji: '🍽️', color: '#f97316', isFacility: true };
+      }
+      if (combined.includes('men') && (combined.includes('washroom') || combined.includes('toilet') || combined.includes('restroom') || combined.includes('wc'))) {
+        return { emoji: '🚹', color: '#3b82f6', isFacility: true };
+      }
+      if (combined.includes('women') && (combined.includes('washroom') || combined.includes('toilet') || combined.includes('restroom') || combined.includes('wc'))) {
+        return { emoji: '🚺', color: '#ec4899', isFacility: true };
+      }
+      if (combined.includes('accessible') || combined.includes('disabled') || combined.includes('wheelchair')) {
+        return { emoji: '♿', color: '#06b6d4', isFacility: true };
+      }
+      if (combined.includes('washroom') || combined.includes('restroom') || combined.includes('toilet') || combined.includes('wc')) {
+        return { emoji: '🚻', color: '#8b5cf6', isFacility: true };
+      }
+      if (combined.includes('water') || combined.includes('drinking')) {
+        return { emoji: '🚰', color: '#0284c7', isFacility: true };
+      }
+      if (combined.includes('first aid') || combined.includes('medical') || combined.includes('doctor') || combined.includes('clinic')) {
+        return { emoji: '🏥', color: '#ef4444', isFacility: true };
+      }
+      if (combined.includes('info') || combined.includes('help') || combined.includes('inquiry')) {
+        return { emoji: 'ℹ️', color: '#10b981', isFacility: true };
+      }
+      if (combined.includes('entrance') || combined.includes('gate')) {
+        return { emoji: '🚪', color: '#eab308', isFacility: true };
+      }
+      return { emoji: '', color: '', isFacility: false };
+    };
+
     const addMarker = (store: typeof activeStores[0], pinDiameter: number, showPulse: boolean, pulseSize: number, fontSize: number, badgeSize: number, badgeFontSize: number, borderWidth: number) => {
       const isSchool = effectiveSchoolStores.some((s) => s.id === store.id);
-      const catColor = isSchool ? '#a855f7' : (store.categories?.color || 'var(--color-primary)');
+      const facilityMeta = getFacilityMeta(store.name, store.categories?.name || '');
+      const catColor = isSchool ? '#a855f7' : (facilityMeta.isFacility ? facilityMeta.color : (store.categories?.color || 'var(--color-primary)'));
       const isDestination = route.length > 0 && route[route.length - 1].store_id === store.id;
       const pinRadius = Math.round(pinDiameter / 2);
       const tourStopIdx = tourStops.findIndex((s) => s.id === store.id);
@@ -318,11 +352,11 @@ export function MapView({
             ${(isDestination || (isTourStop && !isVisited)) && showPulse ? `
               <div style="position:absolute;width:${pulseSize}px;height:${pulseSize}px;border-radius:50%;background:${catColor};opacity:0.4;animation:map-pin-pulse 1.8s infinite ease-in-out;"></div>
             ` : ''}
-            <div style="width:${pinDiameter}px;height:${pinDiameter}px;border-radius:50%;background:${isVisited ? '#16a34a' : catColor};border:${borderWidth}px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;color:#fff;font-size:${isSchool ? Math.max(10, fontSize + 2) : fontSize}px;font-weight:800;z-index:10;overflow:hidden;">
-              ${isSchool ? '🏫' : (store.logo_url
+            <div style="width:${pinDiameter}px;height:${pinDiameter}px;border-radius:50%;background:${isVisited ? '#16a34a' : catColor};border:${borderWidth}px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;color:#fff;font-size:${isSchool || facilityMeta.isFacility ? Math.max(10, fontSize + 2) : fontSize}px;font-weight:800;z-index:10;overflow:hidden;">
+              ${isSchool ? '🏫' : (facilityMeta.isFacility ? facilityMeta.emoji : (store.logo_url
             ? `<img src="${store.logo_url}" alt="${store.name}" style="width:100%;height:100%;object-fit:cover;display:block;" />`
             : store.name[0]
-          )}
+          ))}
             </div>
             ${isTourStop && pinDiameter >= 14 ? `
               <div style="position:absolute;top:${-Math.round(badgeSize * 0.3)}px;right:${-Math.round(badgeSize * 0.3)}px;background:${isVisited ? '#22c55e' : '#22d3ee'};color:${isVisited ? '#fff' : '#0f172a'};font-size:${badgeFontSize}px;font-weight:900;width:${badgeSize}px;height:${badgeSize}px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.45);z-index:20;">
@@ -347,16 +381,19 @@ export function MapView({
       }
       marker.bindPopup(`
         <div style="color:#0b0f1a;padding:0.3rem;font-family:sans-serif;min-width:160px;">
-          <h4 style="margin:0 0 0.25rem 0;font-weight:800;font-size:0.95rem;line-height:1.2;">${store.name}</h4>
+          <h4 style="margin:0 0 0.25rem 0;font-weight:800;font-size:0.95rem;line-height:1.2;">
+            ${facilityMeta.isFacility ? `${facilityMeta.emoji} ` : ''}${store.name}
+          </h4>
           <p style="margin:0 0 0.5rem 0;font-size:0.75rem;color:#64748b;">
-            ${isSchool ? 'GCP2+5C6, Kalawana · Sri Lanka' : `Floor: ${store.floor || '1'} · ${store.categories?.name || 'Exhibitor'}`}
+            ${isSchool ? 'GCP2+5C6, Kalawana · Sri Lanka' : `Floor: ${store.floor || '1'} · ${store.categories?.name || (facilityMeta.isFacility ? 'Facility' : 'Exhibitor')}`}
+            ${store.description && facilityMeta.isFacility ? `<br/><span style="color:#475569;font-size:0.72rem;">${store.description}</span>` : ''}
           </p>
           ${isSchool ? `
             <a href="/map3d" style="display:none;">🏫 Open 3D School Map</a>
           ` : `
             <div style="display:flex;flex-direction:column;gap:0.35rem;">
               <button onclick="window.__onNavigateToStore && window.__onNavigateToStore('${store.id}')" style="display:block;width:100%;background:linear-gradient(135deg,#06b6d4,#3b82f6);color:#fff;padding:0.38rem 0.5rem;border:none;border-radius:6px;font-size:0.75rem;font-weight:700;cursor:pointer;text-align:center;">🧭 Navigate Here</button>
-              <a href="/stores/${store.id}" style="display:block;background:rgba(255,255,255,0.08);border:1px solid rgba(0,0,0,0.1);color:#334155;padding:0.3rem;border-radius:6px;font-size:0.72rem;font-weight:600;text-decoration:none;text-align:center;">View Profile</a>
+              ${!facilityMeta.isFacility ? `<a href="/stores/${store.id}" style="display:block;background:rgba(255,255,255,0.08);border:1px solid rgba(0,0,0,0.1);color:#334155;padding:0.3rem;border-radius:6px;font-size:0.72rem;font-weight:600;text-decoration:none;text-align:center;">View Profile</a>` : ''}
             </div>
           `}
         </div>

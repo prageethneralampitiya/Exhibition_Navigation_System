@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import {
   Route,
@@ -175,9 +175,8 @@ export function MapPage() {
   // Number of leading nodes in calculatedRoute that came from outdoor OSM routing
   // 0 means all nodes are from the internal drawn graph (user is inside campus)
   const [outdoorSegmentCount, setOutdoorSegmentCount] = useState(0);
-  const [mapTheme, setMapTheme] = useState<'dark' | 'streets' | 'light' | '3d' | 'satellite'>('light');
+  const [mapTheme, setMapTheme] = useState<'dark' | 'streets' | 'light' | '3d' | 'satellite'>('satellite');
   const [showMesh, setShowMesh] = useState(false);
-  const [showLegend, setShowLegend] = useState(false);
 
   // Settings & Guided Tour states
   const [exhibitionSettings, setExhibitionSettings] = useState({
@@ -1694,19 +1693,78 @@ export function MapPage() {
     }
   };
 
-  // Extract unique categories from stores for the map legend
-  const mapCategories = stores.reduce<Array<{ id: string; name: string; color: string | null }>>((acc, store) => {
-    if (store.categories && !acc.some((c) => c.id === store.categories!.id)) {
-      acc.push(store.categories);
-    }
-    return acc;
-  }, []);
-
+  // Enhanced search across stall name, category, and description/location
   const filteredSearchStores = storeSearchQuery.trim()
-    ? stores.filter((st) =>
-      st.name.toLowerCase().includes(storeSearchQuery.toLowerCase())
-    )
+    ? stores.filter((st) => {
+      const q = storeSearchQuery.toLowerCase();
+      return (
+        st.name.toLowerCase().includes(q) ||
+        (st.description || '').toLowerCase().includes(q) ||
+        (st.categories?.name || '').toLowerCase().includes(q)
+      );
+    })
     : [];
+
+  // Dynamically detect available amenity types on the map (canteen, washrooms men/women, etc.)
+  // Only displays chips for amenity types that are actually placed on the map
+  const availableAmenities = useMemo(() => {
+    const amenities: Array<{
+      id: string;
+      label: string;
+      emoji: string;
+      targetStore: (typeof stores)[0];
+    }> = [];
+
+    const activeWithCoords = stores.filter((s) => s.latitude !== null && s.longitude !== null);
+
+    const findBestMatch = (keywords: string[]) => {
+      return activeWithCoords.find((s) => {
+        const text = `${s.name} ${s.description || ''} ${s.categories?.name || ''}`.toLowerCase();
+        return keywords.some((k) => text.includes(k));
+      });
+    };
+
+    const canteen = findBestMatch(['canteen', 'cafeteria', 'food court', 'dining']);
+    if (canteen) {
+      amenities.push({ id: 'canteen', label: 'Canteen', emoji: '🍽️', targetStore: canteen });
+    }
+
+    const washroomMen = findBestMatch(["men's washroom", 'washroom (men)', 'toilet (men)', 'restroom (men)', 'men washroom', 'male toilet']);
+    if (washroomMen) {
+      amenities.push({ id: 'washroom_men', label: "Men's WC", emoji: '🚹', targetStore: washroomMen });
+    }
+
+    const washroomWomen = findBestMatch(["women's washroom", 'washroom (women)', 'toilet (women)', 'restroom (women)', 'women washroom', 'female toilet']);
+    if (washroomWomen) {
+      amenities.push({ id: 'washroom_women', label: "Women's WC", emoji: '🚺', targetStore: washroomWomen });
+    }
+
+    const washroomGeneral = activeWithCoords.find((s) => {
+      const text = `${s.name} ${s.description || ''} ${s.categories?.name || ''}`.toLowerCase();
+      return (text.includes('washroom') || text.includes('restroom') || text.includes('toilet') || text.includes('wc')) &&
+        !text.includes('men') && !text.includes('women');
+    });
+    if (washroomGeneral) {
+      amenities.push({ id: 'washroom_unisex', label: 'Restrooms', emoji: '🚻', targetStore: washroomGeneral });
+    }
+
+    const firstAid = findBestMatch(['first aid', 'medical', 'clinic', 'doctor']);
+    if (firstAid) {
+      amenities.push({ id: 'first_aid', label: 'First Aid', emoji: '🏥', targetStore: firstAid });
+    }
+
+    const water = findBestMatch(['water', 'drinking']);
+    if (water) {
+      amenities.push({ id: 'drinking_water', label: 'Water', emoji: '🚰', targetStore: water });
+    }
+
+    const info = findBestMatch(['info desk', 'information desk', 'help desk']);
+    if (info) {
+      amenities.push({ id: 'info_desk', label: 'Info Desk', emoji: 'ℹ️', targetStore: info });
+    }
+
+    return amenities;
+  }, [stores]);
 
   if (loading) {
     return (
@@ -2129,6 +2187,61 @@ export function MapPage() {
                   </button>
                 )}
               </div>
+
+              {/* Quick Amenity Shortcut Chips — ONLY shown if available on the map */}
+              {availableAmenities.length > 0 && (
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '0.35rem',
+                    overflowX: 'auto',
+                    padding: '0.35rem 0 0.1rem 0',
+                    scrollbarWidth: 'none',
+                  }}
+                >
+                  {availableAmenities.map((amenity) => {
+                    const isSelected = selectedDestinationStoreId === amenity.targetStore.id;
+                    return (
+                      <button
+                        key={amenity.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedDestinationStoreId(amenity.targetStore.id);
+                          setSelectedDestinationNodeId('');
+                          setStoreSearchQuery(amenity.targetStore.name);
+                          setIsSearchFocused(false);
+                        }}
+                        className="glass"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.3rem',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          padding: '0.28rem 0.6rem',
+                          borderRadius: '16px',
+                          cursor: 'pointer',
+                          border: isSelected
+                            ? '1px solid var(--color-primary)'
+                            : '1px solid var(--color-border)',
+                          background: isSelected
+                            ? 'rgba(99, 102, 241, 0.25)'
+                            : 'rgba(11, 15, 26, 0.75)',
+                          color: isSelected ? '#fff' : 'var(--color-text)',
+                          whiteSpace: 'nowrap',
+                          flexShrink: 0,
+                          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                          transition: 'all 0.15s ease',
+                        }}
+                        title={`Navigate to ${amenity.targetStore.name}`}
+                      >
+                        <span style={{ fontSize: '0.85rem' }}>{amenity.emoji}</span>
+                        <span>{amenity.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Live dropdown results */}
               {isSearchFocused && filteredSearchStores.length > 0 && (

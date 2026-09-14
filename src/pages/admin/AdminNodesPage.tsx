@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Plus, Edit2, Trash2, Search, Check, Navigation2, Network, Link2, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Plus, Edit2, Trash2, Search, Check, Navigation2, Network, Link2, RefreshCw, ShieldCheck, ShieldAlert, MapPin } from 'lucide-react';
 import { supabase, type NavigationNode, type NavigationEdge, type Store, type NodeType } from '../../lib/supabase';
 import { AdminTable } from '../../components/admin/AdminTable';
 import { AdminModal } from '../../components/admin/AdminModal';
@@ -733,6 +734,22 @@ export function AdminNodesPage() {
             {schoolBoundaryEnabled ? <ShieldCheck size={16} /> : <ShieldAlert size={16} />}
             <span>Boundary: {schoolBoundaryEnabled ? 'Shown on Map' : 'Hidden from Map'}</span>
           </button>
+
+          <Link
+            to="/facilities"
+            className="btn btn-ghost"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              color: 'var(--color-primary-h)',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+              background: 'rgba(99, 102, 241, 0.08)',
+            }}
+          >
+            <MapPin size={15} />
+            <span>Facilities & POIs</span>
+          </Link>
 
           <button className="btn btn-ghost" onClick={handleOpenDrawPath} style={{ border: '1px dashed var(--color-accent)', color: 'var(--color-accent)' }}>
             <Network size={16} />

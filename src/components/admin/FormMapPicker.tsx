@@ -11,17 +11,35 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
+const TILE_SOURCES = {
+  satellite: {
+    url: 'https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+    subdomains: ['0', '1', '2', '3'],
+    maxZoom: 20,
+    maxNativeZoom: 20,
+  },
+  street: {
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    subdomains: ['a', 'b', 'c'],
+    maxZoom: 20,
+    maxNativeZoom: 19,
+  },
+};
+
 interface FormMapPickerProps {
   latitude: number;
   longitude: number;
   onChange: (lat: number, lng: number) => void;
+  defaultTileMode?: 'satellite' | 'street';
 }
 
-export function FormMapPicker({ latitude, longitude, onChange }: FormMapPickerProps) {
+export function FormMapPicker({ latitude, longitude, onChange, defaultTileMode = 'satellite' }: FormMapPickerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [tileMode, setTileMode] = useState<'satellite' | 'street'>(defaultTileMode);
 
   // Initialize Map
   useEffect(() => {
@@ -33,15 +51,10 @@ export function FormMapPicker({ latitude, longitude, onChange }: FormMapPickerPr
 
     const map = L.map(containerRef.current, {
       center: [startLat, startLng],
-      zoom: 17,
+      zoom: 18,
       zoomControl: true,
       attributionControl: false,
     });
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 20,
-      subdomains: ['a', 'b', 'c'],
-    }).addTo(map);
 
     const marker = L.marker([startLat, startLng], { draggable: true }).addTo(map);
 
@@ -68,8 +81,26 @@ export function FormMapPicker({ latitude, longitude, onChange }: FormMapPickerPr
       map.remove();
       mapRef.current = null;
       markerRef.current = null;
+      tileLayerRef.current = null;
     };
   }, []);
+
+  // Update tile layer whenever tileMode changes (default: satellite)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (tileLayerRef.current) {
+      tileLayerRef.current.remove();
+    }
+    const cfg = TILE_SOURCES[tileMode];
+    const tl = L.tileLayer(cfg.url, {
+      maxZoom: cfg.maxZoom,
+      maxNativeZoom: cfg.maxNativeZoom,
+      subdomains: cfg.subdomains,
+    }).addTo(map);
+    tl.bringToBack();
+    tileLayerRef.current = tl;
+  }, [tileMode]);
 
   // Update marker position externally if coords change (via form inputs)
   useEffect(() => {
@@ -141,6 +172,34 @@ export function FormMapPicker({ latitude, longitude, onChange }: FormMapPickerPr
       }}>
         📍 Click map or drag pin to choose coordinates
       </div>
+
+      {/* Tile Mode Toggle: Satellite (default) vs Street */}
+      <button
+        type="button"
+        onClick={() => setTileMode(tileMode === 'satellite' ? 'street' : 'satellite')}
+        className="glass"
+        style={{
+          position: 'absolute',
+          top: isFullScreen ? '20px' : '10px',
+          right: isFullScreen ? '160px' : '50px',
+          zIndex: 100000,
+          background: 'rgba(11, 15, 26, 0.85)',
+          border: '1px solid var(--color-border)',
+          borderRadius: '6px',
+          padding: '0.3rem 0.6rem',
+          fontSize: '0.72rem',
+          fontWeight: 700,
+          color: '#fff',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.3rem',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+        }}
+        title="Toggle between Satellite and Street map"
+      >
+        <span>{tileMode === 'satellite' ? '🛰️ Satellite' : '🗺️ Street'}</span>
+      </button>
 
       {/* Fullscreen Expand/Collapse Floating Controls */}
       {isFullScreen ? (

@@ -80,7 +80,7 @@ export function DrawPathMapPicker({
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
-  const [tileMode, setTileMode] = useState<TileMode>('street');
+  const [tileMode, setTileMode] = useState<TileMode>('satellite');
 
   // Refs that keep Leaflet event handlers always current without re-registering
   const toolRef = useRef(tool);
