@@ -3,7 +3,21 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { type NavigationNode, type NavigationEdge, type Store } from '../../lib/supabase';
 import { getCampusStoreLocation } from '../KalawanaSchool3DLayer';
-import { Maximize2, RotateCcw, Trash2, Check } from 'lucide-react';
+import { Maximize2, RotateCcw, Trash2, Check, Satellite, Map } from 'lucide-react';
+
+// ── Tile layer definitions ────────────────────────────────────────────────────
+const TILE_LAYERS = {
+  street: {
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    options: { maxZoom: 20, subdomains: ['a', 'b', 'c'] as string[] },
+  },
+  satellite: {
+    url: 'https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+    options: { maxZoom: 20, maxNativeZoom: 20, subdomains: ['0', '1', '2', '3'] as string[] },
+  },
+} as const;
+
+type TileMode = keyof typeof TILE_LAYERS;
 
 // Fix Leaflet default icon paths inside Vite
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -63,8 +77,10 @@ export function DrawPathMapPicker({
   const mapRef = useRef<L.Map | null>(null);
   const pathLineRef = useRef<L.Polyline | null>(null);
   const markersGroupRef = useRef<L.LayerGroup | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [tileMode, setTileMode] = useState<TileMode>('street');
 
   // Refs that keep Leaflet event handlers always current without re-registering
   const toolRef = useRef(tool);
@@ -98,10 +114,9 @@ export function DrawPathMapPicker({
       attributionControl: false,
     });
     L.control.zoom({ position: 'bottomleft' }).addTo(map);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 20,
-      subdomains: ['a', 'b', 'c'],
-    }).addTo(map);
+    const initialTile = TILE_LAYERS.street;
+    const tl = L.tileLayer(initialTile.url, initialTile.options).addTo(map);
+    tileLayerRef.current = tl;
 
     const markersGroup = L.layerGroup().addTo(map);
     markersGroupRef.current = markersGroup;
@@ -130,9 +145,23 @@ export function DrawPathMapPicker({
       mapRef.current = null;
       pathLineRef.current = null;
       markersGroupRef.current = null;
+      tileLayerRef.current = null;
       setMapReady(false);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Swap tile layer when tileMode changes ────────────────────────────────────
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!mapReady || !map) return;
+    if (tileLayerRef.current) {
+      tileLayerRef.current.remove();
+    }
+    const cfg = TILE_LAYERS[tileMode];
+    const tl = L.tileLayer(cfg.url, cfg.options).addTo(map);
+    tl.bringToBack();
+    tileLayerRef.current = tl;
+  }, [tileMode, mapReady]);
 
   // ── Fullscreen size invalidation ─────────────────────────────────────────────
   useEffect(() => {
@@ -440,6 +469,27 @@ export function DrawPathMapPicker({
         </div>
       )}
 
+      {/* Inline mode: satellite toggle */}
+      {!isFullScreen && (
+        <button
+          type="button"
+          onClick={() => setTileMode((m) => m === 'street' ? 'satellite' : 'street')}
+          title={tileMode === 'street' ? 'Switch to Satellite view' : 'Switch to Street view'}
+          style={{
+            position: 'absolute', top: 10, left: 10, zIndex: 1000,
+            background: tileMode === 'satellite' ? 'rgba(99,102,241,0.9)' : 'var(--color-surface)',
+            border: `1px solid ${tileMode === 'satellite' ? '#818cf8' : 'var(--color-border)'}`,
+            width: 32, height: 32, borderRadius: 6,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.4)', cursor: 'pointer',
+            color: tileMode === 'satellite' ? '#fff' : 'var(--color-text)',
+            transition: 'all 0.2s',
+          }}
+        >
+          {tileMode === 'street' ? <Satellite size={15} /> : <Map size={15} />}
+        </button>
+      )}
+
       {/* Fullscreen overlay panels */}
       {isFullScreen && (
         <>
@@ -513,6 +563,27 @@ export function DrawPathMapPicker({
             position: 'absolute', top: 20, right: 20, zIndex: 100000,
             display: 'flex', gap: '0.65rem', pointerEvents: 'auto',
           }}>
+            {/* Satellite / Street toggle */}
+            <button
+              type="button"
+              onClick={() => setTileMode((m) => m === 'street' ? 'satellite' : 'street')}
+              title={tileMode === 'street' ? 'Switch to Satellite view' : 'Switch to Street view'}
+              style={{
+                padding: '0.6rem 1rem', borderRadius: 8,
+                display: 'flex', alignItems: 'center', gap: '0.45rem',
+                background: tileMode === 'satellite'
+                  ? 'rgba(99,102,241,0.85)'
+                  : 'rgba(13,21,38,0.9)',
+                backdropFilter: 'blur(14px)',
+                border: `1px solid ${tileMode === 'satellite' ? '#818cf8' : 'var(--color-border)'}`,
+                color: '#fff', fontWeight: 700, fontSize: '0.82rem',
+                cursor: 'pointer', boxShadow: '0 4px 16px rgba(0,0,0,0.45)',
+                transition: 'all 0.25s',
+              }}
+            >
+              {tileMode === 'street' ? <Satellite size={14} /> : <Map size={14} />}
+              {tileMode === 'street' ? 'Satellite' : 'Street'}
+            </button>
             <button
               type="button"
               onClick={() => setPoints((p) => p.slice(0, -1))}

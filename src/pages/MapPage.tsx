@@ -15,6 +15,10 @@ import {
   Check,
   Award,
   Home,
+  Sun,
+  Moon,
+  Map as MapIcon,
+  Satellite,
 } from 'lucide-react';
 import { AdminModal } from '../components/admin/AdminModal';
 import { useAuth } from '../contexts/AuthContext';
@@ -171,7 +175,7 @@ export function MapPage() {
   // Number of leading nodes in calculatedRoute that came from outdoor OSM routing
   // 0 means all nodes are from the internal drawn graph (user is inside campus)
   const [outdoorSegmentCount, setOutdoorSegmentCount] = useState(0);
-  const [mapTheme, setMapTheme] = useState<'dark' | 'streets' | 'light' | '3d'>('light');
+  const [mapTheme, setMapTheme] = useState<'dark' | 'streets' | 'light' | '3d' | 'satellite'>('light');
   const [showMesh, setShowMesh] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
 
@@ -298,7 +302,7 @@ export function MapPage() {
       sheetRef.current.style.transform = 'translateY(0)';
     }
     if (delta < -60) setNavSheetExpanded(true);   // dragged up → expand
-    if (delta > 60)  setNavSheetExpanded(false);  // dragged down → collapse
+    if (delta > 60) setNavSheetExpanded(false);  // dragged down → collapse
   }, []);
 
 
@@ -556,7 +560,7 @@ export function MapPage() {
         } else {
           const distToCenter = getDistance(lat, lng, currentSettings.premises_center_latitude, currentSettings.premises_center_longitude);
           const far = distToCenter > currentSettings.premises_radius_meters;
-          
+
           if (bypassBoundaryCheckRef.current) {
             setIsFarAway(false);
           } else {
@@ -585,7 +589,7 @@ export function MapPage() {
         } else {
           const distToCenter = getDistance(node.latitude, node.longitude, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
           const far = distToCenter > exhibitionSettings.premises_radius_meters;
-          
+
           if (bypassBoundaryCheckRef.current) {
             setIsFarAway(false);
           } else {
@@ -606,7 +610,7 @@ export function MapPage() {
       } else {
         const distToCenter = getDistance(lat, lng, exhibitionSettings.premises_center_latitude, exhibitionSettings.premises_center_longitude);
         const far = distToCenter > exhibitionSettings.premises_radius_meters;
-        
+
         if (bypassBoundaryCheckRef.current) {
           setIsFarAway(false);
         } else {
@@ -1205,7 +1209,7 @@ export function MapPage() {
       lastLoggedDestinationRef.current = '';
       lastOSRMRouteRef.current = null;
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDestinationStoreId, selectedDestinationNodeId, userLat, userLng, mockMode, mockStartNodeId, nodes, edges, guidedTourActive, currentTourStopIndex, tourStops]);
 
   // Compute route path
@@ -1689,7 +1693,7 @@ export function MapPage() {
       console.error('Error toggling boundary visibility:', err);
     }
   };
-  
+
   // Extract unique categories from stores for the map legend
   const mapCategories = stores.reduce<Array<{ id: string; name: string; color: string | null }>>((acc, store) => {
     if (store.categories && !acc.some((c) => c.id === store.categories!.id)) {
@@ -1700,8 +1704,8 @@ export function MapPage() {
 
   const filteredSearchStores = storeSearchQuery.trim()
     ? stores.filter((st) =>
-        st.name.toLowerCase().includes(storeSearchQuery.toLowerCase())
-      )
+      st.name.toLowerCase().includes(storeSearchQuery.toLowerCase())
+    )
     : [];
 
   if (loading) {
@@ -1716,7 +1720,7 @@ export function MapPage() {
     <>
       <GPSPermissionBanner />
       <div className="map-page-wrapper">
-        
+
         {/* Top Floating Control Bar */}
         <header className="glass map-topbar" style={{
           position: 'absolute',
@@ -1967,33 +1971,33 @@ export function MapPage() {
             />
           </div>
           <MapView
-              latitude={mapCenterLat}
-              longitude={mapCenterLng}
-              stores={stores}
-              userLat={userLat}
-              userLng={userLng}
-              userHeading={mockMode ? null : userHeading}
-              route={calculatedRoute}
-              theme={(mapTheme === '3d' ? 'dark' : mapTheme) as 'dark' | 'streets' | 'light'}
-              showGraphMesh={showMesh}
-              nodes={nodes}
-              edges={edges}
-              onMapClick={handleMapClick}
-              outdoorSegmentCount={outdoorSegmentCount}
-              tourStops={guidedTourActive ? tourStops : []}
-              visitedStallIds={visitedStallIds}
-              showSchoolBoundary={exhibitionSettings.school_boundary_enabled}
-              boundaryCenter={{
-                lat: exhibitionSettings.premises_center_latitude,
-                lng: exhibitionSettings.premises_center_longitude,
-              }}
-              boundaryRadius={exhibitionSettings.premises_radius_meters}
-              onSelectStore={(storeId) => {
-                setSelectedDestinationStoreId(storeId);
-                const st = stores.find(s => s.id === storeId);
-                if (st) setStoreSearchQuery(st.name);
-              }}
-            />
+            latitude={mapCenterLat}
+            longitude={mapCenterLng}
+            stores={stores}
+            userLat={userLat}
+            userLng={userLng}
+            userHeading={mockMode ? null : userHeading}
+            route={calculatedRoute}
+            theme={(mapTheme === '3d' ? 'dark' : mapTheme) as 'dark' | 'streets' | 'light' | 'satellite'}
+            showGraphMesh={showMesh}
+            nodes={nodes}
+            edges={edges}
+            onMapClick={handleMapClick}
+            outdoorSegmentCount={outdoorSegmentCount}
+            tourStops={guidedTourActive ? tourStops : []}
+            visitedStallIds={visitedStallIds}
+            showSchoolBoundary={exhibitionSettings.school_boundary_enabled}
+            boundaryCenter={{
+              lat: exhibitionSettings.premises_center_latitude,
+              lng: exhibitionSettings.premises_center_longitude,
+            }}
+            boundaryRadius={exhibitionSettings.premises_radius_meters}
+            onSelectStore={(storeId) => {
+              setSelectedDestinationStoreId(storeId);
+              const st = stores.find(s => s.id === storeId);
+              if (st) setStoreSearchQuery(st.name);
+            }}
+          />
 
           {/* Floating Recenter Location Button */}
           <button
@@ -2019,81 +2023,60 @@ export function MapPage() {
             <Navigation size={18} style={{ transform: 'rotate(45deg)' }} />
           </button>
 
-          {/* Floating Category Legend overlay */}
-          <div className="glass map-legend-panel" style={{
-            position: 'absolute',
-            bottom: navigationActive ? '230px' : '44px',
-            left: '16px',
-            zIndex: 1000,
-            padding: showLegend ? '0.75rem 1rem' : '0.5rem 0.75rem',
-            borderRadius: '10px',
-            maxWidth: '220px',
-            transition: 'bottom 0.3s ease, left 0.3s ease',
-          }}>
-            {!showLegend ? (
-              <button
-                onClick={() => setShowLegend(true)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--color-text)', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.35rem', padding: 0 }}
-              >
-                <Store size={14} /> Show Legend
-              </button>
-            ) : (
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', borderBottom: '1px solid var(--color-border)', paddingBottom: '0.25rem' }}>
-                  <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-muted)', letterSpacing: '0.04em' }}>MAP LEGEND</span>
-                  <button
-                    onClick={() => setShowLegend(false)}
-                    style={{ background: 'transparent', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', fontSize: '0.7rem' }}
-                  >
-                    Hide
-                  </button>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem' }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22d3ee', display: 'inline-block' }} />
-                    <span>User Location</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem' }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#6366f1', display: 'inline-block' }} />
-                    <span>Navigation Route</span>
-                  </div>
-                  
-                  <div style={{ borderTop: '1px solid var(--color-border)', marginTop: '0.25rem', paddingTop: '0.25rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                    <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 700, letterSpacing: '0.04em' }}>CATEGORIES</span>
-                    
-                    {/* Dynamic Exhibitor categories from database */}
-                    {mapCategories.length > 0 ? (
-                      mapCategories.map((cat) => (
-                        <div key={cat.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.725rem' }}>
-                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: cat.color || 'var(--color-primary)', display: 'inline-block' }} />
-                          <span>{cat.name}</span>
-                        </div>
-                      ))
-                    ) : (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.725rem' }}>
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-primary)', display: 'inline-block' }} />
-                        <span>General Booths</span>
-                      </div>
-                    )}
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.725rem' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#22d3ee', display: 'inline-block' }} />
-                      <span>Entrances</span>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.725rem' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#a78bfa', display: 'inline-block' }} />
-                      <span>Points of Interest</span>
-                    </div>
-                    {nodes.some((n) => n.type === 'emergency') && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.725rem' }}>
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f43f5e', display: 'inline-block' }} />
-                        <span>Emergency Exits</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
+          {/* Floating Map Style Picker — replaces legacy Legend button */}
+          <div
+            className="map-style-picker"
+            style={{
+              position: 'absolute',
+              bottom: navigationActive ? '230px' : '44px',
+              left: '16px',
+              zIndex: 1000,
+              transition: 'bottom 0.3s ease',
+            }}
+          >
+            <div className="glass" style={{
+              borderRadius: '10px',
+              overflow: 'hidden',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+              display: 'flex',
+              flexDirection: 'row',
+              gap: 0,
+            }}>
+              {([
+                { value: 'light',     label: 'Light',     Icon: Sun       },
+                { value: 'dark',      label: 'Dark',      Icon: Moon      },
+                { value: 'streets',   label: 'Street',    Icon: MapIcon   },
+                { value: 'satellite', label: 'Satellite', Icon: Satellite },
+              ] as const).map((opt, i, arr) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setMapTheme(opt.value)}
+                  title={opt.label}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '3px',
+                    padding: '0.4rem 0.65rem',
+                    background: mapTheme === opt.value
+                      ? 'rgba(99,102,241,0.22)'
+                      : 'transparent',
+                    border: 'none',
+                    borderRight: i < arr.length - 1 ? '1px solid var(--color-border)' : 'none',
+                    borderBottom: mapTheme === opt.value ? '2px solid #818cf8' : '2px solid transparent',
+                    color: mapTheme === opt.value ? '#818cf8' : 'var(--color-muted)',
+                    cursor: 'pointer',
+                    lineHeight: 1,
+                    transition: 'all 0.15s',
+                    minWidth: 50,
+                  }}
+                >
+                  <opt.Icon size={15} />
+                  <span style={{ fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', marginTop: 1 }}>{opt.label}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Left Floating Controls Stack (Search & Alerts) */}
@@ -2291,25 +2274,8 @@ export function MapPage() {
               flexDirection: 'column',
               gap: '0.65rem'
             }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 700, marginBottom: '0.25rem', textTransform: 'uppercase' }}>
-                  Map Style
-                </label>
-                <select
-                  className="form-select"
-                  style={{ fontSize: '0.8rem', padding: '0.35rem 0.5rem', width: '100%' }}
-                  value={mapTheme}
-                  onChange={(e) => setMapTheme(e.target.value as any)}
-                >
-                  <option value="dark">Dark Matter</option>
-                  <option value="streets">OSM Streets</option>
-                  <option value="light">Positron Light</option>
-                  <option value="3d" style={{ display: 'none' }}>🏙️ 3D Buildings</option>
-                </select>
-              </div>
-
               {profile?.role === 'admin' && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                   <input
                     type="checkbox"
                     id="mesh-toggle"
@@ -2633,13 +2599,12 @@ export function MapPage() {
                               : isPast
                                 ? 'rgba(34, 197, 94, 0.15)'
                                 : 'rgba(255, 255, 255, 0.05)',
-                            border: `1px solid ${
-                              isCurrent
+                            border: `1px solid ${isCurrent
                                 ? '#22d3ee'
                                 : isPast
                                   ? '#22c55e'
                                   : 'var(--color-border)'
-                            }`,
+                              }`,
                             color: isCurrent ? '#22d3ee' : isPast ? '#22c55e' : 'var(--color-muted)'
                           }}
                         >
@@ -2661,8 +2626,8 @@ export function MapPage() {
                         {isFarAway
                           ? `🏫 Head to School Entrance`
                           : `Navigating to ${selectedDestinationStoreId
-                              ? (stores.find((s) => s.id === selectedDestinationStoreId)?.name || 'Exhibitor')
-                              : (nodes.find((n) => n.id === selectedDestinationNodeId)?.label || 'Facility')}`}
+                            ? (stores.find((s) => s.id === selectedDestinationStoreId)?.name || 'Exhibitor')
+                            : (nodes.find((n) => n.id === selectedDestinationNodeId)?.label || 'Facility')}`}
                       </h3>
                       <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)', margin: 0 }}>
                         <span style={{ color: 'var(--color-accent)', fontWeight: 700 }}>{totalDistance} m</span>

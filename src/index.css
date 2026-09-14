@@ -3000,3 +3000,48 @@ html, body, #root {
   }
 }
 
+/* ── Map Style Picker — Mobile ──────────────────────────────────────── */
+
+/* Lift above mobile bottom nav on both breakpoints */
+@media (max-width: 640px) {
+  .map-style-picker {
+    /* Sit above the scale bar tier (scale bar at ~64px, picker one tier above) */
+    bottom: calc(96px + var(--safe-bottom, 0px)) !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+  }
+
+  /* Slightly taller touch targets on mobile */
+  .map-style-picker button {
+    min-width: 54px !important;
+    padding: 0.5rem 0.6rem !important;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Icon size bump for touch */
+  .map-style-picker button svg {
+    width: 16px !important;
+    height: 16px !important;
+  }
+}
+
+@media (max-width: 768px) and (min-width: 641px) {
+  .map-style-picker {
+    bottom: calc(104px + var(--safe-bottom, 0px)) !important;
+    left: 16px !important;
+  }
+}
+
+/* Landscape mobile — keep picker compact and left-aligned */
+@media (max-height: 500px) and (orientation: landscape) {
+  .map-style-picker {
+    bottom: calc(56px + var(--safe-bottom, 0px)) !important;
+    left: 16px !important;
+    transform: none !important;
+  }
+
+  .map-style-picker button {
+    padding: 0.3rem 0.55rem !important;
+    min-width: 46px !important;
+  }
+}

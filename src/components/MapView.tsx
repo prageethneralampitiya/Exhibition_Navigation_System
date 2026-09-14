@@ -3,6 +3,13 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { type Store, type NavigationNode, type NavigationEdge } from '../lib/supabase';
 
+// ── Satellite / Street tile sources ──────────────────────────────────────────
+const TILE_SOURCES = {
+  street: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  satellite: 'https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+} as const;
+type TileMode = keyof typeof TILE_SOURCES;
+
 // Fix Leaflet default icon paths (important for vanilla leaflet in Vite)
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -20,7 +27,7 @@ interface MapViewProps {
   userLng?: number | null;
   userHeading?: number | null;
   route?: NavigationNode[];
-  theme?: 'dark' | 'streets' | 'light';
+  theme?: 'dark' | 'streets' | 'light' | 'satellite';
   showGraphMesh?: boolean;
   nodes?: NavigationNode[];
   edges?: NavigationEdge[];
@@ -86,6 +93,11 @@ export function MapView({
   const lastFittedDestRef = useRef<string | null>(null);
   const isUserInteractingRef = useRef(false);
   const prevCenterRef = useRef<{ lat: number; lng: number }>({ lat: latitude, lng: longitude });
+  // Satellite / street toggle state — driven by the `theme` prop from parent
+  const [tileMode, setTileMode] = useState<TileMode>(theme === 'satellite' ? 'satellite' : 'street');
+  useEffect(() => {
+    setTileMode(theme === 'satellite' ? 'satellite' : 'street');
+  }, [theme]);
 
   // 1. Initialize Map
   useEffect(() => {
@@ -213,31 +225,24 @@ export function MapView({
       tileLayerRef.current.remove();
     }
 
-    let url = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-    let className = '';
-
-    if (theme === 'dark') {
-      url = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-      className = 'map-tiles-dark';
-    } else if (theme === 'streets') {
-      url = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-      className = '';
-    } else if (theme === 'light') {
-      url = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
-      className = '';
-    }
+    const url = tileMode === 'satellite'
+      ? TILE_SOURCES.satellite
+      : (theme === 'light'
+        ? 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png'
+        : TILE_SOURCES.street);
 
     const tileLayer = L.tileLayer(url, {
       maxZoom: 20,
-      className,
-      subdomains: ['a', 'b', 'c'],
+      maxNativeZoom: 20,
+      className: (theme === 'dark' && tileMode !== 'satellite') ? 'map-tiles-dark' : '',
+      subdomains: tileMode === 'satellite' ? ['0', '1', '2', '3'] : ['a', 'b', 'c'],
     });
     tileLayer.addTo(map);
     tileLayerRef.current = tileLayer;
 
     // Move to back
     tileLayer.bringToBack();
-  }, [map, theme]);
+  }, [map, theme, tileMode]);
 
   // 3. Update view center when the parent explicitly re-centers (no active route)
   // Only setView if the target coordinates actually changed AND user is not actively panning/zooming.
