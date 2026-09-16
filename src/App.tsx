@@ -1,9 +1,9 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
+import { LiveBroadcastProvider } from './contexts/LiveBroadcastContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { RealtimeAnnouncements } from './components/RealtimeAnnouncements';
-import { LiveBroadcastBanner } from './components/LiveBroadcastBanner';
 import './index.css';
 
 // Lazy load page components to improve initial loading performance
@@ -46,41 +46,39 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <RealtimeAnnouncements />
-        <LiveBroadcastBanner />
-        <Suspense fallback={<PageLoader />}>
-          <Routes>
-            {/* Public routes */}
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
+        <LiveBroadcastProvider>
+          <RealtimeAnnouncements />
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              {/* Public routes */}
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
 
-            {/* Public routes (no login required) */}
-            <Route path="/" element={<HomePage />} />
-            <Route path="/map" element={<MapPage />} />
-            <Route path="/map3d" element={<Map3DPage />} />
-            <Route path="/search" element={<SearchPage />} />
-            <Route path="/exhibitions" element={<ExhibitionDirectoryPage />} />
-            <Route path="/exhibitions/:id" element={<ExhibitionDetailPage />} />
-            <Route path="/stores" element={<StoreDirectoryPage />} />
-            <Route path="/stores/:id" element={<StoreDetailPage />} />
+              {/* Public routes (no login required) */}
+              <Route path="/" element={<HomePage />} />
+              <Route path="/map" element={<MapPage />} />
+              <Route path="/map3d" element={<Map3DPage />} />
+              <Route path="/search" element={<SearchPage />} />
+              <Route path="/exhibitions" element={<ExhibitionDirectoryPage />} />
+              <Route path="/exhibitions/:id" element={<ExhibitionDetailPage />} />
+              <Route path="/stores" element={<StoreDirectoryPage />} />
+              <Route path="/stores/:id" element={<StoreDetailPage />} />
 
-            {/* Protected user routes */}
-            <Route
-              path="/profile"
-              element={
-                <ProtectedRoute>
-                  <ProfilePage />
-                </ProtectedRoute>
-              }
-            />
+              {/* Protected user routes */}
+              <Route
+                path="/profile"
+                element={
+                  <ProtectedRoute>
+                    <ProfilePage />
+                  </ProtectedRoute>
+                }
+              />
 
-
-
-
-            {/* Fallback */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </Suspense>
+              {/* Fallback */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
+        </LiveBroadcastProvider>
       </AuthProvider>
     </BrowserRouter>
   );

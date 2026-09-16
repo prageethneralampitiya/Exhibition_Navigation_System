@@ -17,14 +17,18 @@ import {
   ChevronRight,
   Shield,
   GraduationCap,
+  Radio,
+  VolumeX,
 } from 'lucide-react';
 import { supabase, type Exhibition, type Store as StoreType } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { GPSPermissionBanner } from '../components/GPSPermissionBanner';
+import { useLiveBroadcast } from '../contexts/LiveBroadcastContext';
 
 export function HomePage() {
   const { user, profile, signOut } = useAuth();
   const navigate = useNavigate();
+  const { activeBroadcast, isPlaying, handleListen, handleMute } = useLiveBroadcast();
 
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [exhibitions, setExhibitions] = useState<Exhibition[]>([]);
@@ -136,6 +140,45 @@ export function HomePage() {
                 </span>
               )}
             </button>
+
+            {/* Live Audio / Broadcast Button — only when broadcast is active */}
+            {activeBroadcast && (
+              <button
+                id="home-live-audio-btn"
+                onClick={isPlaying ? handleMute : handleListen}
+                className="btn btn-ghost btn-sm home-action-btn"
+                title={isPlaying ? 'Mute broadcast' : 'Listen to broadcast'}
+                style={{
+                  position: 'relative',
+                  border: isPlaying
+                    ? '1px solid rgba(239, 68, 68, 0.5)'
+                    : '1px solid rgba(99, 102, 241, 0.3)',
+                  color: isPlaying ? '#f87171' : 'var(--color-primary-light, #818cf8)',
+                  background: isPlaying ? 'rgba(239, 68, 68, 0.12)' : 'rgba(99, 102, 241, 0.08)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  fontWeight: 600,
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                {isPlaying ? <VolumeX size={14} /> : <Radio size={14} />}
+                <span>Broadcast</span>
+                {isPlaying && (
+                  <span
+                    className="live-dot-pulse"
+                    style={{
+                      width: '7px',
+                      height: '7px',
+                      borderRadius: '50%',
+                      backgroundColor: '#ef4444',
+                      display: 'inline-block',
+                      marginLeft: '2px',
+                    }}
+                  />
+                )}
+              </button>
+            )}
             {user ? (
               <>
                 <Link to="/profile" className="btn btn-ghost btn-sm home-action-btn" id="home-profile-btn">

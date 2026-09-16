@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import {
   Route,
@@ -20,7 +20,10 @@ import {
   Map as MapIcon,
   Satellite,
   Layers,
+  Radio,
+  VolumeX,
 } from 'lucide-react';
+import { useLiveBroadcast } from '../contexts/LiveBroadcastContext';
 import { AdminModal } from '../components/admin/AdminModal';
 import { useAuth } from '../contexts/AuthContext';
 import { GPSPermissionBanner } from '../components/GPSPermissionBanner';
@@ -45,6 +48,26 @@ import {
 import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
 import { GPSKalmanFilter } from '../utils/gpsFilter';
+
+// ─── Facility Detection Helper ────────────────────────────────────────────────
+/**
+ * Returns true if a store entry represents a venue facility (washroom, canteen,
+ * first aid, etc.) rather than an exhibition stall/booth.
+ * Facilities are excluded from the guided tour planner.
+ */
+function isFacilityStore(store: StoreType): boolean {
+  const text = `${store.name} ${store.description || ''} ${(store as any).categories?.name || ''}`.toLowerCase();
+  const FACILITY_KEYWORDS = [
+    'washroom', 'restroom', 'toilet', 'wc', 'bathroom',
+    'canteen', 'cafeteria', 'food court',
+    'first aid', 'medical', 'clinic', 'doctor',
+    'water point', 'drinking water',
+    'info desk', 'information desk', 'help desk',
+    'prayer room', 'mosque', 'chapel',
+    'security', 'lost and found',
+  ];
+  return FACILITY_KEYWORDS.some((kw) => text.includes(kw));
+}
 
 const DEFAULT_DEMO_STALLS: StoreType[] = [
   {
@@ -122,6 +145,104 @@ function normalizeNavigationNodes(navigationNodes: NavigationNode[]): Navigation
     }
     return n;
   });
+}
+
+// ─── Live Audio / Broadcast Controls ──────────────────────────────────────────
+/**
+ * Live Broadcast button in the desktop top-right header.
+ * Uses standard Radio / VolumeX icon matching HomePage.
+ */
+function LiveAudioHeaderButton() {
+  const { activeBroadcast, isPlaying, handleListen, handleMute } = useLiveBroadcast();
+
+  if (!activeBroadcast) return null;
+
+  return (
+    <button
+      id="map-header-live-audio-btn"
+      onClick={isPlaying ? handleMute : handleListen}
+      className="btn btn-ghost btn-sm"
+      title={isPlaying ? 'Mute live broadcast' : 'Listen to live broadcast'}
+      style={{
+        position: 'relative',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '0.35rem',
+        padding: '0.35rem 0.65rem',
+        border: isPlaying
+          ? '1px solid rgba(239,68,68,0.5)'
+          : '1px solid rgba(255,255,255,0.15)',
+        color: isPlaying ? '#f87171' : 'var(--color-muted)',
+        background: isPlaying ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.04)',
+        borderRadius: '6px',
+        fontSize: '0.75rem',
+        fontWeight: 600,
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+      }}
+    >
+      {isPlaying ? <VolumeX size={15} /> : <Radio size={15} />}
+      <span>Broadcast</span>
+      {isPlaying && (
+        <span
+          className="live-dot-pulse"
+          style={{
+            width: '6px',
+            height: '6px',
+            borderRadius: '50%',
+            backgroundColor: '#ef4444',
+            display: 'inline-block',
+          }}
+        />
+      )}
+    </button>
+  );
+}
+
+/**
+ * Compact Live Audio icon button for mobile topbar.
+ */
+function LiveAudioMobileButton() {
+  const { activeBroadcast, isPlaying, handleListen, handleMute } = useLiveBroadcast();
+
+  if (!activeBroadcast) return null;
+
+  return (
+    <button
+      id="map-mobile-live-audio-btn"
+      onClick={isPlaying ? handleMute : handleListen}
+      className="btn btn-ghost btn-sm btn-icon"
+      title={isPlaying ? 'Mute live audio guide' : 'Listen to live audio guide'}
+      style={{
+        position: 'relative',
+        width: 36,
+        height: 36,
+        padding: 0,
+        border: isPlaying
+          ? '1px solid rgba(239,68,68,0.5)'
+          : '1px solid rgba(255,255,255,0.15)',
+        color: isPlaying ? '#f87171' : 'var(--color-muted)',
+        background: isPlaying ? 'rgba(239,68,68,0.12)' : 'transparent',
+      }}
+    >
+      {isPlaying ? <VolumeX size={16} /> : <Radio size={16} />}
+      {isPlaying && (
+        <span
+          className="live-dot-pulse"
+          style={{
+            position: 'absolute',
+            top: '4px',
+            right: '4px',
+            width: '6px',
+            height: '6px',
+            borderRadius: '50%',
+            backgroundColor: '#ef4444',
+            display: 'block',
+          }}
+        />
+      )}
+    </button>
+  );
 }
 
 export function MapPage() {
@@ -249,9 +370,9 @@ export function MapPage() {
   });
 
   const handleOpenTourPlanner = () => {
-    const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
-    const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS;
-    // By default, select all available stalls to visit on the tour
+    const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s));
+    const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS.filter(s => !isFacilityStore(s));
+    // By default, select all available stalls (facilities excluded) to visit on the tour
     setTourSelectedStallIds(listToUse.map(s => s.id));
     setShowChecklistPrompt(true);
   };
@@ -1725,67 +1846,6 @@ export function MapPage() {
     })
     : [];
 
-  // Dynamically detect available amenity types on the map (canteen, washrooms men/women, etc.)
-  // Only displays chips for amenity types that are actually placed on the map
-  const availableAmenities = useMemo(() => {
-    const amenities: Array<{
-      id: string;
-      label: string;
-      emoji: string;
-      targetStore: (typeof stores)[0];
-    }> = [];
-
-    const activeWithCoords = stores.filter((s) => s.latitude !== null && s.longitude !== null);
-
-    const findBestMatch = (keywords: string[]) => {
-      return activeWithCoords.find((s) => {
-        const text = `${s.name} ${s.description || ''} ${s.categories?.name || ''}`.toLowerCase();
-        return keywords.some((k) => text.includes(k));
-      });
-    };
-
-    const canteen = findBestMatch(['canteen', 'cafeteria', 'food court', 'dining']);
-    if (canteen) {
-      amenities.push({ id: 'canteen', label: 'Canteen', emoji: '🍽️', targetStore: canteen });
-    }
-
-    const washroomMen = findBestMatch(["men's washroom", 'washroom (men)', 'toilet (men)', 'restroom (men)', 'men washroom', 'male toilet']);
-    if (washroomMen) {
-      amenities.push({ id: 'washroom_men', label: "Men's WC", emoji: '🚹', targetStore: washroomMen });
-    }
-
-    const washroomWomen = findBestMatch(["women's washroom", 'washroom (women)', 'toilet (women)', 'restroom (women)', 'women washroom', 'female toilet']);
-    if (washroomWomen) {
-      amenities.push({ id: 'washroom_women', label: "Women's WC", emoji: '🚺', targetStore: washroomWomen });
-    }
-
-    const washroomGeneral = activeWithCoords.find((s) => {
-      const text = `${s.name} ${s.description || ''} ${s.categories?.name || ''}`.toLowerCase();
-      return (text.includes('washroom') || text.includes('restroom') || text.includes('toilet') || text.includes('wc')) &&
-        !text.includes('men') && !text.includes('women');
-    });
-    if (washroomGeneral) {
-      amenities.push({ id: 'washroom_unisex', label: 'Restrooms', emoji: '🚻', targetStore: washroomGeneral });
-    }
-
-    const firstAid = findBestMatch(['first aid', 'medical', 'clinic', 'doctor']);
-    if (firstAid) {
-      amenities.push({ id: 'first_aid', label: 'First Aid', emoji: '🏥', targetStore: firstAid });
-    }
-
-    const water = findBestMatch(['water', 'drinking']);
-    if (water) {
-      amenities.push({ id: 'drinking_water', label: 'Water', emoji: '🚰', targetStore: water });
-    }
-
-    const info = findBestMatch(['info desk', 'information desk', 'help desk']);
-    if (info) {
-      amenities.push({ id: 'info_desk', label: 'Info Desk', emoji: 'ℹ️', targetStore: info });
-    }
-
-    return amenities;
-  }, [stores]);
-
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-bg)' }}>
@@ -1935,9 +1995,10 @@ export function MapPage() {
                 </a>
               </>
             )}
+            <LiveAudioHeaderButton />
           </div>
 
-          {/* Mobile-only: Tour button + boundary toggle + bell icon inline */}
+          {/* Mobile-only: Tour button + boundary toggle + live audio + bell icon inline */}
           <div className="map-topbar-mobile-icons" style={{ display: 'none', gap: '0.35rem', alignItems: 'center', flexShrink: 0 }}>
             <button
               onClick={handleOpenTourPlanner}
@@ -1979,6 +2040,7 @@ export function MapPage() {
                 🏫 {exhibitionSettings.school_boundary_enabled ? 'ON' : 'OFF'}
               </button>
             )}
+            <LiveAudioMobileButton />
             <button
               onClick={handleOpenAnnouncements}
               className="btn btn-ghost btn-sm btn-icon"
@@ -2251,61 +2313,6 @@ export function MapPage() {
                 )}
               </div>
 
-              {/* Quick Amenity Shortcut Chips — ONLY shown if available on the map */}
-              {availableAmenities.length > 0 && (
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: '0.35rem',
-                    overflowX: 'auto',
-                    padding: '0.35rem 0 0.1rem 0',
-                    scrollbarWidth: 'none',
-                  }}
-                >
-                  {availableAmenities.map((amenity) => {
-                    const isSelected = selectedDestinationStoreId === amenity.targetStore.id;
-                    return (
-                      <button
-                        key={amenity.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedDestinationStoreId(amenity.targetStore.id);
-                          setSelectedDestinationNodeId('');
-                          setStoreSearchQuery(amenity.targetStore.name);
-                          setIsSearchFocused(false);
-                        }}
-                        className="glass"
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '0.3rem',
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          padding: '0.28rem 0.6rem',
-                          borderRadius: '16px',
-                          cursor: 'pointer',
-                          border: isSelected
-                            ? '1px solid var(--color-primary)'
-                            : '1px solid var(--color-border)',
-                          background: isSelected
-                            ? 'rgba(99, 102, 241, 0.25)'
-                            : 'rgba(11, 15, 26, 0.75)',
-                          color: isSelected ? '#fff' : 'var(--color-text)',
-                          whiteSpace: 'nowrap',
-                          flexShrink: 0,
-                          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-                          transition: 'all 0.15s ease',
-                        }}
-                        title={`Navigate to ${amenity.targetStore.name}`}
-                      >
-                        <span style={{ fontSize: '0.85rem' }}>{amenity.emoji}</span>
-                        <span>{amenity.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
               {/* Live dropdown results */}
               {isSearchFocused && filteredSearchStores.length > 0 && (
                 <div className="glass" style={{
@@ -2483,7 +2490,7 @@ export function MapPage() {
                   onClick={handleOpenTourPlanner}
                 >
                   <CheckSquare size={13} />
-                  <span>Visited Tracker ({visitedStallIds.length}/{(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).length})</span>
+                  <span>Visited Tracker ({visitedStallIds.length}/{(stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s)).length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s)) : DEFAULT_DEMO_STALLS.filter(s => !isFacilityStore(s))).length})</span>
                 </button>
                 {guidedTourActive && (
                   <button
@@ -3344,7 +3351,7 @@ export function MapPage() {
                 }}>
                   <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', fontSize: '0.78rem', fontWeight: 700 }}>
                     <span style={{ color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.15)', padding: '0.15rem 0.45rem', borderRadius: '6px' }}>
-                      🎯 In Tour: {tourSelectedStallIds.length}/{(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark') : DEFAULT_DEMO_STALLS).length}
+                      🎯 In Tour: {tourSelectedStallIds.length}/{(stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s)).length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s)) : DEFAULT_DEMO_STALLS.filter(s => !isFacilityStore(s))).length}
                     </span>
                     {visitedStallIds.length > 0 && (
                       <span style={{ color: '#22c55e', background: 'rgba(34, 197, 94, 0.12)', padding: '0.15rem 0.45rem', borderRadius: '6px' }}>
@@ -3358,8 +3365,8 @@ export function MapPage() {
                       className="btn btn-ghost btn-sm"
                       style={{ fontSize: '0.7rem', padding: '0.2rem 0.45rem', color: 'var(--color-accent)', minHeight: 'unset' }}
                       onClick={() => {
-                        const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
-                        const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS;
+                        const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s));
+                        const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS.filter(s => !isFacilityStore(s));
                         setTourSelectedStallIds(listToUse.map(s => s.id));
                       }}
                     >
@@ -3369,8 +3376,8 @@ export function MapPage() {
                       className="btn btn-ghost btn-sm"
                       style={{ fontSize: '0.7rem', padding: '0.2rem 0.45rem', color: '#38bdf8', minHeight: 'unset' }}
                       onClick={() => {
-                        const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark');
-                        const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS;
+                        const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s));
+                        const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS.filter(s => !isFacilityStore(s));
                         setTourSelectedStallIds(listToUse.filter(s => !visitedStallIds.includes(s.id)).map(s => s.id));
                       }}
                     >
@@ -3408,9 +3415,9 @@ export function MapPage() {
                   flexDirection: 'column',
                   gap: '0.35rem'
                 }}>
-                  {(stores.filter(s => s.id !== 'kalawana-national-school-landmark').length > 0
-                    ? stores.filter(s => s.id !== 'kalawana-national-school-landmark')
-                    : DEFAULT_DEMO_STALLS)
+                  {(stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s)).length > 0
+                    ? stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s))
+                    : DEFAULT_DEMO_STALLS.filter(s => !isFacilityStore(s)))
                     .filter(s => {
                       if (!checklistSearchQuery.trim()) return true;
                       const q = checklistSearchQuery.toLowerCase();

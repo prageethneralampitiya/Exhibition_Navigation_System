@@ -1,117 +1,79 @@
-import { useEffect, useState, useRef } from 'react';
-import { Megaphone, Volume2, VolumeX, X } from 'lucide-react';
-import { supabase, type Announcement } from '../lib/supabase';
+import { Radio, Volume2, VolumeX, X, Megaphone } from 'lucide-react';
+import { useLiveBroadcast } from '../contexts/LiveBroadcastContext';
 
+/**
+ * LiveBroadcastBanner
+ *
+ * Full banner shown at the top-centre when a broadcast is active and not dismissed.
+ * After the user dismisses it, a small floating pill icon (top-right) stays visible
+ * so they can toggle mute/listen at any time — no page refresh needed.
+ *
+ * Audio state (playing/muted) is owned by LiveBroadcastContext and shared with
+ * any other component that calls useLiveBroadcast() (e.g. the map mini-button).
+ */
 export function LiveBroadcastBanner() {
-  const [activeBroadcast, setActiveBroadcast] = useState<Announcement | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isDismissed, setIsDismissed] = useState(false);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const { activeBroadcast, isPlaying, isDismissed, handleListen, handleMute, handleDismiss, handleExpand } =
+    useLiveBroadcast();
 
-  useEffect(() => {
-    fetchActiveBroadcast();
+  // Nothing active — render nothing at all
+  if (!activeBroadcast) return null;
 
-    // Subscribe to announcements realtime updates
-    const channelName = `live-broadcast-${Math.random().toString(36).substring(2, 10)}`;
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'announcements',
-        },
-        (payload) => {
-          const eventType = payload.eventType;
-          if (eventType === 'INSERT' || eventType === 'UPDATE') {
-            const ann = payload.new as Announcement;
-            if (ann.type === 'broadcast') {
-              if (ann.is_active) {
-                // Check if visitor dismissed this specific broadcast run before
-                const dismissedTime = sessionStorage.getItem('dismissed_broadcast_time');
-                if (dismissedTime !== ann.updated_at) {
-                  setActiveBroadcast(ann);
-                  setIsDismissed(false);
-                }
-              } else {
-                setActiveBroadcast(null);
-                setIsPlaying(false);
-              }
-            }
-          } else if (eventType === 'DELETE') {
-            const oldId = payload.old.id;
-            setActiveBroadcast((prev) => (prev?.id === oldId ? null : prev));
-            setIsPlaying(false);
-          }
+  // ── Minimized pill shown after dismissal ────────────────────────────────
+  if (isDismissed) {
+    return (
+      <button
+        onClick={handleExpand}
+        id="live-broadcast-mini-pill"
+        title={isPlaying ? 'Live audio playing — click to expand' : 'Live broadcast available — click to expand'}
+        style={{
+          position: 'fixed',
+          top: 'calc(10px + var(--safe-top, 0px))',
+          right: '14px',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.35rem',
+          padding: '0.35rem 0.7rem 0.35rem 0.5rem',
+          borderRadius: '20px',
+          background: isPlaying
+            ? 'rgba(239, 68, 68, 0.18)'
+            : 'rgba(11, 15, 26, 0.82)',
+          border: `1px solid ${isPlaying ? 'rgba(239,68,68,0.45)' : 'rgba(255,255,255,0.12)'}`,
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          cursor: 'pointer',
+          boxShadow: isPlaying
+            ? '0 0 0 2px rgba(239,68,68,0.2), 0 4px 14px rgba(0,0,0,0.4)'
+            : '0 4px 14px rgba(0,0,0,0.4)',
+          transition: 'all 0.2s ease',
+          color: isPlaying ? '#f87171' : 'var(--color-muted)',
+        }}
+      >
+        {/* Pulsing live dot */}
+        <span
+          className={isPlaying ? 'live-dot-pulse' : undefined}
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            backgroundColor: isPlaying ? '#ef4444' : '#64748b',
+            flexShrink: 0,
+            display: 'inline-block',
+          }}
+        />
+        <Radio size={13} />
+        <span style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.04em' }}>
+          {isPlaying ? 'LIVE' : 'LIVE'}
+        </span>
+        {isPlaying
+          ? <Volume2 size={12} />
+          : <VolumeX size={12} />
         }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  async function fetchActiveBroadcast() {
-    try {
-      const { data, error } = await supabase
-        .from('announcements')
-        .select('*')
-        .eq('type', 'broadcast')
-        .eq('is_active', true)
-        .order('updated_at', { ascending: false })
-        .limit(1);
-
-      if (error) throw error;
-      if (data && data.length > 0) {
-        const b = data[0];
-        const dismissedTime = sessionStorage.getItem('dismissed_broadcast_time');
-        if (dismissedTime !== b.updated_at) {
-          setActiveBroadcast(b);
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching active broadcast:', err);
-    }
+      </button>
+    );
   }
 
-  const handleListen = () => {
-    setIsPlaying(true);
-    if (iframeRef.current && youtubeId) {
-      iframeRef.current.src = `https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=0&controls=0&playsinline=1&enablejsapi=1`;
-    }
-  };
-
-  const handleMute = () => {
-    setIsPlaying(false);
-    if (iframeRef.current) {
-      iframeRef.current.src = 'about:blank';
-    }
-  };
-
-  const handleDismiss = () => {
-    if (activeBroadcast) {
-      sessionStorage.setItem('dismissed_broadcast_time', activeBroadcast.updated_at);
-    }
-    setIsDismissed(true);
-    setIsPlaying(false);
-    if (iframeRef.current) {
-      iframeRef.current.src = 'about:blank';
-    }
-  };
-
-  const youtubeId = activeBroadcast?.message || '';
-
-  // React to realtime broadcast updates if the user is already listening
-  useEffect(() => {
-    if (isPlaying && iframeRef.current && youtubeId) {
-      iframeRef.current.src = `https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=0&controls=0&playsinline=1&enablejsapi=1`;
-    }
-  }, [youtubeId, isPlaying]);
-
-  if (!activeBroadcast || isDismissed) return null;
-
+  // ── Full banner ──────────────────────────────────────────────────────────
   return (
     <div
       className="glass"
@@ -194,6 +156,7 @@ export function LiveBroadcastBanner() {
           </button>
         )}
 
+        {/* Dismiss — audio keeps playing; mini-pill appears */}
         <button
           onClick={handleDismiss}
           style={{
@@ -204,50 +167,11 @@ export function LiveBroadcastBanner() {
             padding: '0.2rem',
             display: 'flex',
           }}
-          title="Dismiss"
+          title="Minimize (audio keeps playing if active)"
         >
           <X size={16} />
         </button>
       </div>
-
-      {/* 
-        Always-in-DOM YouTube Iframe for iOS gesture tracking compatibility.
-        iOS Safari freezes player if width/height is too small or if it is offscreen/hidden.
-        We keep it 200px x 120px and position it layered behind the viewport elements using zIndex.
-      */}
-      {/* 
-        Always-in-DOM YouTube Iframe for iOS gesture tracking compatibility.
-        To play audio on iOS Safari without pausing, the player must be in the viewport and have dimensions.
-        We place the 200px iframe inside a 2px x 2px container with overflow hidden, fixed at the top-left,
-        making it 100% invisible to the user while keeping it fully active for Safari/Chrome.
-      */}
-      {youtubeId && (
-        <div
-          style={{
-            position: 'fixed',
-            top: '0px',
-            left: '0px',
-            width: '2px',
-            height: '2px',
-            overflow: 'hidden',
-            zIndex: -1000,
-            pointerEvents: 'none',
-            opacity: 0.99,
-          }}
-        >
-          <iframe
-            ref={iframeRef}
-            width="200"
-            height="200"
-            src="about:blank"
-            title="Live Broadcast Audio Stream"
-            allow="autoplay; encrypted-media"
-            style={{
-              border: 'none',
-            }}
-          />
-        </div>
-      )}
     </div>
   );
 }
