@@ -9,6 +9,7 @@ import {
   Clock,
   Image as ImageIcon,
   Gift,
+  QrCode,
 } from 'lucide-react';
 import {
   supabase,
@@ -23,6 +24,8 @@ import { AdminTable } from '../../components/admin/AdminTable';
 import { AdminModal } from '../../components/admin/AdminModal';
 import { useAuth } from '../../contexts/AuthContext';
 import { FormMapPicker } from '../../components/admin/FormMapPicker';
+import { QrCodeModal } from '../../components/admin/QrCodeModal';
+import { type QrCalibrateTarget } from '../../utils/qrCodeGenerator';
 
 export function AdminStoresPage() {
   const { user, profile } = useAuth();
@@ -58,6 +61,27 @@ export function AdminStoresPage() {
   const [promoStart, setPromoStart] = useState('');
   const [promoEnd, setPromoEnd] = useState('');
   const [editingPromoId, setEditingPromoId] = useState<string | null>(null);
+
+  // QR Code State
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [qrTarget, setQrTarget] = useState<QrCalibrateTarget | null>(null);
+
+  const handleOpenQrCode = (store: Store) => {
+    const lat = store.latitude ?? 6.535472;
+    const lng = store.longitude ?? 80.401000;
+    const catName = categories.find((c) => c.id === store.category_id)?.name || null;
+
+    setQrTarget({
+      id: store.id,
+      name: store.name,
+      type: 'store',
+      latitude: Number(lat),
+      longitude: Number(lng),
+      floor: store.floor || '1',
+      category: catName,
+    });
+    setIsQrModalOpen(true);
+  };
 
 
   useEffect(() => {
@@ -485,6 +509,14 @@ export function AdminStoresPage() {
       width: '120px',
       render: (row: Store) => (
         <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            className="btn btn-ghost btn-sm btn-icon"
+            onClick={() => handleOpenQrCode(row)}
+            title="Download / Print indoor location calibration QR code"
+            style={{ color: '#38bdf8' }}
+          >
+            <QrCode size={14} />
+          </button>
           <button
             className="btn btn-ghost btn-sm btn-icon"
             onClick={() => handleOpenEdit(row)}
@@ -1154,6 +1186,13 @@ export function AdminStoresPage() {
           </div>
         </AdminModal>
       )}
+
+      {/* QR Code Modal */}
+      <QrCodeModal
+        isOpen={isQrModalOpen}
+        onClose={() => setIsQrModalOpen(false)}
+        target={qrTarget}
+      />
     </main>
   );
 }

@@ -4,7 +4,7 @@ import { supabase } from './supabase';
  * Log visitor engagement event (e.g. view store profile, start routing path)
  */
 export async function logAnalyticsEvent(
-  eventType: 'store_view' | 'route_calculation' | 'search_query',
+  eventType: 'store_view' | 'route_calculation' | 'search_query' | 'path_deviation',
   targetId: string | null,
   targetName: string,
   metadata: Record<string, any> = {}

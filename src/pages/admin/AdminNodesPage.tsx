@@ -1,12 +1,16 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Edit2, Trash2, Search, Check, Navigation2, Network, Link2, RefreshCw, ShieldCheck, ShieldAlert, MapPin } from 'lucide-react';
+import { Plus, Edit2, Trash2, Search, Check, Navigation2, Network, Link2, RefreshCw, ShieldCheck, ShieldAlert, MapPin, Upload, Download, QrCode, Crosshair, Radio } from 'lucide-react';
 import { supabase, type NavigationNode, type NavigationEdge, type Store, type NodeType } from '../../lib/supabase';
 import { AdminTable } from '../../components/admin/AdminTable';
 import { AdminModal } from '../../components/admin/AdminModal';
-import { getDistance } from '../../utils/dijkstra';
+import { getDistance, computeCrowdCalibratedCoordinates } from '../../utils/dijkstra';
 import { FormMapPicker } from '../../components/admin/FormMapPicker';
 import { DrawPathMapPicker, type DrawPoint } from '../../components/admin/DrawPathMapPicker';
+import { KmlImportModal } from '../../components/admin/KmlImportModal';
+import { exportGraphToKML, downloadKmlFile } from '../../utils/kmlParser';
+import { QrCodeModal } from '../../components/admin/QrCodeModal';
+import { type QrCalibrateTarget } from '../../utils/qrCodeGenerator';
 
 export function AdminNodesPage() {
   const [nodes, setNodes] = useState<NavigationNode[]>([]);
@@ -42,6 +46,141 @@ export function AdminNodesPage() {
   const [drawPathBidirectional, setDrawPathBidirectional] = useState(true);
   const [drawPathFloor, setDrawPathFloor] = useState('1');
   const [drawPathTool, setDrawPathTool] = useState<'draw' | 'erase'>('draw');
+
+  // KML Import state
+  const [isKmlImportModalOpen, setIsKmlImportModalOpen] = useState(false);
+
+  // QR Code State
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [qrTarget, setQrTarget] = useState<QrCalibrateTarget | null>(null);
+
+  const handleOpenQrCode = (node: NavigationNode) => {
+    setQrTarget({
+      id: node.id,
+      name: node.label,
+      type: node.type,
+      latitude: Number(node.latitude),
+      longitude: Number(node.longitude),
+      floor: node.floor || '1',
+    });
+    setIsQrModalOpen(true);
+  };
+
+  // Live GPS field calibration for a single node
+  const handleCalibrateNodeWithGps = (node: NavigationNode) => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser.');
+      return;
+    }
+
+    const confirmed = confirm(
+      `📡 Real-Time GPS Node Calibrator:\n\nAre you physically standing at "${node.label}" right now?\n\nClick OK to read your device's GPS and snap this node to your exact physical coordinates.`
+    );
+    if (!confirmed) return;
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const newLat = Math.round(pos.coords.latitude * 1_000_000) / 1_000_000;
+        const newLng = Math.round(pos.coords.longitude * 1_000_000) / 1_000_000;
+        const accuracy = Math.round(pos.coords.accuracy);
+
+        try {
+          const { error } = await supabase
+            .from('navigation_nodes')
+            .update({ latitude: newLat, longitude: newLng })
+            .eq('id', node.id);
+
+          if (error) throw error;
+          alert(`✓ Node "${node.label}" successfully calibrated!\n\nNew Coordinates: ${newLat}, ${newLng}\nGPS Accuracy: ±${accuracy}m`);
+          loadAllData();
+        } catch (err: any) {
+          alert('Failed to calibrate node: ' + (err?.message || 'Unknown error'));
+        }
+      },
+      (err) => {
+        alert('Could not acquire GPS: ' + err.message);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  };
+
+  // Crowd traffic self-calibration
+  const [autoCalibrating, setAutoCalibrating] = useState(false);
+
+  const handleCrowdAutoCalibrate = async () => {
+    try {
+      setAutoCalibrating(true);
+      // Query deviation telemetry recorded from users
+      const { data: telemetryEvents } = await supabase
+        .from('analytics_events')
+        .select('*')
+        .eq('event_type', 'path_deviation')
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      const samples = telemetryEvents || [];
+
+      if (samples.length === 0) {
+        alert(
+          `ℹ️ Auto-Calibrate Paths:\n\nNo crowd deviation traces recorded yet.\n\nAs visitors navigate using the mobile app, their natural path turns and corner shortcuts are automatically measured against static lines. Once enough traffic is logged, this tool automatically adjusts node coordinates to match human walking lines!`
+        );
+        return;
+      }
+
+      // Group samples by target node_id
+      const nodeSamplesMap = new Map<string, Array<{ lat: number; lng: number }>>();
+      samples.forEach((s: any) => {
+        const nodeId = s.target_id;
+        const meta = typeof s.metadata === 'string' ? JSON.parse(s.metadata) : s.metadata;
+        if (nodeId && meta?.lat && meta?.lng) {
+          const list = nodeSamplesMap.get(nodeId) || [];
+          list.push({ lat: Number(meta.lat), lng: Number(meta.lng) });
+          nodeSamplesMap.set(nodeId, list);
+        }
+      });
+
+      let adjustedCount = 0;
+      for (const [nodeId, sList] of nodeSamplesMap.entries()) {
+        const targetNode = nodes.find((n) => n.id === nodeId);
+        if (targetNode && sList.length >= 2) {
+          const cal = computeCrowdCalibratedCoordinates(
+            targetNode.latitude,
+            targetNode.longitude,
+            sList,
+            0.5
+          );
+          if (cal.shiftMeters > 0.5) {
+            await supabase
+              .from('navigation_nodes')
+              .update({ latitude: cal.lat, longitude: cal.lng })
+              .eq('id', nodeId);
+            adjustedCount++;
+          }
+        }
+      }
+
+      if (adjustedCount > 0) {
+        alert(`✓ Successfully auto-calibrated ${adjustedCount} path nodes based on crowd movement patterns!`);
+        loadAllData();
+      } else {
+        alert(`ℹ️ Path nodes are already well-aligned with crowd walking lines (deviation < 0.5m).`);
+      }
+    } catch (err: any) {
+      alert('Auto-calibration error: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setAutoCalibrating(false);
+    }
+  };
+
+  const handleExportKML = () => {
+    try {
+      const kml = exportGraphToKML(nodes, edges, 'ExNav Campus Navigation Graph');
+      downloadKmlFile(kml, `campus-paths-${new Date().toISOString().slice(0, 10)}.kml`);
+    } catch (err: any) {
+      console.error('Failed to export KML:', err);
+      alert('Failed to export KML file: ' + (err?.message || 'Unknown error'));
+    }
+  };
 
   /**
    * Compute the straight-line distance between two nodes using the equirectangular
@@ -620,9 +759,27 @@ export function AdminNodesPage() {
     {
       key: 'actions',
       label: 'Actions',
-      width: '110px',
+      width: '180px',
       render: (row: NavigationNode) => (
         <div style={{ display: 'flex', gap: '0.35rem' }}>
+          {/* Quick GPS Real-time Calibration for this Node */}
+          <button
+            className="btn btn-ghost btn-sm btn-icon"
+            onClick={() => handleCalibrateNodeWithGps(row)}
+            title="Snap this node to your current live physical GPS location"
+            style={{ color: '#06b6d4' }}
+          >
+            <Crosshair size={13} />
+          </button>
+          {/* QR Code Calibration Placard */}
+          <button
+            className="btn btn-ghost btn-sm btn-icon"
+            onClick={() => handleOpenQrCode(row)}
+            title="Download / Print indoor location calibration QR code placard"
+            style={{ color: '#38bdf8' }}
+          >
+            <QrCode size={13} />
+          </button>
           {/* Inline rename toggle */}
           <button
             className="btn btn-ghost btn-sm btn-icon"
@@ -751,9 +908,59 @@ export function AdminNodesPage() {
             <span>Facilities & POIs</span>
           </Link>
 
+          <button
+            className="btn btn-ghost"
+            onClick={() => setIsKmlImportModalOpen(true)}
+            title="Import paths & pins drawn in Google Earth (.kml)"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              border: '1px solid rgba(56, 189, 248, 0.4)',
+              background: 'rgba(56, 189, 248, 0.08)',
+              color: '#38bdf8',
+            }}
+          >
+            <Upload size={16} />
+            <span>Import KML</span>
+          </button>
+
+          <button
+            className="btn btn-ghost"
+            onClick={handleExportKML}
+            disabled={nodes.length === 0}
+            title="Export current navigation graph to Google Earth (.kml)"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+            }}
+          >
+            <Download size={16} />
+            <span>Export KML</span>
+          </button>
+
+          <button
+            className="btn btn-ghost"
+            onClick={handleCrowdAutoCalibrate}
+            disabled={nodes.length === 0 || autoCalibrating}
+            title="Analyze visitor movement telemetry and adjust corner nodes"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              border: '1px solid rgba(16, 185, 129, 0.4)',
+              background: 'rgba(16, 185, 129, 0.08)',
+              color: '#34d399',
+            }}
+          >
+            <Radio size={15} className={autoCalibrating ? 'live-dot-pulse' : ''} />
+            <span>{autoCalibrating ? 'Calibrating...' : 'Auto-Calibrate Paths'}</span>
+          </button>
+
           <button className="btn btn-ghost" onClick={handleOpenDrawPath} style={{ border: '1px dashed var(--color-accent)', color: 'var(--color-accent)' }}>
             <Network size={16} />
-            Draw Path
+            Draw / Field Calibrate
           </button>
           <button className="btn btn-ghost" onClick={handleOpenAddEdge} disabled={nodes.length < 2}>
             <Link2 size={16} />
@@ -1371,6 +1578,21 @@ export function AdminNodesPage() {
           </form>
         </AdminModal>
       )}
+
+      {/* KML Import Modal */}
+      <KmlImportModal
+        isOpen={isKmlImportModalOpen}
+        onClose={() => setIsKmlImportModalOpen(false)}
+        existingNodes={nodes}
+        onSuccess={loadAllData}
+      />
+
+      {/* QR Code Calibration Placard Modal */}
+      <QrCodeModal
+        isOpen={isQrModalOpen}
+        onClose={() => setIsQrModalOpen(false)}
+        target={qrTarget}
+      />
     </main>
   );
 }

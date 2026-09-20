@@ -3,7 +3,8 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { type NavigationNode, type NavigationEdge, type Store } from '../../lib/supabase';
 import { getCampusStoreLocation } from '../KalawanaSchool3DLayer';
-import { Maximize2, RotateCcw, Trash2, Check, Satellite, Map } from 'lucide-react';
+import { Maximize2, RotateCcw, Trash2, Check, Satellite, Map, Crosshair, Footprints, Radio } from 'lucide-react';
+import { getDistance } from '../../utils/dijkstra';
 
 // ── Tile layer definitions ────────────────────────────────────────────────────
 const TILE_LAYERS = {
@@ -89,6 +90,105 @@ export function DrawPathMapPicker({
   useEffect(() => { toolRef.current = tool; }, [tool]);
   useEffect(() => { setPointsRef.current = setPoints; }, [setPoints]);
   useEffect(() => { onEraseEdgeRef.current = onEraseEdge; }, [onEraseEdge]);
+
+  // ── Real-Time Field Calibrator state ──
+  const [isLiveCalibrating, setIsLiveCalibrating] = useState(false);
+  const [liveCoords, setLiveCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
+  const [isAutoWalkRecord, setIsAutoWalkRecord] = useState(false);
+  const lastRecordedWalkPointRef = useRef<{ lat: number; lng: number } | null>(null);
+  const liveMarkerRef = useRef<L.Marker | null>(null);
+  const liveCircleRef = useRef<L.Circle | null>(null);
+  const geoWatchIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!isLiveCalibrating) {
+      if (geoWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(geoWatchIdRef.current);
+        geoWatchIdRef.current = null;
+      }
+      if (liveMarkerRef.current && mapRef.current) {
+        mapRef.current.removeLayer(liveMarkerRef.current);
+        liveMarkerRef.current = null;
+      }
+      if (liveCircleRef.current && mapRef.current) {
+        mapRef.current.removeLayer(liveCircleRef.current);
+        liveCircleRef.current = null;
+      }
+      setLiveCoords(null);
+      setIsAutoWalkRecord(false);
+      lastRecordedWalkPointRef.current = null;
+      return;
+    }
+
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser.');
+      setIsLiveCalibrating(false);
+      return;
+    }
+
+    geoWatchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const lat = Math.round(pos.coords.latitude * 1_000_000) / 1_000_000;
+        const lng = Math.round(pos.coords.longitude * 1_000_000) / 1_000_000;
+        const accuracy = Math.round(pos.coords.accuracy);
+        setLiveCoords({ lat, lng, accuracy });
+
+        const map = mapRef.current;
+        if (!map) return;
+
+        const liveIcon = L.divIcon({
+          className: 'live-gps-admin-marker',
+          html: `<div style="
+            width: 22px; height: 22px; border-radius: 50%;
+            background: #06b6d4; border: 3px solid #fff;
+            box-shadow: 0 0 16px #06b6d4, 0 0 32px rgba(6, 182, 212, 0.6);
+            display: flex; align-items: center; justify-content: center;
+          "><div style="width: 6px; height: 6px; border-radius: 50%; background: #fff;"></div></div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        });
+
+        if (!liveMarkerRef.current) {
+          liveMarkerRef.current = L.marker([lat, lng], { icon: liveIcon, zIndexOffset: 999999 }).addTo(map);
+          liveCircleRef.current = L.circle([lat, lng], {
+            radius: accuracy,
+            color: '#06b6d4',
+            fillColor: '#06b6d4',
+            fillOpacity: 0.15,
+            weight: 1,
+            dashArray: '3, 3',
+          }).addTo(map);
+          map.setView([lat, lng], Math.max(map.getZoom(), 18));
+        } else {
+          liveMarkerRef.current.setLatLng([lat, lng]);
+          if (liveCircleRef.current) {
+            liveCircleRef.current.setLatLng([lat, lng]);
+            liveCircleRef.current.setRadius(accuracy);
+          }
+        }
+
+        // Auto Walk & Record: as admin walks >= 4 meters, append point automatically
+        if (isAutoWalkRecord) {
+          const last = lastRecordedWalkPointRef.current;
+          if (!last || getDistance(last.lat, last.lng, lat, lng) >= 4) {
+            lastRecordedWalkPointRef.current = { lat, lng };
+            setPointsRef.current((prev) => [...prev, { lat, lng }]);
+          }
+        }
+      },
+      (err) => {
+        console.warn('Live field calibration GPS error:', err.message);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+
+    return () => {
+      if (geoWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(geoWatchIdRef.current);
+        geoWatchIdRef.current = null;
+      }
+    };
+  }, [isLiveCalibrating, isAutoWalkRecord]);
 
   // ── Initialize map (once on mount) ──────────────────────────────────────────
   useEffect(() => {
@@ -561,8 +661,30 @@ export function DrawPathMapPicker({
           {/* Action buttons */}
           <div className="dpm-actions" style={{
             position: 'absolute', top: 20, right: 20, zIndex: 100000,
-            display: 'flex', gap: '0.65rem', pointerEvents: 'auto',
+            display: 'flex', gap: '0.65rem', pointerEvents: 'auto', flexWrap: 'wrap', justifyContent: 'flex-end',
           }}>
+            {/* Live Field Calibrate Toggle */}
+            <button
+              type="button"
+              onClick={() => setIsLiveCalibrating((v) => !v)}
+              style={{
+                padding: '0.6rem 1rem', borderRadius: 8,
+                display: 'flex', alignItems: 'center', gap: '0.45rem',
+                background: isLiveCalibrating
+                  ? 'linear-gradient(135deg, rgba(6, 182, 212, 0.9), rgba(59, 130, 246, 0.9))'
+                  : 'rgba(13,21,38,0.9)',
+                backdropFilter: 'blur(14px)',
+                border: `1px solid ${isLiveCalibrating ? '#06b6d4' : 'var(--color-border)'}`,
+                color: '#fff', fontWeight: 700, fontSize: '0.82rem',
+                cursor: 'pointer', boxShadow: '0 4px 16px rgba(0,0,0,0.45)',
+                transition: 'all 0.25s',
+              }}
+              title="Real-Time Field GPS Calibrator (Walk with phone/tablet)"
+            >
+              <Radio size={14} className={isLiveCalibrating ? 'live-dot-pulse' : ''} />
+              {isLiveCalibrating ? 'Live GPS (Active)' : 'Field Calibrate'}
+            </button>
+
             {/* Satellite / Street toggle */}
             <button
               type="button"
@@ -614,23 +736,140 @@ export function DrawPathMapPicker({
         </>
       )}
 
-      {/* Expand to fullscreen (inline mode) */}
+      {/* Inline mode controls */}
       {!isFullScreen && (
-        <button
-          type="button"
-          onClick={() => setIsFullScreen(true)}
-          className="btn btn-ghost btn-sm btn-icon"
+        <div style={{ position: 'absolute', top: 10, right: 10, zIndex: 1000, display: 'flex', gap: '0.4rem' }}>
+          <button
+            type="button"
+            onClick={() => setIsLiveCalibrating((v) => !v)}
+            className="btn btn-ghost btn-sm"
+            style={{
+              background: isLiveCalibrating ? 'rgba(6, 182, 212, 0.9)' : 'var(--color-surface)',
+              border: `1px solid ${isLiveCalibrating ? '#06b6d4' : 'var(--color-border)'}`,
+              color: '#fff',
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              padding: '0.25rem 0.55rem',
+              borderRadius: 6,
+              display: 'flex', alignItems: 'center', gap: '0.35rem',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+            }}
+            title="Real-Time Field GPS Calibrator"
+          >
+            <Radio size={13} className={isLiveCalibrating ? 'live-dot-pulse' : ''} />
+            <span>{isLiveCalibrating ? 'GPS Live' : 'Field Calibrate'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsFullScreen(true)}
+            className="btn btn-ghost btn-sm btn-icon"
+            style={{
+              background: 'var(--color-surface)', border: '1px solid var(--color-border)',
+              width: 32, height: 32, borderRadius: 6,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+            }}
+            title="Open full screen"
+          >
+            <Maximize2 size={15} />
+          </button>
+        </div>
+      )}
+
+      {/* Real-time Field Calibrator Floating HUD */}
+      {isLiveCalibrating && liveCoords && (
+        <div
           style={{
-            position: 'absolute', top: 10, right: 10, zIndex: 1000,
-            background: 'var(--color-surface)', border: '1px solid var(--color-border)',
-            width: 32, height: 32, borderRadius: 6,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+            position: 'absolute',
+            bottom: isFullScreen ? 24 : 14,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 100000,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.6rem',
+            background: 'rgba(11, 15, 26, 0.94)',
+            backdropFilter: 'blur(16px)',
+            border: '1px solid rgba(6, 182, 212, 0.5)',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6), 0 0 16px rgba(6, 182, 212, 0.25)',
+            padding: '0.45rem 0.85rem',
+            borderRadius: '16px',
+            maxWidth: '94vw',
+            flexWrap: 'wrap',
+            justifyContent: 'center',
           }}
-          title="Open full screen"
         >
-          <Maximize2 size={15} />
-        </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            <Radio size={14} color="#06b6d4" className="live-dot-pulse" />
+            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#38bdf8' }}>
+              Live GPS: ±{liveCoords.accuracy}m
+            </span>
+          </div>
+
+          <div style={{ height: '14px', width: '1px', background: 'rgba(255,255,255,0.15)' }} />
+
+          {/* Snap / Drop current point */}
+          <button
+            type="button"
+            onClick={() => {
+              setPoints((prev) => [...prev, { lat: liveCoords.lat, lng: liveCoords.lng }]);
+              lastRecordedWalkPointRef.current = { lat: liveCoords.lat, lng: liveCoords.lng };
+            }}
+            className="btn btn-sm"
+            style={{
+              padding: '0.3rem 0.65rem',
+              fontSize: '0.73rem',
+              fontWeight: 700,
+              background: 'linear-gradient(135deg, #06b6d4, #3b82f6)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.3rem',
+              cursor: 'pointer',
+            }}
+            title="Drop a node point at your exact physical location"
+          >
+            <Crosshair size={13} />
+            Snap / Drop Point Here
+          </button>
+
+          {/* Walk & Trace auto-recorder */}
+          <button
+            type="button"
+            onClick={() => setIsAutoWalkRecord((v) => !v)}
+            className="btn btn-sm"
+            style={{
+              padding: '0.3rem 0.65rem',
+              fontSize: '0.73rem',
+              fontWeight: 700,
+              background: isAutoWalkRecord ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+              border: `1px solid ${isAutoWalkRecord ? '#ef4444' : 'rgba(255, 255, 255, 0.15)'}`,
+              color: isAutoWalkRecord ? '#f87171' : 'var(--color-text)',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.3rem',
+              cursor: 'pointer',
+            }}
+            title="Automatically drop waypoints every 4 meters as you walk the corridor"
+          >
+            <Footprints size={13} />
+            {isAutoWalkRecord ? 'Tracing Active (Walk)' : 'Walk & Trace'}
+          </button>
+
+          {/* Center Map on GPS */}
+          <button
+            type="button"
+            onClick={() => mapRef.current?.setView([liveCoords.lat, liveCoords.lng], 19)}
+            className="btn btn-ghost btn-sm btn-icon"
+            style={{ width: 28, height: 28, padding: 0, borderRadius: '6px' }}
+            title="Center map on my live GPS"
+          >
+            <Crosshair size={13} />
+          </button>
+        </div>
       )}
 
       {/* Map legend */}

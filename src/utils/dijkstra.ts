@@ -1101,3 +1101,96 @@ export function isPointNearVenueGraph(
   return snap !== null && snap.snapDist <= thresholdMeters;
 }
 
+/**
+ * Detects if a walking visitor has cut a corner or turned early/late onto a subsequent
+ * segment of the active route. If the user is closer to a subsequent edge (e.g. index >= 2)
+ * than to the immediate next node, and has already passed the turn decision line, this
+ * returns the trimmed route sliced from the new closest segment forward, eliminating
+ * backtracking instructions.
+ */
+export function advanceRouteOnEarlyTurn(
+  userLat: number,
+  userLng: number,
+  currentRoute: NavigationNode[],
+  earlyTurnThresholdMeters = 8
+): { updatedRoute: NavigationNode[]; didAdvance: boolean; skippedNodes: NavigationNode[] } {
+  if (currentRoute.length <= 2) {
+    return { updatedRoute: currentRoute, didAdvance: false, skippedNodes: [] };
+  }
+
+  // Distance to the immediate next waypoint (index 1)
+  const distToNext = getDistance(userLat, userLng, currentRoute[1].latitude, currentRoute[1].longitude);
+
+  // Check if user is already closer to a subsequent edge (e.g. leg from index 1 to 2, or 2 to 3)
+  for (let i = 2; i < Math.min(currentRoute.length, 5); i++) {
+    const nodeA = currentRoute[i - 1];
+    const nodeB = currentRoute[i];
+
+    const proj = projectPointToSegment(
+      userLat, userLng,
+      nodeA.latitude, nodeA.longitude,
+      nodeB.latitude, nodeB.longitude
+    );
+
+    // If user's perpendicular distance to the subsequent segment is within threshold
+    // and they are significantly closer to that subsequent segment than to the missed waypoint,
+    // they cut the corner or turned early!
+    if (proj.distance < earlyTurnThresholdMeters && proj.distance < distToNext) {
+      const skippedNodes = currentRoute.slice(1, i);
+      const updatedRoute = [
+        {
+          id: `__adaptive_snap_${Date.now()}`,
+          label: 'Current Position',
+          latitude: userLat,
+          longitude: userLng,
+          floor: currentRoute[0].floor,
+          type: 'path' as const,
+          store_id: null,
+          created_at: new Date().toISOString(),
+        },
+        ...currentRoute.slice(i),
+      ];
+      return { updatedRoute, didAdvance: true, skippedNodes };
+    }
+  }
+
+  return { updatedRoute: currentRoute, didAdvance: false, skippedNodes: [] };
+}
+
+export interface CrowdDeviationSample {
+  nodeId: string;
+  actualLat: number;
+  actualLng: number;
+  weight?: number;
+}
+
+/**
+ * Computes calibrated coordinates for a node based on crowd movement telemetry.
+ * Uses a weighted centroid between the originally drafted node position and the
+ * average of visitor deviation coordinates.
+ */
+export function computeCrowdCalibratedCoordinates(
+  originalLat: number,
+  originalLng: number,
+  samples: Array<{ lat: number; lng: number }>,
+  blendFactor = 0.6
+): { lat: number; lng: number; shiftMeters: number } {
+  if (samples.length === 0) {
+    return { lat: originalLat, lng: originalLng, shiftMeters: 0 };
+  }
+
+  const avgLat = samples.reduce((sum, s) => sum + s.lat, 0) / samples.length;
+  const avgLng = samples.reduce((sum, s) => sum + s.lng, 0) / samples.length;
+
+  const calibratedLat = originalLat * (1 - blendFactor) + avgLat * blendFactor;
+  const calibratedLng = originalLng * (1 - blendFactor) + avgLng * blendFactor;
+  const shiftMeters = getDistance(originalLat, originalLng, calibratedLat, calibratedLng);
+
+  return {
+    lat: Math.round(calibratedLat * 1000000) / 1000000,
+    lng: Math.round(calibratedLng * 1000000) / 1000000,
+    shiftMeters: Math.round(shiftMeters * 100) / 100,
+  };
+}
+
+

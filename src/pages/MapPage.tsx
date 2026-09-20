@@ -22,11 +22,13 @@ import {
   Layers,
   Radio,
   VolumeX,
+  QrCode,
 } from 'lucide-react';
 import { useLiveBroadcast } from '../contexts/LiveBroadcastContext';
 import { AdminModal } from '../components/admin/AdminModal';
 import { useAuth } from '../contexts/AuthContext';
 import { GPSPermissionBanner } from '../components/GPSPermissionBanner';
+import { QuickPitstopModal } from '../components/QuickPitstopModal';
 import {
   supabase,
   type Store as StoreType,
@@ -44,6 +46,7 @@ import {
   getAllEntrancePoints,
   findShortestDistanceEntrance,
   isPointNearVenueGraph,
+  advanceRouteOnEarlyTurn,
 } from '../utils/dijkstra';
 import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
@@ -281,6 +284,20 @@ export function MapPage() {
   const [, setGpsError] = useState<string | null>(null);
   const [mockMode, setMockMode] = useState(false);
 
+  // Indoor QR Calibration State (locks user to checkpoint indoors)
+  const [calibratedLocation, setCalibratedLocation] = useState<{
+    id: string | null;
+    label: string;
+    lat: number;
+    lng: number;
+    floor: string;
+    calibratedAt: number;
+  } | null>(null);
+  const calibratedLocationRef = useRef<typeof calibratedLocation>(null);
+  useEffect(() => {
+    calibratedLocationRef.current = calibratedLocation;
+  }, [calibratedLocation]);
+
   // Kalman Filter for coordinates smoothing
   const filterRef = useRef(new GPSKalmanFilter(0.8, 1.8));
 
@@ -368,6 +385,18 @@ export function MapPage() {
     totalStalls: 0,
     totalVisited: 0,
   });
+
+  // Pitstop Detour State (temporary detour to washroom, canteen, water, first aid)
+  interface ActivePitstopDetour {
+    originalType: 'single' | 'tour';
+    originalDestinationStoreId: string;
+    originalDestinationNodeId: string;
+    originalTourStops: StoreType[];
+    originalTourStopIndex: number;
+    facility: StoreType;
+  }
+  const [activePitstopDetour, setActivePitstopDetour] = useState<ActivePitstopDetour | null>(null);
+  const [showPitstopModal, setShowPitstopModal] = useState(false);
 
   const handleOpenTourPlanner = () => {
     const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s));
@@ -679,6 +708,12 @@ export function MapPage() {
       (position) => {
         const { latitude: rawLat, longitude: rawLng, accuracy } = position.coords;
         const { lat, lng } = filterRef.current.filter(rawLat, rawLng, accuracy, position.timestamp || Date.now());
+
+        // If the visitor calibrated at an indoor QR checkpoint, suppress poor GPS jumps (>12m)
+        if (calibratedLocationRef.current && accuracy && accuracy > 12) {
+          return;
+        }
+
         setUserLat(lat);
         setUserLng(lng);
         setGpsAccuracy(accuracy ?? null);
@@ -1238,6 +1273,54 @@ export function MapPage() {
     setArrivedStopPrompt(null);
     lastPromptedStopIdRef.current = null;
     lastTourRoutePositionRef.current = null;
+    setActivePitstopDetour(null);
+  };
+
+  // Pitstop Detour Handlers
+  const handleSelectPitstopFacility = (facility: StoreType) => {
+    setActivePitstopDetour({
+      originalType: guidedTourActive ? 'tour' : 'single',
+      originalDestinationStoreId: selectedDestinationStoreId,
+      originalDestinationNodeId: selectedDestinationNodeId,
+      originalTourStops: [...tourStops],
+      originalTourStopIndex: currentTourStopIndex,
+      facility,
+    });
+
+    // Temporarily pause guided tour mode if active and navigate to facility
+    if (guidedTourActive) {
+      setGuidedTourActive(false);
+    }
+    setSelectedDestinationStoreId(facility.id);
+    setSelectedDestinationNodeId('');
+    setNavigationActive(true);
+    setNavSheetExpanded(false);
+  };
+
+  const handleResumeOriginalRoute = () => {
+    if (!activePitstopDetour) return;
+
+    const detour = activePitstopDetour;
+    setActivePitstopDetour(null);
+
+    if (detour.originalType === 'tour' && detour.originalTourStops.length > 0) {
+      setTourStops(detour.originalTourStops);
+      setCurrentTourStopIndex(detour.originalTourStopIndex);
+      setGuidedTourActive(true);
+      setNavigationActive(true);
+      const targetStop = detour.originalTourStops[detour.originalTourStopIndex];
+      if (targetStop) {
+        setSelectedDestinationStoreId(targetStop.id);
+        setSelectedDestinationNodeId('');
+        const fromLat = userLat !== null ? userLat : (detour.facility.latitude || 6.535472);
+        const fromLng = userLng !== null ? userLng : (detour.facility.longitude || 80.401000);
+        routeToTourStop(fromLat, fromLng, targetStop, detour.originalTourStopIndex, detour.originalTourStops.length);
+      }
+    } else {
+      setSelectedDestinationStoreId(detour.originalDestinationStoreId);
+      setSelectedDestinationNodeId(detour.originalDestinationNodeId);
+      setNavigationActive(true);
+    }
   };
 
   // Automatic Proximity Arrival Detector (7m radius) — works in tour mode and general exploration
@@ -1293,9 +1376,51 @@ export function MapPage() {
     }
   }, [userLat, userLng, visitedStallIds, stores]);
 
-  // Handle deep-linking navigation targets via ?to= query parameters
-  // Handle deep-linking navigation targets via query parameters
+  // Handle deep-linking navigation targets via query parameters & QR code indoor calibration
   useEffect(() => {
+    // 1. QR Code Indoor Location Calibration Check
+    const calParam = searchParams.get('calibrate');
+    if (calParam) {
+      const latStr = searchParams.get('lat');
+      const lngStr = searchParams.get('lng');
+      const lat = latStr ? parseFloat(latStr) : NaN;
+      const lng = lngStr ? parseFloat(lngStr) : NaN;
+      const label = searchParams.get('label') || 'Checkpoint';
+      const floor = searchParams.get('floor') || '1';
+      const id = searchParams.get('id');
+
+      if (!isNaN(lat) && !isNaN(lng)) {
+        const calInfo = {
+          id,
+          label,
+          lat,
+          lng,
+          floor,
+          calibratedAt: Date.now(),
+        };
+        setCalibratedLocation(calInfo);
+        calibratedLocationRef.current = calInfo;
+
+        setUserLat(lat);
+        setUserLng(lng);
+        setMapCenterLat(lat);
+        setMapCenterLng(lng);
+        setBypassBoundaryCheck(true);
+        hasGPSCenteredRef.current = true;
+        setMockMode(false);
+
+        // Remove calibration params from URL cleanly to avoid re-triggering on refresh
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('calibrate');
+        nextParams.delete('lat');
+        nextParams.delete('lng');
+        nextParams.delete('label');
+        nextParams.delete('floor');
+        nextParams.delete('id');
+        setSearchParams(nextParams, { replace: true });
+      }
+    }
+
     const toParam = searchParams.get('to');
     const toNodeParam = searchParams.get('toNode');
     if (toParam && stores.length > 0) {
@@ -1307,7 +1432,7 @@ export function MapPage() {
       setSelectedDestinationStoreId('');
       setSearchParams({});
     }
-  }, [searchParams, stores, nodes, setSearchParams]);
+  }, [searchParams, stores, nodes, setSearchParams, setBypassBoundaryCheck]);
 
   // Main pathfinder computation trigger
   useEffect(() => {
@@ -1708,11 +1833,31 @@ export function MapPage() {
       }
     }
 
+    // Adaptive Early-Turn / Corner-Cutting Calibration:
+    // If the visitor already turned early or cut the corner onto a forward leg,
+    // advance the route automatically to avoid backtracking.
+    let adaptiveRoute = finalRoute;
+    if (userLat !== null && userLng !== null && finalRoute.length > 2) {
+      const earlyTurnResult = advanceRouteOnEarlyTurn(userLat, userLng, finalRoute, 8);
+      if (earlyTurnResult.didAdvance) {
+        adaptiveRoute = earlyTurnResult.updatedRoute;
+        if (earlyTurnResult.skippedNodes.length > 0) {
+          const skipped = earlyTurnResult.skippedNodes[0];
+          logAnalyticsEvent(
+            'path_deviation',
+            skipped.id,
+            skipped.label,
+            { lat: userLat, lng: userLng }
+          );
+        }
+      }
+    }
+
     setOutdoorSegmentCount(newOutdoorSegmentCount);
-    setCalculatedRoute(finalRoute);
+    setCalculatedRoute(adaptiveRoute);
     setNavigationActive(true);
 
-    if (finalRoute.length > 0) {
+    if (adaptiveRoute.length > 0) {
       let distanceMeters = 0;
       const steps: string[] = [];
 
@@ -1722,7 +1867,7 @@ export function MapPage() {
         }
         steps.push(`🏫 Enter through ${entranceLabel}`);
 
-        const indoorNodesSlice = finalRoute.slice(newOutdoorSegmentCount);
+        const indoorNodesSlice = adaptiveRoute.slice(newOutdoorSegmentCount);
         for (let i = 0; i < indoorNodesSlice.length - 1; i++) {
           const from = indoorNodesSlice[i];
           const to = indoorNodesSlice[i + 1];
@@ -1735,24 +1880,27 @@ export function MapPage() {
         steps.push(`Arrive at ${targetLabel}`);
 
         distanceMeters = osrmTotalDistance ?? 0;
-        for (let i = newOutdoorSegmentCount; i < finalRoute.length - 1; i++) {
-          const from = finalRoute[i];
-          const to = finalRoute[i + 1];
+        for (let i = newOutdoorSegmentCount; i < adaptiveRoute.length - 1; i++) {
+          const from = adaptiveRoute[i];
+          const to = adaptiveRoute[i + 1];
           distanceMeters += getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
         }
       } else {
-        if (finalRoute.length > 1) {
-          steps.push(`Start from ${finalRoute[0].label}`);
-          for (let i = 0; i < finalRoute.length - 1; i++) {
-            const from = finalRoute[i];
-            const to = finalRoute[i + 1];
-            const segDist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
-            distanceMeters += segDist;
+        for (let i = 0; i < adaptiveRoute.length - 1; i++) {
+          const from = adaptiveRoute[i];
+          const to = adaptiveRoute[i + 1];
+          const segDist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
+          distanceMeters += segDist;
+          if (segDist > 1) {
             const heading = getHeading(from.latitude, from.longitude, to.latitude, to.longitude);
-            steps.push(`Head ${heading} towards ${to.label} (${Math.round(segDist)}m)`);
+            if (to.type === 'store' || to.id.startsWith('dest-store-')) {
+              steps.push(`Turn ${heading} into ${targetLabel} (${Math.round(segDist)}m)`);
+            } else {
+              steps.push(`Walk ${heading} along pathway to ${to.label} (${Math.round(segDist)}m)`);
+            }
           }
-          steps.push(`Arrive at ${targetLabel}`);
         }
+        steps.push(`Arrive at ${targetLabel}`);
       }
 
       setTotalDistance(Math.round(distanceMeters));
@@ -1772,6 +1920,12 @@ export function MapPage() {
           }
         })
         .catch(console.error);
+    }
+
+    if (calibratedLocationRef.current) {
+      setMapCenterLat(calibratedLocationRef.current.lat);
+      setMapCenterLng(calibratedLocationRef.current.lng);
+      return;
     }
 
     if (!mockMode && userLat !== null && userLng !== null) {
@@ -2395,6 +2549,75 @@ export function MapPage() {
             )}
           </div>
 
+          {/* Calibrated Indoor Location Banner (QR Scan Checkpoint) */}
+          {calibratedLocation && (
+            <div
+              className="glass"
+              style={{
+                position: 'absolute',
+                top: '4.75rem',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 1000,
+                padding: '0.55rem 1.1rem',
+                borderRadius: '24px',
+                background: 'rgba(16, 185, 129, 0.22)',
+                border: '1px solid rgba(52, 211, 153, 0.6)',
+                color: '#ecfdf5',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
+                boxShadow: '0 8px 30px rgba(0, 0, 0, 0.45)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+                maxWidth: '92vw',
+                animation: 'fadeIn 0.25s ease-out',
+              }}
+            >
+              <div
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  background: 'rgba(16, 185, 129, 0.35)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <QrCode size={15} color="#34d399" />
+              </div>
+              <div style={{ minWidth: 0, lineHeight: 1.3 }}>
+                <div style={{ fontWeight: 700, color: '#34d399', fontSize: '0.82rem' }}>
+                  Position Calibrated via QR Code
+                </div>
+                <div style={{ fontSize: '0.73rem', color: '#a7f3d0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  Location: <strong>{calibratedLocation.label}</strong> (Floor {calibratedLocation.floor})
+                </div>
+              </div>
+              <button
+                onClick={() => setCalibratedLocation(null)}
+                className="btn btn-ghost btn-sm"
+                style={{
+                  padding: '0.2rem 0.55rem',
+                  fontSize: '0.7rem',
+                  borderRadius: '12px',
+                  background: 'rgba(255, 255, 255, 0.12)',
+                  color: '#fff',
+                  marginLeft: '0.25rem',
+                  flexShrink: 0,
+                  border: 'none',
+                }}
+                title="Dismiss calibration notification"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {/* Active Mock Location Top Banner */}
           {mockMode && (
             <div className="glass map-mock-active-banner" style={{
@@ -2892,6 +3115,7 @@ export function MapPage() {
                         setSelectedDestinationNodeId('');
                         setStoreSearchQuery('');
                         setNavSheetExpanded(false);
+                        setActivePitstopDetour(null);
                       }}
                       style={{ padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.8rem' }}
                     >
@@ -2916,6 +3140,117 @@ export function MapPage() {
               </div>
             </div>
           )}
+
+          {/* Active Pitstop Detour Floating Banner (Top) */}
+          {activePitstopDetour && (
+            <div
+              id="pitstop-active-banner"
+              style={{
+                position: 'fixed',
+                top: '5rem',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 1040,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.65rem',
+                padding: '0.5rem 1rem',
+                borderRadius: '30px',
+                background: 'rgba(15, 23, 42, 0.94)',
+                border: '1.5px solid #38bdf8',
+                boxShadow: '0 8px 30px rgba(0,0,0,0.6), 0 0 16px rgba(56,189,248,0.3)',
+                backdropFilter: 'blur(12px)',
+                maxWidth: '92vw',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', color: '#f8fafc', minWidth: 0 }}>
+                <span style={{ fontSize: '1.1rem' }}>🚻</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  Detour: <strong style={{ color: '#38bdf8' }}>{activePitstopDetour.facility.name}</strong>
+                </span>
+              </div>
+              <button
+                onClick={handleResumeOriginalRoute}
+                style={{
+                  padding: '0.35rem 0.75rem',
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  borderRadius: '20px',
+                  background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                  color: '#ffffff',
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  whiteSpace: 'nowrap',
+                  boxShadow: '0 2px 8px rgba(34, 197, 94, 0.4)',
+                }}
+              >
+                <span>Resume Route ➔</span>
+              </button>
+            </div>
+          )}
+
+          {/* Floating Pitstop Button (Bottom-Right corner) */}
+          {(navigationActive || guidedTourActive || activePitstopDetour) && (
+            <button
+              id="quick-pitstop-fab-btn"
+              onClick={() => {
+                if (activePitstopDetour) {
+                  handleResumeOriginalRoute();
+                } else {
+                  setShowPitstopModal(true);
+                }
+              }}
+              style={{
+                position: 'fixed',
+                right: '16px',
+                bottom: navSheetExpanded ? '330px' : '95px',
+                zIndex: 1030,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.45rem',
+                padding: '0.55rem 0.95rem',
+                borderRadius: '30px',
+                background: activePitstopDetour
+                  ? 'linear-gradient(135deg, #22c55e, #16a34a)'
+                  : 'linear-gradient(135deg, #0ea5e9, #6366f1)',
+                color: '#ffffff',
+                fontWeight: 700,
+                fontSize: '0.82rem',
+                boxShadow: activePitstopDetour
+                  ? '0 6px 20px rgba(34, 197, 94, 0.45), 0 2px 8px rgba(0,0,0,0.3)'
+                  : '0 6px 20px rgba(14, 165, 233, 0.45), 0 2px 8px rgba(0,0,0,0.3)',
+                border: '1.5px solid rgba(255, 255, 255, 0.25)',
+                cursor: 'pointer',
+                transition: 'all 0.25s cubic-bezier(0.32, 0.72, 0, 1)',
+                backdropFilter: 'blur(8px)',
+              }}
+              title={
+                activePitstopDetour
+                  ? 'Finished your pitstop? Click to resume your original route'
+                  : 'Need a quick stop? (Washroom, Canteen, Water, First Aid)'
+              }
+            >
+              <span style={{ fontSize: '1.05rem', lineHeight: 1 }}>
+                {activePitstopDetour ? '✓' : '🚻'}
+              </span>
+              <span>
+                {activePitstopDetour ? 'Resume Route' : 'Pitstop'}
+              </span>
+            </button>
+          )}
+
+          {/* Quick Pitstop Modal */}
+          <QuickPitstopModal
+            isOpen={showPitstopModal}
+            onClose={() => setShowPitstopModal(false)}
+            userLat={userLat}
+            userLng={userLng}
+            stores={stores}
+            onSelectFacility={handleSelectPitstopFacility}
+          />
 
           {/* New Modals for Boundary & Tour check */}
           {isFarAway && exhibitionSettings.school_boundary_enabled !== false && (
