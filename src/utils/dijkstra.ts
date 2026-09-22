@@ -205,32 +205,58 @@ export function calculateShortestPathBetweenCoordinates(
 
   // 1. Find start snap
   let startSnap: GraphSnapResult | null = null;
-  if (explicitStartNodeId && nodeMap.has(explicitStartNodeId)) {
+  const distFromStartCoord = explicitStartNodeId && nodeMap.has(explicitStartNodeId)
+    ? getDistance(startLat, startLng, nodeMap.get(explicitStartNodeId)!.latitude, nodeMap.get(explicitStartNodeId)!.longitude)
+    : Infinity;
+
+  // Only use explicitStartNodeId if it is within reasonable distance (< 35m) of startLat/startLng,
+  // and not accidentally matching explicitEndNodeId when coordinates are far apart
+  const isStartSameAsEndConflict = explicitStartNodeId && explicitEndNodeId &&
+    explicitStartNodeId === explicitEndNodeId &&
+    getDistance(startLat, startLng, endLat, endLng) > 10;
+
+  if (explicitStartNodeId && nodeMap.has(explicitStartNodeId) && distFromStartCoord <= 35 && !isStartSameAsEndConflict) {
     const node = nodeMap.get(explicitStartNodeId)!;
-    startSnap = {
-      snapLat: node.latitude,
-      snapLng: node.longitude,
-      snapDist: 0,
-      exactNodeId: node.id,
-      fromNodeId: null,
-      toNodeId: null,
-    };
+    const hasEdges = validEdges.some((e) => e.from_node_id === node.id || e.to_node_id === node.id);
+    if (hasEdges) {
+      startSnap = {
+        snapLat: node.latitude,
+        snapLng: node.longitude,
+        snapDist: 0,
+        exactNodeId: node.id,
+        fromNodeId: null,
+        toNodeId: null,
+      };
+    } else {
+      // Node has NO edges! Snap its coordinates to the graph instead of treating as an isolated dead-end
+      startSnap = findClosestPointOnGraph(node.latitude, node.longitude, nodes, validEdges);
+    }
   } else {
     startSnap = findClosestPointOnGraph(startLat, startLng, nodes, validEdges);
   }
 
   // 2. Find end snap
   let endSnap: GraphSnapResult | null = null;
-  if (explicitEndNodeId && nodeMap.has(explicitEndNodeId)) {
+  const distFromEndCoord = explicitEndNodeId && nodeMap.has(explicitEndNodeId)
+    ? getDistance(endLat, endLng, nodeMap.get(explicitEndNodeId)!.latitude, nodeMap.get(explicitEndNodeId)!.longitude)
+    : Infinity;
+
+  if (explicitEndNodeId && nodeMap.has(explicitEndNodeId) && distFromEndCoord <= 45) {
     const node = nodeMap.get(explicitEndNodeId)!;
-    endSnap = {
-      snapLat: node.latitude,
-      snapLng: node.longitude,
-      snapDist: 0,
-      exactNodeId: node.id,
-      fromNodeId: null,
-      toNodeId: null,
-    };
+    const hasEdges = validEdges.some((e) => e.from_node_id === node.id || e.to_node_id === node.id);
+    if (hasEdges) {
+      endSnap = {
+        snapLat: node.latitude,
+        snapLng: node.longitude,
+        snapDist: 0,
+        exactNodeId: node.id,
+        fromNodeId: null,
+        toNodeId: null,
+      };
+    } else {
+      // Node has NO edges! Snap its coordinates to the graph instead of treating as an isolated dead-end
+      endSnap = findClosestPointOnGraph(node.latitude, node.longitude, nodes, validEdges);
+    }
   } else {
     endSnap = findClosestPointOnGraph(endLat, endLng, nodes, validEdges);
   }
@@ -239,8 +265,13 @@ export function calculateShortestPathBetweenCoordinates(
 
   // If both start and end snap to the same exact node
   if (startSnap.exactNodeId && endSnap.exactNodeId && startSnap.exactNodeId === endSnap.exactNodeId) {
-    const n = nodeMap.get(startSnap.exactNodeId);
-    return n ? [n] : [];
+    if (getDistance(startLat, startLng, endLat, endLng) <= 10) {
+      const n = nodeMap.get(startSnap.exactNodeId);
+      return n ? [n] : [];
+    }
+    // Start and end coordinates are far apart! Snap start independently from coordinates
+    startSnap = findClosestPointOnGraph(startLat, startLng, nodes, validEdges);
+    if (!startSnap) return [];
   }
 
   let tempNodes = [...nodes];
@@ -399,14 +430,57 @@ export function calculateShortestPathBetweenCoordinates(
     return path;
   }
 
-  // Fallback: If startNodeId and endNodeId are on disconnected graph components,
-  // route along the drawn graph from startNodeId to the closest reachable node.
+  // Fallback: If startNodeId and endNodeId reside on disconnected components of the drawn graph
+  // (e.g. separate KML LineStrings with a minor gap or unmerged junctions), bridge the closest gap
   const reachableFromStart = getReachableNodes(startNodeId, tempNodes, tempEdges);
-  if (reachableFromStart.size > 0) {
-    const reachableCandidateNodes = tempNodes.filter((n) => reachableFromStart.has(n.id));
-    const closestReachable = findClosestNode(endSnap.snapLat, endSnap.snapLng, reachableCandidateNodes);
-    if (closestReachable && closestReachable.id !== startNodeId) {
-      return calculateShortestPath(startNodeId, closestReachable.id, tempNodes, tempEdges);
+  const reachableFromEnd = getReachableNodes(endNodeId, tempNodes, tempEdges);
+
+  if (!reachableFromStart.has(endNodeId)) {
+    const candidateStartNodes = tempNodes.filter((n) => reachableFromStart.has(n.id));
+    const candidateEndNodes = tempNodes.filter((n) => reachableFromEnd.has(n.id));
+
+    if (candidateStartNodes.length > 0 && candidateEndNodes.length > 0) {
+      let minGap = Infinity;
+      let bridgeA: NavigationNode | null = null;
+      let bridgeB: NavigationNode | null = null;
+
+      for (const sa of candidateStartNodes) {
+        for (const eb of candidateEndNodes) {
+          const d = getDistance(sa.latitude, sa.longitude, eb.latitude, eb.longitude);
+          if (d < minGap) {
+            minGap = d;
+            bridgeA = sa;
+            bridgeB = eb;
+          }
+        }
+      }
+
+      // If the gap between components is reasonable (<= 150m), inject a bridge edge and route
+      if (bridgeA && bridgeB && minGap <= 150) {
+        const bridgeEdge: NavigationEdge = {
+          id: '__component_bridge_edge__',
+          from_node_id: bridgeA.id,
+          to_node_id: bridgeB.id,
+          distance: minGap,
+          is_bidirectional: true,
+          created_at: new Date().toISOString(),
+        };
+        const bridgedPath = calculateShortestPath(startNodeId, endNodeId, tempNodes, [...tempEdges, bridgeEdge]);
+        if (bridgedPath && bridgedPath.length > 0) {
+          return bridgedPath;
+        }
+      }
+    }
+
+    // Secondary fallback: route along the drawn graph from startNodeId to the closest reachable node
+    if (candidateStartNodes.length > 0) {
+      const closestReachable = findClosestNode(endSnap.snapLat, endSnap.snapLng, candidateStartNodes);
+      if (closestReachable && closestReachable.id !== startNodeId) {
+        const partial = calculateShortestPath(startNodeId, closestReachable.id, tempNodes, tempEdges);
+        if (partial && partial.length > 0) {
+          return partial;
+        }
+      }
     }
   }
 
@@ -985,10 +1059,18 @@ export interface EntranceCandidate {
 export function isEntranceNode(node: { label?: string; type?: string; latitude: number; longitude: number }): boolean {
   if (node.type === 'entrance') return true;
   const l = (node.label || '').toLowerCase();
-  if (l.includes('entrance') || l.includes('gate') || l.includes('entry') || l.includes('door')) return true;
-  // Specific known entrance coordinates (tight ~5m threshold)
-  if (Math.abs(node.latitude - 6.795359) < 0.00005 && Math.abs(node.longitude - 79.899868) < 0.00005) return true;
-  if (Math.abs(node.latitude - 6.535862) < 0.00005 && Math.abs(node.longitude - 80.400348) < 0.00005) return true;
+  if (
+    l.includes('entrance') ||
+    l.includes('gate') ||
+    l.includes('entry') ||
+    l.includes('door') ||
+    l.includes('start') ||
+    l.includes('kml-1') ||
+    l.includes('node 1')
+  ) return true;
+  // Specific known entrance coordinates (Kalawana gate & Uni gate with ~70m radius)
+  if (Math.abs(node.latitude - 6.795359) < 0.0003 && Math.abs(node.longitude - 79.899868) < 0.0003) return true;
+  if (Math.abs(node.latitude - 6.535862) < 0.0008 && Math.abs(node.longitude - 80.400348) < 0.0008) return true;
   return false;
 }
 
@@ -1011,39 +1093,55 @@ export function getAllEntrancePoints(
     }
   });
 
-  // 2. Ensure Uni entrance (6.795359, 79.899868) is present as candidate
-  const hasUniEntrance = result.some(
-    (e) => Math.abs(e.latitude - 6.795359) < 0.00005 && Math.abs(e.longitude - 79.899868) < 0.00005
-  );
-  if (!hasUniEntrance) {
-    const uniNode = nodes.find(
-      (n) => Math.abs(n.latitude - 6.795359) < 0.00005 && Math.abs(n.longitude - 79.899868) < 0.00005
-    );
+  // 2. If no entrance node found, check if nodes has any node labeled 'start', 'gate', or the first graph node
+  if (result.length === 0 && nodes.length > 0) {
+    const startNode = nodes.find(
+      (n) =>
+        (n.label || '').toLowerCase().includes('start') ||
+        (n.label || '').toLowerCase().includes('kml-1') ||
+        (n.label || '').toLowerCase().includes('gate') ||
+        (n.label || '').toLowerCase().includes('entrance')
+    ) || nodes[0];
+
     result.push({
-      id: uniNode ? uniNode.id : 'uni-entrance-gate',
-      label: uniNode ? uniNode.label : 'Uni entrance',
-      latitude: 6.795359,
-      longitude: 79.899868,
-      node: uniNode,
+      id: startNode.id,
+      label: startNode.label || 'Walkway Entrance',
+      latitude: startNode.latitude,
+      longitude: startNode.longitude,
+      node: startNode,
     });
   }
 
-  // 3. Ensure Kalawana school entrance is present as candidate
-  const defLat = settings?.entrance_latitude || 6.535862;
-  const defLng = settings?.entrance_longitude || 80.400348;
-  const hasDefEntrance = result.some(
-    (e) => Math.abs(e.latitude - defLat) < 0.00005 && Math.abs(e.longitude - defLng) < 0.00005
-  );
-  if (!hasDefEntrance) {
-    const defNode = nodes.find(
-      (n) => Math.abs(n.latitude - defLat) < 0.00005 && Math.abs(n.longitude - defLng) < 0.00005
+  // 3. Ensure configured entrance from settings is present as candidate
+  if (settings?.entrance_latitude && settings?.entrance_longitude) {
+    const confLat = settings.entrance_latitude;
+    const confLng = settings.entrance_longitude;
+    const hasConf = result.some(
+      (e) => Math.abs(e.latitude - confLat) < 0.0001 && Math.abs(e.longitude - confLng) < 0.0001
     );
+    if (!hasConf) {
+      // Find the closest node in graph to the configured entrance coordinates
+      const closestToConf = nodes.length > 0
+        ? findClosestNode(confLat, confLng, nodes)
+        : undefined;
+
+      result.push({
+        id: closestToConf ? closestToConf.id : 'settings-entrance-gate',
+        label: closestToConf ? closestToConf.label : 'Entrance Gate',
+        latitude: confLat,
+        longitude: confLng,
+        node: closestToConf || undefined,
+      });
+    }
+  }
+
+  // 4. Fallback: Only add default Kalawana or Uni entrance if graph is empty or close to them
+  if (result.length === 0) {
     result.push({
-      id: defNode ? defNode.id : 'kalawana-entrance-gate',
-      label: defNode ? defNode.label : 'Entrance Gate',
-      latitude: defLat,
-      longitude: defLng,
-      node: defNode,
+      id: 'kalawana-entrance-gate',
+      label: 'Entrance Gate',
+      latitude: 6.535862,
+      longitude: 80.400348,
     });
   }
 

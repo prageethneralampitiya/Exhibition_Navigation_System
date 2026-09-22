@@ -190,6 +190,63 @@ describe('dijkstra.ts - Navigation Engine', () => {
       );
       expect(path.length).toBeGreaterThanOrEqual(2);
     });
+
+    it('successfully routes to an isolated store node with 0 edges by snapping its coordinates to the walkway', () => {
+      // Suppose an admin imported KML paths (n1 <-> n2 <-> n3).
+      // A store node 's-isolated' exists in the database with store_id: 'stall-99', but has 0 edges in edges table.
+      const kmlNodes: NavigationNode[] = [
+        { id: 'kml-1', label: 'Walkway 1', latitude: 6.5350, longitude: 80.4010, floor: '1', type: 'path', store_id: null, created_at: '' },
+        { id: 'kml-2', label: 'Walkway 2', latitude: 6.5353, longitude: 80.4010, floor: '1', type: 'path', store_id: null, created_at: '' },
+        { id: 'kml-3', label: 'Walkway 3', latitude: 6.5356, longitude: 80.4010, floor: '1', type: 'path', store_id: null, created_at: '' },
+        { id: 's-isolated', label: 'Exhibition Stall 99', latitude: 6.5356, longitude: 80.4011, floor: '1', type: 'store', store_id: 'stall-99', created_at: '' },
+      ];
+      const kmlEdges: NavigationEdge[] = [
+        { id: 'e1', from_node_id: 'kml-1', to_node_id: 'kml-2', distance: 33, is_bidirectional: true, created_at: '' },
+        { id: 'e2', from_node_id: 'kml-2', to_node_id: 'kml-3', distance: 33, is_bidirectional: true, created_at: '' },
+      ];
+
+      // Explicitly pass the isolated store node ID as explicitEndNodeId
+      const path = calculateShortestPathBetweenCoordinates(
+        6.5350, 80.4010, // Start at Walkway 1
+        6.5356, 80.4011, // Target Stall coordinates
+        kmlNodes,
+        kmlEdges,
+        null,
+        's-isolated'
+      );
+
+      // Must traverse the walkway rather than returning empty
+      expect(path.length).toBeGreaterThanOrEqual(3);
+      expect(path.some(n => n.id === 'kml-2')).toBe(true);
+      expect(path.some(n => n.id === 'kml-3')).toBe(true);
+    });
+
+    it('bridges disconnected graph components when two paths in KML have a gap', () => {
+      // Path A: (6.5350, 80.4010) -> (6.5352, 80.4010)
+      // Path B: (6.53525, 80.4010) -> (6.5355, 80.4010) [gap of ~5.5m between A and B]
+      const splitNodes: NavigationNode[] = [
+        { id: 'a1', label: 'Path A Start', latitude: 6.5350, longitude: 80.4010, floor: '1', type: 'path', store_id: null, created_at: '' },
+        { id: 'a2', label: 'Path A End', latitude: 6.5352, longitude: 80.4010, floor: '1', type: 'path', store_id: null, created_at: '' },
+        { id: 'b1', label: 'Path B Start', latitude: 6.53525, longitude: 80.4010, floor: '1', type: 'path', store_id: null, created_at: '' },
+        { id: 'b2', label: 'Path B End', latitude: 6.5355, longitude: 80.4010, floor: '1', type: 'path', store_id: null, created_at: '' },
+      ];
+      const splitEdges: NavigationEdge[] = [
+        { id: 'eA', from_node_id: 'a1', to_node_id: 'a2', distance: 22, is_bidirectional: true, created_at: '' },
+        { id: 'eB', from_node_id: 'b1', to_node_id: 'b2', distance: 28, is_bidirectional: true, created_at: '' },
+      ];
+
+      const path = calculateShortestPathBetweenCoordinates(
+        6.5350, 80.4010,
+        6.5355, 80.4010,
+        splitNodes,
+        splitEdges
+      );
+
+      // Bridges Path A and Path B and returns full sequence
+      expect(path.length).toBeGreaterThanOrEqual(4);
+      expect(path.some(n => n.id === 'a2')).toBe(true);
+      expect(path.some(n => n.id === 'b1')).toBe(true);
+    });
   });
 
   // ─── 6. Compass Heading Calculations ────────────────────────────────────────

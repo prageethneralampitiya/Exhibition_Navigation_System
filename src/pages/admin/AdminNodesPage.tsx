@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Plus, Edit2, Trash2, Search, Check, Navigation2, Network, Link2, RefreshCw, ShieldCheck, ShieldAlert, MapPin, Upload, Download, QrCode, Crosshair, Radio } from 'lucide-react';
 import { supabase, type NavigationNode, type NavigationEdge, type Store, type NodeType } from '../../lib/supabase';
@@ -49,6 +49,11 @@ export function AdminNodesPage() {
 
   // KML Import state
   const [isKmlImportModalOpen, setIsKmlImportModalOpen] = useState(false);
+
+  // Multi-selection states for bulk deletion
+  const [selectedGroupedEdgeIds, setSelectedGroupedEdgeIds] = useState<Set<string>>(new Set());
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   // QR Code State
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
@@ -672,16 +677,215 @@ export function AdminNodesPage() {
     }
   };
 
-  const filteredNodes = nodes
-    .filter((n) =>
-      n.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      n.type.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-    .sort((a, b) =>
-      a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' })
+  const filteredNodes = useMemo(() => {
+    return nodes
+      .filter((n) =>
+        n.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        n.type.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+      .sort((a, b) =>
+        a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' })
+      );
+  }, [nodes, searchQuery]);
+
+  const groupedEdges = useMemo(() => getGroupedEdges(nodes, edges), [nodes, edges]);
+
+  // Bulk Edge Handlers
+  const handleToggleSelectEdge = (edgeId: string) => {
+    setSelectedGroupedEdgeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(edgeId)) next.delete(edgeId);
+      else next.add(edgeId);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAllEdges = () => {
+    if (groupedEdges.length > 0 && selectedGroupedEdgeIds.size === groupedEdges.length) {
+      setSelectedGroupedEdgeIds(new Set());
+    } else {
+      setSelectedGroupedEdgeIds(new Set(groupedEdges.map((e) => e.id)));
+    }
+  };
+
+  const handleBulkDeleteEdges = async () => {
+    if (selectedGroupedEdgeIds.size === 0) return;
+    const count = selectedGroupedEdgeIds.size;
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${count} selected path connection(s)? Any disconnected path waypoints will also be cleaned up automatically.`
     );
+    if (!confirmed) return;
+
+    try {
+      setIsBulkDeleting(true);
+      const allEdgeIds: string[] = [];
+      groupedEdges.forEach((ge) => {
+        if (selectedGroupedEdgeIds.has(ge.id)) {
+          if (ge.edge_ids && ge.edge_ids.length > 0) {
+            allEdgeIds.push(...ge.edge_ids);
+          } else {
+            allEdgeIds.push(ge.id);
+          }
+        }
+      });
+
+      if (allEdgeIds.length > 0) {
+        const { error } = await supabase
+          .from('navigation_edges')
+          .delete()
+          .in('id', allEdgeIds);
+        if (error) throw error;
+      }
+
+      await cleanOrphanedPathNodes();
+      setSelectedGroupedEdgeIds(new Set());
+      loadAllData();
+    } catch (err: any) {
+      alert('Failed to delete selected connections: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
+  const handleClearAllEdges = async () => {
+    const confirmed = window.confirm(
+      `⚠️ Warning: Are you sure you want to delete ALL ${edges.length} path connections and non-store walkway waypoints?\n\nThis will clear the entire drawn navigation network. Store booth markers and entrance gates will remain intact.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setIsBulkDeleting(true);
+      const { error } = await supabase
+        .from('navigation_edges')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+      if (error) throw error;
+
+      await cleanOrphanedPathNodes();
+      setSelectedGroupedEdgeIds(new Set());
+      loadAllData();
+    } catch (err: any) {
+      alert('Failed to clear paths: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
+  // Bulk Node Handlers
+  const handleToggleSelectNode = (nodeId: string) => {
+    setSelectedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) next.delete(nodeId);
+      else next.add(nodeId);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAllNodes = () => {
+    if (filteredNodes.length > 0 && selectedNodeIds.size === filteredNodes.length) {
+      setSelectedNodeIds(new Set());
+    } else {
+      setSelectedNodeIds(new Set(filteredNodes.map((n) => n.id)));
+    }
+  };
+
+  const handleBulkDeleteNodes = async () => {
+    if (selectedNodeIds.size === 0) return;
+    const count = selectedNodeIds.size;
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${count} selected node(s)? Associated path connections will also be removed.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setIsBulkDeleting(true);
+      const ids = Array.from(selectedNodeIds);
+      await supabase
+        .from('navigation_edges')
+        .delete()
+        .in('from_node_id', ids);
+      await supabase
+        .from('navigation_edges')
+        .delete()
+        .in('to_node_id', ids);
+
+      const { error } = await supabase
+        .from('navigation_nodes')
+        .delete()
+        .in('id', ids);
+      if (error) throw error;
+
+      await cleanOrphanedPathNodes();
+      setSelectedNodeIds(new Set());
+      loadAllData();
+    } catch (err: any) {
+      alert('Failed to delete selected nodes: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
+  const handlePurgePathNodes = async () => {
+    const pathNodes = nodes.filter(n => n.type === 'path');
+    if (pathNodes.length === 0) {
+      alert('No pathway nodes found to purge.');
+      return;
+    }
+    const confirmed = window.confirm(
+      `Are you sure you want to purge all ${pathNodes.length} pathway intersection nodes?\n\n(Store booth locations and entrance gates will NOT be touched).`
+    );
+    if (!confirmed) return;
+
+    try {
+      setIsBulkDeleting(true);
+      const pathIds = pathNodes.map(n => n.id);
+      await supabase
+        .from('navigation_edges')
+        .delete()
+        .in('from_node_id', pathIds);
+      await supabase
+        .from('navigation_edges')
+        .delete()
+        .in('to_node_id', pathIds);
+
+      const { error } = await supabase
+        .from('navigation_nodes')
+        .delete()
+        .eq('type', 'path');
+      if (error) throw error;
+
+      setSelectedNodeIds(new Set());
+      setSelectedGroupedEdgeIds(new Set());
+      loadAllData();
+    } catch (err: any) {
+      alert('Failed to purge pathway nodes: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
 
   const nodeColumns = [
+    {
+      key: 'select',
+      label: (
+        <input
+          type="checkbox"
+          checked={filteredNodes.length > 0 && filteredNodes.every(n => selectedNodeIds.has(n.id))}
+          onChange={handleToggleSelectAllNodes}
+          title="Select All Nodes"
+          style={{ cursor: 'pointer', transform: 'scale(1.15)', margin: 0 }}
+        />
+      ),
+      width: '38px',
+      render: (row: NavigationNode) => (
+        <input
+          type="checkbox"
+          checked={selectedNodeIds.has(row.id)}
+          onChange={() => handleToggleSelectNode(row.id)}
+          style={{ cursor: 'pointer', transform: 'scale(1.1)', margin: 0 }}
+        />
+      ),
+    },
     {
       key: 'label',
       label: 'Label / Name',
@@ -818,9 +1022,30 @@ export function AdminNodesPage() {
 
   const edgeColumns = [
     {
+      key: 'select',
+      label: (
+        <input
+          type="checkbox"
+          checked={groupedEdges.length > 0 && groupedEdges.every(e => selectedGroupedEdgeIds.has(e.id))}
+          onChange={handleToggleSelectAllEdges}
+          title="Select All Connections"
+          style={{ cursor: 'pointer', transform: 'scale(1.15)', margin: 0 }}
+        />
+      ),
+      width: '38px',
+      render: (row: GroupedEdge) => (
+        <input
+          type="checkbox"
+          checked={selectedGroupedEdgeIds.has(row.id)}
+          onChange={() => handleToggleSelectEdge(row.id)}
+          style={{ cursor: 'pointer', transform: 'scale(1.1)', margin: 0 }}
+        />
+      ),
+    },
+    {
       key: 'connection',
       label: 'Connection',
-      render: (row: any) => (
+      render: (row: GroupedEdge) => (
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <Network size={14} color="var(--color-primary-h)" />
           <span style={{ fontWeight: 600 }}>{row.from_node?.label || 'Unknown'}</span>
@@ -828,22 +1053,27 @@ export function AdminNodesPage() {
             {row.is_bidirectional ? '◀ ─ ▶' : '─ ─ ▶'}
           </span>
           <span style={{ fontWeight: 600 }}>{row.to_node?.label || 'Unknown'}</span>
+          {row.edge_ids && row.edge_ids.length > 1 && (
+            <span style={{ fontSize: '0.72rem', background: 'rgba(99, 102, 241, 0.1)', color: '#818cf8', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
+              {row.edge_ids.length} seg
+            </span>
+          )}
         </div>
       ),
     },
     {
       key: 'distance',
       label: 'Distance (Weight)',
-      render: (row: any) => <span>{row.distance} m</span>,
+      render: (row: GroupedEdge) => <span>{row.distance} m</span>,
     },
     {
       key: 'actions',
       label: 'Actions',
       width: '80px',
-      render: (row: any) => (
+      render: (row: GroupedEdge) => (
         <button
           className="btn btn-danger btn-sm btn-icon"
-          onClick={() => handleOpenDeleteEdge(row)}
+          onClick={() => handleOpenDeleteEdge(row as any)}
           title="Remove edge connection"
         >
           <Trash2 size={14} />
@@ -851,8 +1081,6 @@ export function AdminNodesPage() {
       ),
     },
   ];
-
-  const groupedEdges = getGroupedEdges(nodes, edges);
 
   return (
     <main className="admin-page">
@@ -991,8 +1219,8 @@ export function AdminNodesPage() {
 
       {activeTab === 'nodes' ? (
         <section className="data-table-wrap">
-          <div className="data-table-toolbar">
-            <div className="search-wrap">
+          <div className="data-table-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div className="search-wrap" style={{ flex: '1 1 240px', maxWidth: '360px' }}>
               <Search size={16} className="search-icon" />
               <input
                 type="text"
@@ -1001,6 +1229,61 @@ export function AdminNodesPage() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--color-muted)' }}>
+                {nodes.length} nodes ({nodes.filter(n => n.type === 'path').length} pathways)
+              </span>
+
+              {selectedNodeIds.size > 0 && (
+                <>
+                  <span style={{
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    padding: '0.2rem 0.6rem',
+                    borderRadius: '6px',
+                    background: 'rgba(239, 68, 68, 0.12)',
+                    color: '#ef4444',
+                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                  }}>
+                    {selectedNodeIds.size} selected
+                  </span>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={handleBulkDeleteNodes}
+                    disabled={isBulkDeleting}
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                  >
+                    <Trash2 size={14} />
+                    <span>Delete Selected ({selectedNodeIds.size})</span>
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setSelectedNodeIds(new Set())}
+                    disabled={isBulkDeleting}
+                  >
+                    Deselect
+                  </button>
+                </>
+              )}
+
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={handlePurgePathNodes}
+                disabled={isBulkDeleting || nodes.filter(n => n.type === 'path').length === 0}
+                title="Delete all intermediate pathway waypoints and keep only POIs / stores"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  color: 'var(--color-muted)',
+                  border: '1px dashed var(--color-border)',
+                }}
+              >
+                <Trash2 size={13} />
+                <span>Purge Pathway Nodes</span>
+              </button>
             </div>
           </div>
 
@@ -1013,6 +1296,69 @@ export function AdminNodesPage() {
         </section>
       ) : (
         <section className="data-table-wrap">
+          <div className="data-table-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text)' }}>
+                {groupedEdges.length} Path Connections
+              </span>
+              <span style={{ fontSize: '0.8rem', color: 'var(--color-muted)' }}>
+                ({edges.length} directed segments)
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+              {selectedGroupedEdgeIds.size > 0 && (
+                <>
+                  <span style={{
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    padding: '0.2rem 0.6rem',
+                    borderRadius: '6px',
+                    background: 'rgba(239, 68, 68, 0.12)',
+                    color: '#ef4444',
+                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                  }}>
+                    {selectedGroupedEdgeIds.size} selected
+                  </span>
+                  <button
+                    className="btn btn-danger btn-sm"
+                    onClick={handleBulkDeleteEdges}
+                    disabled={isBulkDeleting}
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                  >
+                    <Trash2 size={14} />
+                    <span>Delete Selected ({selectedGroupedEdgeIds.size})</span>
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setSelectedGroupedEdgeIds(new Set())}
+                    disabled={isBulkDeleting}
+                  >
+                    Deselect
+                  </button>
+                </>
+              )}
+
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={handleClearAllEdges}
+                disabled={isBulkDeleting || edges.length === 0}
+                title="Delete all path connections in one click"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  color: '#ef4444',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                }}
+              >
+                <Trash2 size={13} />
+                <span>Clear All Paths</span>
+              </button>
+            </div>
+          </div>
+
           <AdminTable
             columns={edgeColumns}
             rows={groupedEdges}
@@ -1584,6 +1930,7 @@ export function AdminNodesPage() {
         isOpen={isKmlImportModalOpen}
         onClose={() => setIsKmlImportModalOpen(false)}
         existingNodes={nodes}
+        existingStores={stores}
         onSuccess={loadAllData}
       />
 

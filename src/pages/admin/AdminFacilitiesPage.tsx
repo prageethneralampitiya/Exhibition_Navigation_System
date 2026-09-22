@@ -9,10 +9,12 @@ import {
   Maximize2,
   Minimize2,
   Navigation2,
+  Upload,
 } from 'lucide-react';
 import { supabase, type Store, type NavigationNode } from '../../lib/supabase';
 import { AdminModal } from '../../components/admin/AdminModal';
 import { FormMapPicker } from '../../components/admin/FormMapPicker';
+import { KmlImportModal } from '../../components/admin/KmlImportModal';
 import { getDistance } from '../../utils/dijkstra';
 
 // ─── Facility Preset Definitions ─────────────────────────────────────────────
@@ -200,6 +202,11 @@ export function AdminFacilitiesPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPresetFilter, setSelectedPresetFilter] = useState<string>('all');
 
+  // Multi-selection state
+  const [selectedFacilityIds, setSelectedFacilityIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isKmlModalOpen, setIsKmlModalOpen] = useState(false);
+
   // Modal states
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -211,6 +218,62 @@ export function AdminFacilitiesPage() {
 
   // Map preview expanded toggle
   const [previewExpanded, setPreviewExpanded] = useState(false);
+
+  const handleToggleSelectFacility = (id: string) => {
+    setSelectedFacilityIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAllFacilities = () => {
+    if (filteredFacilities.length === 0) return;
+    const allSelected = filteredFacilities.every(f => selectedFacilityIds.has(f.id));
+    if (allSelected) {
+      setSelectedFacilityIds(new Set());
+    } else {
+      setSelectedFacilityIds(new Set(filteredFacilities.map(f => f.id)));
+    }
+  };
+
+  const handleBulkDeleteFacilities = async () => {
+    if (selectedFacilityIds.size === 0) return;
+    const count = selectedFacilityIds.size;
+    const confirm = window.confirm(
+      `Are you sure you want to delete ${count} selected facility(ies)? This will also remove their associated map navigation pins.`
+    );
+    if (!confirm) return;
+
+    try {
+      setIsBulkDeleting(true);
+      const facilityIds = Array.from(selectedFacilityIds);
+
+      // Clean up linked navigation nodes and edges
+      const { data: linkedNodes } = await supabase
+        .from('navigation_nodes')
+        .select('id')
+        .in('store_id', facilityIds);
+
+      if (linkedNodes && linkedNodes.length > 0) {
+        const nodeIds = linkedNodes.map(n => n.id);
+        await supabase.from('navigation_edges').delete().in('from_node_id', nodeIds);
+        await supabase.from('navigation_edges').delete().in('to_node_id', nodeIds);
+        await supabase.from('navigation_nodes').delete().in('id', nodeIds);
+      }
+
+      const { error } = await supabase.from('stores').delete().in('id', facilityIds);
+      if (error) throw error;
+
+      setSelectedFacilityIds(new Set());
+      await loadAllData();
+    } catch (err: any) {
+      alert('Failed to delete facilities: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
 
   useEffect(() => {
     loadAllData();
@@ -530,6 +593,24 @@ export function AdminFacilitiesPage() {
           </button>
 
           <button
+            className="btn btn-ghost"
+            onClick={() => setIsKmlModalOpen(true)}
+            title="Import facilities & paths from Google Earth (.kml)"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              fontSize: '0.8rem',
+              border: '1px solid rgba(56, 189, 248, 0.4)',
+              background: 'rgba(56, 189, 248, 0.08)',
+              color: '#38bdf8',
+            }}
+          >
+            <Upload size={15} />
+            <span>Import KML</span>
+          </button>
+
+          <button
             className="btn btn-primary"
             onClick={() => handleOpenAdd('canteen')}
             style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
@@ -683,11 +764,62 @@ export function AdminFacilitiesPage() {
         </div>
       </section>
 
+      {/* Multi-Selection Batch Actions Toolbar */}
+      {selectedFacilityIds.size > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0.6rem 1rem',
+            background: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.25)',
+            borderRadius: '10px',
+            marginBottom: '0.75rem',
+            flexWrap: 'wrap',
+            gap: '0.5rem',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#ef4444' }}>
+              {selectedFacilityIds.size} facility(ies) selected
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setSelectedFacilityIds(new Set())}
+              disabled={isBulkDeleting}
+            >
+              Deselect All
+            </button>
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={handleBulkDeleteFacilities}
+              disabled={isBulkDeleting}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+            >
+              <Trash2 size={14} />
+              <span>Delete Selected ({selectedFacilityIds.size})</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Facilities Table */}
       <section className="glass" style={{ borderRadius: '12px', overflow: 'hidden' }}>
         <table className="data-table" style={{ width: '100%' }}>
           <thead>
             <tr>
+              <th style={{ width: '38px', textAlign: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={filteredFacilities.length > 0 && filteredFacilities.every((f) => selectedFacilityIds.has(f.id))}
+                  onChange={handleToggleSelectAllFacilities}
+                  title="Select All Facilities"
+                  style={{ cursor: 'pointer', transform: 'scale(1.15)', margin: 0 }}
+                />
+              </th>
               <th style={{ width: '40px' }}>Icon</th>
               <th>Facility Name</th>
               <th>Category</th>
@@ -700,13 +832,13 @@ export function AdminFacilitiesPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} style={{ textAlign: 'center', padding: '2rem' }}>
+                <td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>
                   <div className="spinner" style={{ margin: '0 auto', width: 24, height: 24 }} />
                 </td>
               </tr>
             ) : filteredFacilities.length === 0 ? (
               <tr>
-                <td colSpan={7} style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--color-muted)' }}>
+                <td colSpan={8} style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--color-muted)' }}>
                   <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📍</div>
                   <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--color-text)' }}>
                     No facilities found
@@ -723,6 +855,14 @@ export function AdminFacilitiesPage() {
 
                 return (
                   <tr key={facility.id}>
+                    <td style={{ textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedFacilityIds.has(facility.id)}
+                        onChange={() => handleToggleSelectFacility(facility.id)}
+                        style={{ cursor: 'pointer', transform: 'scale(1.1)', margin: 0 }}
+                      />
+                    </td>
                     <td>
                       <div
                         style={{
@@ -1009,6 +1149,15 @@ export function AdminFacilitiesPage() {
           </div>
         </AdminModal>
       )}
+
+      {/* KML Import Modal */}
+      <KmlImportModal
+        isOpen={isKmlModalOpen}
+        onClose={() => setIsKmlModalOpen(false)}
+        existingNodes={nodes}
+        existingStores={facilities}
+        onSuccess={loadAllData}
+      />
     </main>
   );
 }

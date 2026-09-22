@@ -14,7 +14,7 @@ import {
   Sliders,
 } from 'lucide-react';
 import { AdminModal } from './AdminModal';
-import { supabase, type NavigationNode } from '../../lib/supabase';
+import { supabase, type NavigationNode, type Store } from '../../lib/supabase';
 import {
   parseKML,
   convertKmlToGraph,
@@ -26,6 +26,7 @@ interface KmlImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   existingNodes: NavigationNode[];
+  existingStores?: Store[];
   onSuccess: () => void;
 }
 
@@ -48,6 +49,7 @@ export function KmlImportModal({
   isOpen,
   onClose,
   existingNodes,
+  existingStores = [],
   onSuccess,
 }: KmlImportModalProps) {
   const [fileName, setFileName] = useState<string>('');
@@ -55,9 +57,11 @@ export function KmlImportModal({
 
   // Settings
   const [floor, setFloor] = useState<string>('1');
-  const [snapTolerance, setSnapTolerance] = useState<number>(1.5);
+  const [snapTolerance, setSnapTolerance] = useState<number>(5.0);
   const [isBidirectional, setIsBidirectional] = useState<boolean>(true);
   const [snapToExisting, setSnapToExisting] = useState<boolean>(true);
+  const [createStallsInStores, setCreateStallsInStores] = useState<boolean>(true);
+  const [createFacilitiesInStores, setCreateFacilitiesInStores] = useState<boolean>(true);
   const [importMode, setImportMode] = useState<'append' | 'replace'>('append');
   const [tileMode, setTileMode] = useState<'satellite' | 'street'>('satellite');
 
@@ -93,12 +97,16 @@ export function KmlImportModal({
         nodePrefix: 'KML',
         snapToExisting,
         existingNodes,
+        existingStores,
+        autoBridgeGaps: true,
+        createStallsInStores,
+        createFacilitiesInStores,
       });
     } catch (e: any) {
       console.error('Error generating graph from KML:', e);
       return null;
     }
-  }, [parsedData, snapTolerance, floor, isBidirectional, snapToExisting, existingNodes]);
+  }, [parsedData, snapTolerance, floor, isBidirectional, snapToExisting, existingNodes, existingStores, createStallsInStores, createFacilitiesInStores]);
 
   // Handle file upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -282,9 +290,56 @@ export function KmlImportModal({
         if (delNodesErr) throw delNodesErr;
       }
 
-      // 2. Batch insert nodes (chunk size 50)
-      const nodesToInsert = generatedGraph.nodes;
       const CHUNK_SIZE = 50;
+
+      // 2a. Batch insert stores & facilities if any were detected in KML
+      if (generatedGraph.storesToCreate && generatedGraph.storesToCreate.length > 0) {
+        // Fetch existing categories to map preset names to IDs
+        const { data: existingCats } = await supabase.from('categories').select('id, name');
+        const catMap = new Map<string, string>();
+        (existingCats || []).forEach((c: { id: string; name: string }) => catMap.set(c.name.toLowerCase(), c.id));
+
+        const storesPayload = [];
+        for (const s of generatedGraph.storesToCreate) {
+          let catId = catMap.get(s.presetCategoryName.toLowerCase());
+          if (!catId) {
+            // Auto-create category if missing
+            const { data: newCat } = await supabase
+              .from('categories')
+              .insert({
+                name: s.presetCategoryName,
+                color: s.categoryType === 'facility' ? '#3b82f6' : '#a855f7',
+                icon: s.categoryType === 'facility' ? 'MapPin' : 'Tag',
+              })
+              .select('id')
+              .single();
+            if (newCat) {
+              catId = newCat.id;
+              catMap.set(s.presetCategoryName.toLowerCase(), newCat.id);
+            }
+          }
+
+          storesPayload.push({
+            id: s.id,
+            name: s.name,
+            description: s.description,
+            floor: s.floor || '1',
+            latitude: s.latitude,
+            longitude: s.longitude,
+            category_id: catId || null,
+            is_active: true,
+          });
+        }
+
+        for (let i = 0; i < storesPayload.length; i += CHUNK_SIZE) {
+          const chunk = storesPayload.slice(i, i + CHUNK_SIZE);
+          const { error: storeErr } = await supabase.from('stores').insert(chunk);
+          if (storeErr) throw storeErr;
+        }
+      }
+
+      // 2b. Batch insert nodes (chunk size 50)
+      const nodesToInsert = generatedGraph.nodes;
 
       for (let i = 0; i < nodesToInsert.length; i += CHUNK_SIZE) {
         const chunk = nodesToInsert.slice(i, i + CHUNK_SIZE);
@@ -300,9 +355,14 @@ export function KmlImportModal({
         if (edgesErr) throw edgesErr;
       }
 
-      setStatusSuccess(
-        `Successfully imported ${nodesToInsert.length} nodes and ${edgesToInsert.length} edges!`
-      );
+      const stallsCount = generatedGraph.stats.stallsCreatedCount || 0;
+      const facilitiesCount = generatedGraph.stats.facilitiesCreatedCount || 0;
+      let msg = `Successfully imported ${nodesToInsert.length} nodes and ${edgesToInsert.length} edges`;
+      if (stallsCount > 0 || facilitiesCount > 0) {
+        msg += ` (${stallsCount} stalls, ${facilitiesCount} facilities added to directory)`;
+      }
+      msg += '!';
+      setStatusSuccess(msg);
 
       // Trigger reload and close after brief moment
       setTimeout(() => {
@@ -467,8 +527,8 @@ export function KmlImportModal({
               </label>
               <input
                 type="range"
-                min="0.5"
-                max="5.0"
+                min="1.0"
+                max="15.0"
                 step="0.5"
                 value={snapTolerance}
                 onChange={(e) => setSnapTolerance(parseFloat(e.target.value))}
@@ -507,6 +567,22 @@ export function KmlImportModal({
                   onChange={(e) => setSnapToExisting(e.target.checked)}
                 />
                 <span>Snap to existing DB nodes</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', cursor: 'pointer' }} title="Create store directory records for stall points">
+                <input
+                  type="checkbox"
+                  checked={createStallsInStores}
+                  onChange={(e) => setCreateStallsInStores(e.target.checked)}
+                />
+                <span>Add Stalls to Stores Directory</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', cursor: 'pointer' }} title="Create facility records (in stores table) for washrooms, canteens, etc.">
+                <input
+                  type="checkbox"
+                  checked={createFacilitiesInStores}
+                  onChange={(e) => setCreateFacilitiesInStores(e.target.checked)}
+                />
+                <span>Add Facilities to Directory (Stores Table)</span>
               </label>
             </div>
           </div>
@@ -559,6 +635,40 @@ export function KmlImportModal({
                 <Sliders size={13} /> {generatedGraph.stats.nodesReused} Snapped / Merged
               </span>
             )}
+            {(generatedGraph.stats.stallsCreatedCount || 0) > 0 && (
+              <span
+                style={{
+                  fontSize: '0.75rem',
+                  padding: '0.2rem 0.5rem',
+                  borderRadius: '4px',
+                  background: 'rgba(168, 85, 247, 0.15)',
+                  color: '#c084fc',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  fontWeight: 600,
+                }}
+              >
+                🎪 {generatedGraph.stats.stallsCreatedCount} Stalls in Stores
+              </span>
+            )}
+            {(generatedGraph.stats.facilitiesCreatedCount || 0) > 0 && (
+              <span
+                style={{
+                  fontSize: '0.75rem',
+                  padding: '0.2rem 0.5rem',
+                  borderRadius: '4px',
+                  background: 'rgba(59, 130, 246, 0.15)',
+                  color: '#60a5fa',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  fontWeight: 600,
+                }}
+              >
+                📍 {generatedGraph.stats.facilitiesCreatedCount} Facilities in Stores
+              </span>
+            )}
             <span
               style={{
                 fontSize: '0.75rem',
@@ -587,6 +697,38 @@ export function KmlImportModal({
             >
               <Compass size={13} /> {generatedGraph.stats.totalDistanceMeters}m Total
             </span>
+            {generatedGraph.stats.storesConnectedCount > 0 && (
+              <span
+                style={{
+                  fontSize: '0.75rem',
+                  padding: '0.2rem 0.5rem',
+                  borderRadius: '4px',
+                  background: 'rgba(236, 72, 153, 0.12)',
+                  color: '#f472b6',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                }}
+              >
+                🏪 {generatedGraph.stats.storesConnectedCount} Connected to Paths
+              </span>
+            )}
+            {generatedGraph.stats.bridgesCreatedCount > 0 && (
+              <span
+                style={{
+                  fontSize: '0.75rem',
+                  padding: '0.2rem 0.5rem',
+                  borderRadius: '4px',
+                  background: 'rgba(20, 184, 166, 0.12)',
+                  color: '#2dd4bf',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                }}
+              >
+                🌉 {generatedGraph.stats.bridgesCreatedCount} Gaps Bridged
+              </span>
+            )}
           </div>
         )}
 

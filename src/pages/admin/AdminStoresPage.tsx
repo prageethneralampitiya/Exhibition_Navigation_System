@@ -10,6 +10,7 @@ import {
   Image as ImageIcon,
   Gift,
   QrCode,
+  Upload,
 } from 'lucide-react';
 import {
   supabase,
@@ -19,12 +20,14 @@ import {
   type StoreImage,
   type Promotion,
   type Profile,
+  type NavigationNode,
 } from '../../lib/supabase';
 import { AdminTable } from '../../components/admin/AdminTable';
 import { AdminModal } from '../../components/admin/AdminModal';
 import { useAuth } from '../../contexts/AuthContext';
 import { FormMapPicker } from '../../components/admin/FormMapPicker';
 import { QrCodeModal } from '../../components/admin/QrCodeModal';
+import { KmlImportModal } from '../../components/admin/KmlImportModal';
 import { type QrCalibrateTarget } from '../../utils/qrCodeGenerator';
 
 export function AdminStoresPage() {
@@ -33,9 +36,15 @@ export function AdminStoresPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [exhibitions, setExhibitions] = useState<Exhibition[]>([]);
   const [storeAdmins, setStoreAdmins] = useState<Profile[]>([]);
+  const [existingNodes, setExistingNodes] = useState<NavigationNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('');
+
+  // Multi-selection state
+  const [selectedStoreIds, setSelectedStoreIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isKmlModalOpen, setIsKmlModalOpen] = useState(false);
 
   // Modal states
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
@@ -93,15 +102,17 @@ export function AdminStoresPage() {
   async function loadDependencies() {
     try {
       setLoading(true);
-      const [categoriesRes, exhibitionsRes, storeAdminsRes] = await Promise.all([
+      const [categoriesRes, exhibitionsRes, storeAdminsRes, nodesRes] = await Promise.all([
         supabase.from('categories').select('*').order('name'),
         supabase.from('exhibitions').select('*').order('title'),
         supabase.from('profiles').select('*').eq('role', 'store_admin').order('name'),
+        supabase.from('navigation_nodes').select('*'),
       ]);
 
       setCategories(categoriesRes.data || []);
       setExhibitions(exhibitionsRes.data || []);
       setStoreAdmins(storeAdminsRes.data || []);
+      setExistingNodes(nodesRes.data || []);
 
       await fetchStores();
     } catch (err) {
@@ -271,11 +282,88 @@ export function AdminStoresPage() {
     }
   };
 
+  const handleToggleSelectStore = (id: string) => {
+    setSelectedStoreIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAllStores = () => {
+    if (filteredStores.length === 0) return;
+    const allSelected = filteredStores.every(s => selectedStoreIds.has(s.id));
+    if (allSelected) {
+      setSelectedStoreIds(new Set());
+    } else {
+      setSelectedStoreIds(new Set(filteredStores.map(s => s.id)));
+    }
+  };
+
+  const handleBulkDeleteStores = async () => {
+    if (selectedStoreIds.size === 0) return;
+    const count = selectedStoreIds.size;
+    const confirm = window.confirm(
+      `Are you sure you want to delete ${count} selected store(s)? This will also remove any linked map navigation nodes, gallery photos, and promotions.`
+    );
+    if (!confirm) return;
+
+    try {
+      setIsBulkDeleting(true);
+      const storeIds = Array.from(selectedStoreIds);
+
+      // 1. Delete linked navigation nodes and edges
+      const { data: linkedNodes } = await supabase
+        .from('navigation_nodes')
+        .select('id')
+        .in('store_id', storeIds);
+
+      if (linkedNodes && linkedNodes.length > 0) {
+        const nodeIds = linkedNodes.map(n => n.id);
+        await supabase.from('navigation_edges').delete().in('from_node_id', nodeIds);
+        await supabase.from('navigation_edges').delete().in('to_node_id', nodeIds);
+        await supabase.from('navigation_nodes').delete().in('id', nodeIds);
+      }
+
+      // 2. Delete gallery images & promotions
+      await supabase.from('store_images').delete().in('store_id', storeIds);
+      await supabase.from('promotions').delete().in('store_id', storeIds);
+
+      // 3. Delete stores
+      const { error } = await supabase.from('stores').delete().in('id', storeIds);
+      if (error) throw error;
+
+      setSelectedStoreIds(new Set());
+      fetchStores();
+    } catch (err: any) {
+      alert('Failed to delete stores: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
   const handleDeleteConfirm = async () => {
     if (!currentStore?.id) return;
 
     try {
       setSubmitting(true);
+      // Clean up linked navigation nodes and edges
+      const { data: linkedNodes } = await supabase
+        .from('navigation_nodes')
+        .select('id')
+        .eq('store_id', currentStore.id);
+
+      if (linkedNodes && linkedNodes.length > 0) {
+        const nodeIds = linkedNodes.map(n => n.id);
+        await supabase.from('navigation_edges').delete().in('from_node_id', nodeIds);
+        await supabase.from('navigation_edges').delete().in('to_node_id', nodeIds);
+        await supabase.from('navigation_nodes').delete().in('id', nodeIds);
+      }
+
+      await supabase.from('store_images').delete().eq('store_id', currentStore.id);
+      await supabase.from('promotions').delete().eq('store_id', currentStore.id);
+
       const { error } = await supabase
         .from('stores')
         .delete()
@@ -415,6 +503,27 @@ export function AdminStoresPage() {
 
   const columns = [
     {
+      key: 'select',
+      label: (
+        <input
+          type="checkbox"
+          checked={filteredStores.length > 0 && filteredStores.every((s) => selectedStoreIds.has(s.id))}
+          onChange={handleToggleSelectAllStores}
+          title="Select All Stores"
+          style={{ cursor: 'pointer', transform: 'scale(1.15)', margin: 0 }}
+        />
+      ),
+      width: '38px',
+      render: (row: Store) => (
+        <input
+          type="checkbox"
+          checked={selectedStoreIds.has(row.id)}
+          onChange={() => handleToggleSelectStore(row.id)}
+          style={{ cursor: 'pointer', transform: 'scale(1.1)', margin: 0 }}
+        />
+      ),
+    },
+    {
       key: 'name',
       label: 'Store / Booth',
       render: (row: Store) => (
@@ -546,17 +655,35 @@ export function AdminStoresPage() {
           <p>{profile?.role === 'store_admin' ? 'Manage your store details, photos, and promotions' : 'Organize exhibitors, floor maps, and contact info'}</p>
         </div>
         {profile?.role !== 'store_admin' && (
-          <button className="btn btn-primary" onClick={handleOpenAdd}>
-            <Plus size={16} />
-            Add Store
-          </button>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              className="btn btn-ghost"
+              onClick={() => setIsKmlModalOpen(true)}
+              title="Import stalls & booths from Google Earth (.kml)"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                border: '1px solid rgba(56, 189, 248, 0.4)',
+                background: 'rgba(56, 189, 248, 0.08)',
+                color: '#38bdf8',
+              }}
+            >
+              <Upload size={16} />
+              <span>Import KML</span>
+            </button>
+            <button className="btn btn-primary" onClick={handleOpenAdd}>
+              <Plus size={16} />
+              Add Store
+            </button>
+          </div>
         )}
       </header>
 
       {/* Toolbar */}
       <section className="data-table-wrap">
-        <div className="data-table-toolbar">
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', flex: 1 }}>
+        <div className="data-table-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', flex: 1, minWidth: '240px' }}>
             <div className="search-wrap">
               <Search size={16} className="search-icon" />
               <input
@@ -581,6 +708,44 @@ export function AdminStoresPage() {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--color-muted)' }}>
+              {filteredStores.length} stores
+            </span>
+
+            {selectedStoreIds.size > 0 && (
+              <>
+                <span style={{
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  padding: '0.2rem 0.6rem',
+                  borderRadius: '6px',
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  color: '#ef4444',
+                  border: '1px solid rgba(239, 68, 68, 0.25)',
+                }}>
+                  {selectedStoreIds.size} selected
+                </span>
+                <button
+                  className="btn btn-danger btn-sm"
+                  onClick={handleBulkDeleteStores}
+                  disabled={isBulkDeleting}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                >
+                  <Trash2 size={14} />
+                  <span>Delete Selected ({selectedStoreIds.size})</span>
+                </button>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setSelectedStoreIds(new Set())}
+                  disabled={isBulkDeleting}
+                >
+                  Deselect
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -1192,6 +1357,18 @@ export function AdminStoresPage() {
         isOpen={isQrModalOpen}
         onClose={() => setIsQrModalOpen(false)}
         target={qrTarget}
+      />
+
+      {/* KML Import Modal */}
+      <KmlImportModal
+        isOpen={isKmlModalOpen}
+        onClose={() => setIsKmlModalOpen(false)}
+        existingNodes={existingNodes}
+        existingStores={stores}
+        onSuccess={() => {
+          fetchStores();
+          loadDependencies();
+        }}
       />
     </main>
   );

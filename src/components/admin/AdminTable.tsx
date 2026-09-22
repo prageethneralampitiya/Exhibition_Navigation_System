@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 
-interface Column<T> {
+export interface Column<T> {
   key: string;
-  label: string;
+  label: ReactNode;
   width?: string;
   render?: (row: T) => ReactNode;
 }

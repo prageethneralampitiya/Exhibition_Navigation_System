@@ -40,11 +40,11 @@ import { MapView3D } from '../components/MapView3D';
 import { getCampusStoreLocation } from '../components/KalawanaSchool3DLayer';
 import {
   calculateShortestPathBetweenCoordinates,
-  findClosestPointOnGraph,
   getDistance,
   getHeading,
   getAllEntrancePoints,
   findShortestDistanceEntrance,
+  isEntranceNode,
   isPointNearVenueGraph,
   advanceRouteOnEarlyTurn,
 } from '../utils/dijkstra';
@@ -581,12 +581,13 @@ export function MapPage() {
 
       // Identify primary map entrance node / Node 1
       const entranceNode =
-        sortedNodes.find(
-          (n) =>
-            n.type === 'entrance' ||
-            n.label.toLowerCase().includes('node 1') ||
-            n.label.toLowerCase().includes('entrance')
-        ) || sortedNodes[0];
+        sortedNodes.find((n) => isEntranceNode(n)) ||
+        sortedNodes.find((n) => (n.label || '').toLowerCase().includes('start')) ||
+        sortedNodes.find((n) => (n.label || '').toLowerCase().includes('kml-1')) ||
+        sortedNodes.find((n) => (n.label || '').toLowerCase().includes('gate')) ||
+        sortedNodes.find((n) => (n.label || '').toLowerCase().includes('entrance')) ||
+        sortedNodes.find((n) => (n.label || '').toLowerCase().includes('node 1')) ||
+        sortedNodes[0];
 
       // Fetch settings announcement row
       const { data: settingsData } = await supabase
@@ -1651,14 +1652,21 @@ export function MapPage() {
 
     let graphPath: NavigationNode[] = [];
 
-    const explicitDestNodeId =
-      selectedDestinationNodeId ||
-      (selectedDestinationStoreId ? nodes.find((n) => n.store_id === selectedDestinationStoreId)?.id : null) ||
+    const storeNode = selectedDestinationStoreId ? nodes.find((n) => n.store_id === selectedDestinationStoreId) : null;
+    const storeNodeHasEdges = storeNode ? edges.some((e) => e.from_node_id === storeNode.id || e.to_node_id === storeNode.id) : false;
+    const destNode = selectedDestinationNodeId ? nodes.find((n) => n.id === selectedDestinationNodeId) : null;
+    const destNodeHasEdges = destNode ? edges.some((e) => e.from_node_id === destNode.id || e.to_node_id === destNode.id) : false;
+
+    // Only pass explicitDestNodeId if it is actually connected to the edge graph,
+    // otherwise calculateShortestPathBetweenCoordinates will snap its coordinates to the nearest walkway
+    const explicitDestNodeId = (destNodeHasEdges ? selectedDestinationNodeId : null) ||
+      (storeNodeHasEdges ? storeNode?.id : null) ||
       null;
 
     if (nodes.length > 0 && edges.length > 0) {
       if (isOutsideVenue) {
         // Outside venue: compute indoor path from best entrance gate to the target store
+        const entranceNodeHasEdges = closestEntrance ? edges.some((e) => e.from_node_id === closestEntrance.id || e.to_node_id === closestEntrance.id) : false;
         graphPath = calculateShortestPathBetweenCoordinates(
           entranceLat,
           entranceLng,
@@ -1666,11 +1674,32 @@ export function MapPage() {
           targetLng,
           nodes,
           edges,
-          closestEntrance?.id || null,
+          entranceNodeHasEdges ? closestEntrance?.id : null,
           explicitDestNodeId
         );
+
+        if (graphPath.length <= 1) {
+          graphPath = calculateShortestPathBetweenCoordinates(
+            entranceLat,
+            entranceLng,
+            targetLat,
+            targetLng,
+            nodes,
+            edges
+          );
+        }
       } else {
         // Strictly route inside venue along drawn walkway graph with dual edge-snapping
+        // Only pass mockStartNodeId if user has no active GPS fix and is explicitly in mock mode
+        const isMockActive = mockMode && (userLat === null || userLng === null);
+        const mockNodeHasEdges = (isMockActive && mockStartNodeId)
+          ? edges.some((e) => e.from_node_id === mockStartNodeId || e.to_node_id === mockStartNodeId)
+          : false;
+
+        const effectiveStartNodeId = (mockNodeHasEdges && mockStartNodeId !== explicitDestNodeId)
+          ? mockStartNodeId
+          : null;
+
         graphPath = calculateShortestPathBetweenCoordinates(
           startLat,
           startLng,
@@ -1678,9 +1707,22 @@ export function MapPage() {
           targetLng,
           nodes,
           edges,
-          mockStartNodeId || null,
+          effectiveStartNodeId,
           explicitDestNodeId
         );
+
+        // If constrained routing yielded empty or a single trivial node while target is separated, retry with pure coordinate snapping
+        const straightDist = getDistance(startLat, startLng, targetLat, targetLng);
+        if (graphPath.length <= 1 && straightDist > 15) {
+          graphPath = calculateShortestPathBetweenCoordinates(
+            startLat,
+            startLng,
+            targetLat,
+            targetLng,
+            nodes,
+            edges
+          );
+        }
       }
     }
 
@@ -1802,33 +1844,12 @@ export function MapPage() {
           finalRoute.push(destEndVirtualNode);
         }
       } else {
-        const startSnap = findClosestPointOnGraph(startLat, startLng, nodes, edges);
-        const endSnap = findClosestPointOnGraph(targetLat, targetLng, nodes, edges);
-        if (startSnap && endSnap) {
-          finalRoute.push(userStartVirtualNode);
-          finalRoute.push({
-            id: '__fallback_start_snap__',
-            label: 'Walkway Point',
-            latitude: startSnap.snapLat,
-            longitude: startSnap.snapLng,
-            floor: null,
-            type: 'path',
-            store_id: null,
-            created_at: new Date().toISOString()
-          });
-          finalRoute.push({
-            id: '__fallback_end_snap__',
-            label: 'Store Connection Point',
-            latitude: endSnap.snapLat,
-            longitude: endSnap.snapLng,
-            floor: null,
-            type: 'path',
-            store_id: null,
-            created_at: new Date().toISOString()
-          });
-          finalRoute.push(destEndVirtualNode);
+        // Last-resort fallback: attempt pure coordinate snapping without node constraints
+        const retryPath = calculateShortestPathBetweenCoordinates(startLat, startLng, targetLat, targetLng, nodes, edges);
+        if (retryPath && retryPath.length > 0) {
+          finalRoute.push(userStartVirtualNode, ...retryPath, destEndVirtualNode);
         } else {
-          finalRoute.push(userStartVirtualNode);
+          finalRoute.push(userStartVirtualNode, destEndVirtualNode);
         }
       }
     }
