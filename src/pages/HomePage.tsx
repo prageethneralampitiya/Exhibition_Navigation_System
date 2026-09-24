@@ -31,7 +31,25 @@ import { SiteFooter } from '../components/SiteFooter';
 // ── Customizable Placeholder Exhibition Slots ───────────────────────
 // You can edit titles, locations, dates, or accent colors anytime.
 // Once you add real exhibitions in Admin, they will seamlessly appear alongside these!
-const placeholderExhibitions = [
+export interface PlaceholderExhibition {
+  id: string;
+  title: string;
+  location: string;
+  start_date: string;
+  end_date: string;
+  is_featured: boolean;
+  tag: string;
+  accentColor: string;
+  isPlaceholder: true;
+}
+
+export interface RealExhibitionItem extends Exhibition {
+  isPlaceholder: false;
+}
+
+export type CarouselExhibitionItem = PlaceholderExhibition | RealExhibitionItem;
+
+const placeholderExhibitions: PlaceholderExhibition[] = [
   {
     id: 'placeholder-ai-summit',
     title: 'AI & Robotics Summit',
@@ -478,12 +496,14 @@ export function HomePage() {
             ) : (
               <div className="home-ex-carousel-viewport">
                 <div className="home-ex-carousel-track">
-                  {[
-                    ...exhibitions.map((ex) => ({ ...ex, isPlaceholder: false })),
-                    ...placeholderExhibitions,
-                    ...exhibitions.map((ex) => ({ ...ex, isPlaceholder: false })),
-                    ...placeholderExhibitions,
-                  ].map((item, index) =>
+                  {(
+                    [
+                      ...exhibitions.map((ex): RealExhibitionItem => ({ ...ex, isPlaceholder: false })),
+                      ...placeholderExhibitions,
+                      ...exhibitions.map((ex): RealExhibitionItem => ({ ...ex, isPlaceholder: false })),
+                      ...placeholderExhibitions,
+                    ] as CarouselExhibitionItem[]
+                  ).map((item, index) =>
                     item.isPlaceholder ? (
                       /* Customizable Placeholder Card */
                       <div
