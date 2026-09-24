@@ -47,6 +47,7 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <LiveBroadcastProvider>
+          <div className="site-upper-background" aria-hidden="true" />
           <RealtimeAnnouncements />
           <Suspense fallback={<PageLoader />}>
             <Routes>

@@ -19,11 +19,64 @@ import {
   GraduationCap,
   Radio,
   VolumeX,
+  Layers,
 } from 'lucide-react';
 import { supabase, type Exhibition, type Store as StoreType } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { GPSPermissionBanner } from '../components/GPSPermissionBanner';
 import { useLiveBroadcast } from '../contexts/LiveBroadcastContext';
+import invexLogo from '../pics/logo.png';
+import { SiteFooter } from '../components/SiteFooter';
+
+// ── Customizable Placeholder Exhibition Slots ───────────────────────
+// You can edit titles, locations, dates, or accent colors anytime.
+// Once you add real exhibitions in Admin, they will seamlessly appear alongside these!
+const placeholderExhibitions = [
+  {
+    id: 'placeholder-ai-summit',
+    title: 'AI & Robotics Summit',
+    location: 'Hall B · Tech Arena',
+    start_date: '2026-07-17',
+    end_date: '2026-07-18',
+    is_featured: true,
+    tag: 'Upcoming',
+    accentColor: '#8b5cf6',
+    isPlaceholder: true,
+  },
+  {
+    id: 'placeholder-green-tech',
+    title: 'Green Tech & Clean Energy',
+    location: 'Hall C · Eco Pavilion',
+    start_date: '2026-07-19',
+    end_date: '2026-07-20',
+    is_featured: false,
+    tag: 'Slot Ready',
+    accentColor: '#10b981',
+    isPlaceholder: true,
+  },
+  {
+    id: 'placeholder-cyber-expo',
+    title: 'Cyber Security & Cloud Summit',
+    location: 'Innovation Wing · Level 2',
+    start_date: '2026-07-21',
+    end_date: '2026-07-22',
+    is_featured: false,
+    tag: 'Upcoming',
+    accentColor: '#38bdf8',
+    isPlaceholder: true,
+  },
+  {
+    id: 'placeholder-mobility-ev',
+    title: 'NextGen Mobility & EV Expo',
+    location: 'Hall D · Main Stage',
+    start_date: '2026-07-23',
+    end_date: '2026-07-24',
+    is_featured: true,
+    tag: 'Slot Ready',
+    accentColor: '#f59e0b',
+    isPlaceholder: true,
+  },
+];
 
 export function HomePage() {
   const { user, profile, signOut } = useAuth();
@@ -54,6 +107,28 @@ export function HomePage() {
   useEffect(() => {
     loadDashboardData();
   }, []);
+
+  // ── Scroll Reveal Intersection Observer ─────────────────────
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-in-view');
+          }
+        });
+      },
+      {
+        threshold: 0.1,
+        rootMargin: '0px 0px -40px 0px',
+      }
+    );
+
+    const elements = document.querySelectorAll('.scroll-reveal');
+    elements.forEach((el) => observer.observe(el));
+
+    return () => observer.disconnect();
+  }, [loading, exhibitions, stores]);
 
   async function loadDashboardData() {
     try {
@@ -102,103 +177,64 @@ export function HomePage() {
   };
 
   return (
-    <div className="profile-page home-enhanced" style={{ maxWidth: 880, paddingBottom: '4rem' }}>
-      <GPSPermissionBanner inFlow />
+    <div className="home-wrapper">
+      {/* Main Page Content */}
+      <div className="profile-page home-enhanced" style={{ maxWidth: 880, paddingBottom: '4rem', paddingTop: '2.5rem' }}>
+        <GPSPermissionBanner inFlow />
 
-        {/* ── Premium Header ─────────────────────────────────── */}
-        <header className="home-header-enhanced">
-          {/* Animated background orbs */}
-          <div className="home-header-orb home-header-orb-1" />
-          <div className="home-header-orb home-header-orb-2" />
+        {/* ── Centered Logo in Middle of Front Page ─────────── */}
+        <div className="home-hero-center">
+          <img 
+            src={invexLogo} 
+            alt="INVEX 2026 Logo" 
+            className="home-hero-logo"
+          />
+        </div>
 
-          <div className="home-header-left">
-            <div className="brand-icon home-brand-icon">
-              <MapPin size={26} color="#fff" />
+        {/* ── Hero Welcome Greeting ────────────────────────── */}
+        <div className="home-welcome-banner">
+          <span className="home-welcome-line1">{getGreeting()},</span>
+          <span className="home-welcome-line2">
+            {profile?.name?.split(' ')[0] || 'Visitor'} <span className="home-welcome-wave">👋</span>
+          </span>
+        </div>
+
+        {/* ── Interactive Floor Map Bar ─────────────────────── */}
+        <section className="home-map-cta-enhanced">
+          <div className="home-map-cta-glow" />
+          <div className="home-map-cta-content">
+            <div className="home-map-cta-icon">
+              <Navigation size={22} color="#fff" style={{ transform: 'rotate(45deg)' }} />
             </div>
             <div>
-              <p className="home-greeting">{getGreeting()}, {profile?.name?.split(' ')[0] || 'Visitor'} 👋</p>
-              <h1 className="home-title">Exhibition Navigator</h1>
-              <p className="home-subtitle">Explore booths, discover promotions, and navigate in real time.</p>
+              <h2 className="home-map-cta-title">Interactive Floor Map</h2>
+              <p className="home-map-cta-desc">
+                Live GPS tracking · Route planning · Real-time booth locations
+              </p>
             </div>
           </div>
-
-          <div className="home-header-actions">
-            <Link to="/search" className="btn btn-ghost btn-sm home-action-btn" id="home-search-btn">
-              <Search size={14} />
-              Search
-            </Link>
-            <button
-              onClick={handleOpenAnnouncements}
-              className="btn btn-ghost btn-sm btn-icon home-bell-btn"
-              title="View Announcements"
-              id="home-announcements-btn"
-            >
-              <Bell size={16} />
-              {unreadNotifications > 0 && (
-                <span className="notification-dot">
-                  {unreadNotifications > 9 ? '9+' : unreadNotifications}
-                </span>
-              )}
-            </button>
-
-            {/* Live Audio / Broadcast Button — only when broadcast is active */}
-            {activeBroadcast && (
-              <button
-                id="home-live-audio-btn"
-                onClick={isPlaying ? handleMute : handleListen}
-                className="btn btn-ghost btn-sm home-action-btn"
-                title={isPlaying ? 'Mute broadcast' : 'Listen to broadcast'}
-                style={{
-                  position: 'relative',
-                  border: isPlaying
-                    ? '1px solid rgba(239, 68, 68, 0.5)'
-                    : '1px solid rgba(99, 102, 241, 0.3)',
-                  color: isPlaying ? '#f87171' : 'var(--color-primary-light, #818cf8)',
-                  background: isPlaying ? 'rgba(239, 68, 68, 0.12)' : 'rgba(99, 102, 241, 0.08)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.4rem',
-                  fontWeight: 600,
-                  transition: 'all 0.2s ease',
-                }}
-              >
-                {isPlaying ? <VolumeX size={14} /> : <Radio size={14} />}
-                <span>Broadcast</span>
-                {isPlaying && (
-                  <span
-                    className="live-dot-pulse"
-                    style={{
-                      width: '7px',
-                      height: '7px',
-                      borderRadius: '50%',
-                      backgroundColor: '#ef4444',
-                      display: 'inline-block',
-                      marginLeft: '2px',
-                    }}
-                  />
-                )}
-              </button>
-            )}
-            {user ? (
-              <>
-                <Link to="/profile" className="btn btn-ghost btn-sm home-action-btn" id="home-profile-btn">
-                  <User size={14} />
-                  Profile
-                </Link>
-                {profile?.role === 'admin' && (
-                  <a href="/admin/" className="btn btn-ghost btn-sm home-action-btn" style={{ border: '1px dashed var(--color-warning)', color: 'var(--color-warning)', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }} id="home-admin-btn">
-                    <Shield size={14} />
-                    Admin
-                  </a>
-                )}
-                <button className="btn btn-danger btn-sm" onClick={handleSignOut} id="home-signout-btn">
-                  <LogOut size={14} />
-                  Out
-                </button>
-              </>
-            ) : null}
-          </div>
-        </header>
+          <Link to="/map" className="btn btn-primary home-map-cta-btn" id="home-open-map-btn">
+            Open Map
+            <ArrowRight size={15} />
+          </Link>
+          {/* 3D School button hidden from UI, preserved in codebase */}
+          <Link
+            to="/map3d"
+            id="home-open-3d-btn"
+            style={{
+              display: 'none',
+              alignItems: 'center', gap: '0.4rem',
+              padding: '0.6rem 1.1rem', borderRadius: 10, fontWeight: 600, fontSize: '0.85rem',
+              background: 'linear-gradient(135deg, #6366f1, #a855f7)',
+              color: '#fff', textDecoration: 'none',
+              boxShadow: '0 4px 14px rgba(99,102,241,0.45)',
+              border: 'none', whiteSpace: 'nowrap',
+            }}
+          >
+            <GraduationCap size={16} />
+            3D School
+          </Link>
+        </section>
 
         {/* ── Store Admin Panel Banner ─────────────────────────── */}
         {profile?.role === 'store_admin' && (
@@ -213,7 +249,7 @@ export function HomePage() {
               alignItems: 'center',
               justifyContent: 'space-between',
               gap: '1rem',
-              marginBottom: '1rem',
+              marginBottom: '1.25rem',
               flexWrap: 'wrap',
             }}
           >
@@ -264,41 +300,130 @@ export function HomePage() {
           </section>
         )}
 
-        <section className="home-map-cta-enhanced">
-          <div className="home-map-cta-glow" />
-          <div className="home-map-cta-content">
-            <div className="home-map-cta-icon">
-              <Navigation size={22} color="#fff" style={{ transform: 'rotate(45deg)' }} />
-            </div>
-            <div>
-              <h2 className="home-map-cta-title">Interactive Floor Map</h2>
-              <p className="home-map-cta-desc">
-                Live GPS tracking · Route planning · Real-time booth locations
-              </p>
+        {/* ── Box Under Logo Holding Nav & Utility Items ────── */}
+        <div className="home-action-box glass">
+          {/* Navigation Links */}
+          <div className="home-action-box-links">
+            <Link to="/map" className="home-box-link link-map" id="nav-floor-map">
+              <div className="home-box-link-icon icon-map">
+                <Navigation size={24} strokeWidth={2.2} />
+              </div>
+              <div className="home-box-link-text">
+                <span className="home-box-link-title">Floor Map</span>
+                <span className="home-box-link-desc">Live GPS Route</span>
+              </div>
+            </Link>
+
+            <Link to="/map3d" className="home-box-link link-3d" id="nav-3d-campus">
+              <div className="home-box-link-icon icon-3d">
+                <Layers size={24} strokeWidth={2.2} />
+              </div>
+              <div className="home-box-link-text">
+                <span className="home-box-link-title">3D Campus</span>
+                <span className="home-box-link-desc">Virtual View</span>
+              </div>
+            </Link>
+
+            <Link to="/exhibitions" className="home-box-link link-events" id="nav-exhibitions">
+              <div className="home-box-link-icon icon-events">
+                <CalendarDays size={24} strokeWidth={2.2} />
+              </div>
+              <div className="home-box-link-text">
+                <span className="home-box-link-title">Events</span>
+                <span className="home-box-link-desc">Schedules</span>
+              </div>
+            </Link>
+
+            <Link to="/stores" className="home-box-link link-stalls" id="nav-stalls">
+              <div className="home-box-link-icon icon-stalls">
+                <Store size={24} strokeWidth={2.2} />
+              </div>
+              <div className="home-box-link-text">
+                <span className="home-box-link-title">Stalls</span>
+                <span className="home-box-link-desc">Directory</span>
+              </div>
+            </Link>
+          </div>
+
+          <div className="home-action-box-divider" />
+
+          {/* Action Controls & Utilities */}
+          <div className="home-action-box-bottom">
+
+            <div className="home-action-box-buttons">
+              {/* Quick Search */}
+              <Link to="/search" className="btn btn-ghost btn-sm navbar-action-btn" id="nav-search-btn" title="Search stalls and events">
+                <Search size={14} />
+                <span>Search</span>
+              </Link>
+
+              {/* Announcements Bell */}
+              <button
+                onClick={handleOpenAnnouncements}
+                className="btn btn-ghost btn-sm btn-icon navbar-bell-btn"
+                title="View Announcements"
+                id="nav-announcements-btn"
+              >
+                <Bell size={16} />
+                {unreadNotifications > 0 && (
+                  <span className="notification-dot">
+                    {unreadNotifications > 9 ? '9+' : unreadNotifications}
+                  </span>
+                )}
+              </button>
+
+              {/* Live Audio / Broadcast Button */}
+              {activeBroadcast && (
+                <button
+                  id="nav-live-audio-btn"
+                  onClick={isPlaying ? handleMute : handleListen}
+                  className={`btn btn-ghost btn-sm navbar-broadcast-btn ${isPlaying ? 'playing' : ''}`}
+                  title={isPlaying ? 'Mute broadcast' : 'Listen to broadcast'}
+                >
+                  {isPlaying ? <VolumeX size={14} /> : <Radio size={14} />}
+                  <span>Broadcast</span>
+                  {isPlaying && (
+                    <span
+                      className="live-dot-pulse"
+                      style={{
+                        width: '7px',
+                        height: '7px',
+                        borderRadius: '50%',
+                        backgroundColor: '#ef4444',
+                        display: 'inline-block',
+                        marginLeft: '2px',
+                      }}
+                    />
+                  )}
+                </button>
+              )}
+
+              {/* User Profile / Admin / Auth */}
+              {user ? (
+                <>
+                  <Link to="/profile" className="btn btn-ghost btn-sm navbar-action-btn" id="nav-profile-btn" title="My Profile">
+                    <User size={14} />
+                    <span>Profile</span>
+                  </Link>
+                  {profile?.role === 'admin' && (
+                    <a href="/admin/" className="btn btn-ghost btn-sm navbar-admin-btn" id="nav-admin-btn" title="Admin Portal">
+                      <Shield size={14} />
+                      <span>Admin</span>
+                    </a>
+                  )}
+                  <button className="btn btn-danger btn-sm navbar-signout-btn" onClick={handleSignOut} id="nav-signout-btn" title="Sign Out">
+                    <LogOut size={14} />
+                  </button>
+                </>
+              ) : (
+                <Link to="/login" className="btn btn-primary btn-sm navbar-login-btn" id="nav-login-btn">
+                  <User size={14} />
+                  <span>Sign In</span>
+                </Link>
+              )}
             </div>
           </div>
-          <Link to="/map" className="btn btn-primary home-map-cta-btn" id="home-open-map-btn">
-            Open Map
-            <ArrowRight size={15} />
-          </Link>
-          {/* 3D School button hidden from UI, preserved in codebase */}
-          <Link
-            to="/map3d"
-            id="home-open-3d-btn"
-            style={{
-              display: 'none',
-              alignItems: 'center', gap: '0.4rem',
-              padding: '0.6rem 1.1rem', borderRadius: 10, fontWeight: 600, fontSize: '0.85rem',
-              background: 'linear-gradient(135deg, #6366f1, #a855f7)',
-              color: '#fff', textDecoration: 'none',
-              boxShadow: '0 4px 14px rgba(99,102,241,0.45)',
-              border: 'none', whiteSpace: 'nowrap',
-            }}
-          >
-            <GraduationCap size={16} />
-            3D School
-          </Link>
-        </section>
+        </div>
 
         {/* ── Stats Bar ──────────────────────────────────────── */}
         <div className="home-stats-bar">
@@ -318,15 +443,21 @@ export function HomePage() {
           </div>
         </div>
 
+        {/* ── Transition Bridge to Lower Discovery Section ─────── */}
+        <div className="home-section-transition scroll-reveal">
+          <div className="home-transition-beam" />
+        </div>
+
         {/* ── Main Content Grid ───────────────────────────────── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2.5rem' }}>
+        <div className="home-content-grid">
 
           {/* ── Featured Exhibitions ─────────────────────────── */}
-          <section>
+          <section className="home-content-block home-content-block-purple scroll-reveal">
+            <div className="home-content-block-glow" />
             <div className="home-section-header">
               <div className="home-section-title-wrap">
                 <div className="home-section-icon home-section-icon-purple">
-                  <CalendarDays size={16} color="#fff" />
+                  <CalendarDays size={18} color="#fff" />
                 </div>
                 <div>
                   <h2 className="home-section-title">Featured Exhibitions</h2>
@@ -344,66 +475,113 @@ export function HomePage() {
                   <div key={i} className="glass skeleton home-ex-skeleton" />
                 ))}
               </div>
-            ) : exhibitions.length === 0 ? (
-              <div className="home-empty-state">
-                <CalendarDays size={32} style={{ opacity: 0.35 }} />
-                <p>No active exhibitions right now.</p>
-              </div>
             ) : (
-              <div className="home-exhibitions-grid">
-                {exhibitions.map((ex) => (
-                  <Link
-                    key={ex.id}
-                    to={`/exhibitions/${ex.id}`}
-                    className="home-ex-card"
-                    id={`home-ex-card-${ex.id}`}
-                  >
-                    {/* Thumbnail / Image */}
-                    <div className="home-ex-thumb">
-                      {ex.image_url ? (
-                        <img src={ex.image_url} alt={ex.title} className="home-ex-thumb-img" />
-                      ) : (
-                        <div className="home-ex-thumb-placeholder">
-                          <CalendarDays size={24} color="rgba(255,255,255,0.4)" />
+              <div className="home-ex-carousel-viewport">
+                <div className="home-ex-carousel-track">
+                  {[
+                    ...exhibitions.map((ex) => ({ ...ex, isPlaceholder: false })),
+                    ...placeholderExhibitions,
+                    ...exhibitions.map((ex) => ({ ...ex, isPlaceholder: false })),
+                    ...placeholderExhibitions,
+                  ].map((item, index) =>
+                    item.isPlaceholder ? (
+                      /* Customizable Placeholder Card */
+                      <div
+                        key={`ph-${item.id}-${index}`}
+                        className="home-ex-card home-ex-card-placeholder"
+                        title="Customizable Exhibition Slot — Change or add details anytime"
+                      >
+                        <div
+                          className="home-ex-thumb home-ex-thumb-placeholder-banner"
+                          style={{
+                            background: `radial-gradient(circle at 50% 30%, ${item.accentColor}30 0%, rgba(13, 17, 30, 0.92) 100%)`,
+                          }}
+                        >
+                          <div className="home-ex-thumb-placeholder-icon" style={{ color: item.accentColor }}>
+                            <Sparkles size={24} />
+                          </div>
+                          <span
+                            className="home-ex-featured-badge home-ex-placeholder-badge"
+                            style={{
+                              borderColor: `${item.accentColor}40`,
+                              color: '#fff',
+                            }}
+                          >
+                            <Clock size={9} /> {item.tag}
+                          </span>
                         </div>
-                      )}
-                      {ex.is_featured && (
-                        <span className="home-ex-featured-badge">
-                          <Star size={9} fill="currentColor" /> Featured
-                        </span>
-                      )}
-                    </div>
 
-                    {/* Details */}
-                    <div className="home-ex-details">
-                      <h3 className="home-ex-title">{ex.title}</h3>
-                      <span className="home-ex-location">
-                        <MapPin size={11} />
-                        {ex.location || 'Exhibition Area'}
-                      </span>
-                      {(ex.start_date || ex.end_date) && (
-                        <span className="home-ex-dates">
-                          <Clock size={11} />
-                          {ex.start_date || '?'} – {ex.end_date || '?'}
-                        </span>
-                      )}
-                    </div>
+                        <div className="home-ex-details">
+                          <h3 className="home-ex-title">{item.title}</h3>
+                          <span className="home-ex-location">
+                            <MapPin size={11} />
+                            {item.location}
+                          </span>
+                          <span className="home-ex-dates">
+                            <Clock size={11} />
+                            {item.start_date} – {item.end_date}
+                          </span>
+                        </div>
 
-                    <div className="home-ex-arrow">
-                      <ChevronRight size={14} />
-                    </div>
-                  </Link>
-                ))}
+                        <div className="home-ex-arrow">
+                          <ChevronRight size={14} />
+                        </div>
+                      </div>
+                    ) : (
+                      /* Real Exhibition Card */
+                      <Link
+                        key={`real-${item.id}-${index}`}
+                        to={`/exhibitions/${item.id}`}
+                        className="home-ex-card"
+                        id={`home-ex-card-${item.id}-${index}`}
+                      >
+                        <div className="home-ex-thumb">
+                          {item.image_url ? (
+                            <img src={item.image_url} alt={item.title} className="home-ex-thumb-img" />
+                          ) : (
+                            <div className="home-ex-thumb-placeholder">
+                              <CalendarDays size={24} color="rgba(255,255,255,0.4)" />
+                            </div>
+                          )}
+                          {item.is_featured && (
+                            <span className="home-ex-featured-badge">
+                              <Star size={9} fill="currentColor" /> Featured
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="home-ex-details">
+                          <h3 className="home-ex-title">{item.title}</h3>
+                          <span className="home-ex-location">
+                            <MapPin size={11} />
+                            {item.location || 'Exhibition Area'}
+                          </span>
+                          {(item.start_date || item.end_date) && (
+                            <span className="home-ex-dates">
+                              <Clock size={11} />
+                              {item.start_date || '?'} – {item.end_date || '?'}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="home-ex-arrow">
+                          <ChevronRight size={14} />
+                        </div>
+                      </Link>
+                    )
+                  )}
+                </div>
               </div>
             )}
           </section>
 
           {/* ── Participant Exhibitors (Stores) ──────────────── */}
-          <section>
+          <section className="home-content-block home-content-block-cyan scroll-reveal">
+            <div className="home-content-block-glow" />
             <div className="home-section-header">
               <div className="home-section-title-wrap">
                 <div className="home-section-icon home-section-icon-cyan">
-                  <Store size={16} color="#fff" />
+                  <Store size={18} color="#fff" />
                 </div>
                 <div>
                   <h2 className="home-section-title">Participant Exhibitors</h2>
@@ -490,5 +668,9 @@ export function HomePage() {
 
         </div>
       </div>
+
+      {/* Contact & Partner Information Ribbon Footer */}
+      <SiteFooter />
+    </div>
   );
 }
