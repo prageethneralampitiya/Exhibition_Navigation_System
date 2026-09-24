@@ -277,7 +277,7 @@ export function MapPage() {
   const [userLng, setUserLng] = useState<number | null>(null);
   const [userHeading, setUserHeading] = useState<number | null>(null);
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null); // metres
-  const [snappedToNode, setSnappedToNode] = useState<string | null>(null); // label of entrance used as fallback start
+  const [, setSnappedToNode] = useState<string | null>(null); // label of entrance used as fallback start
   const [, setGpsError] = useState<string | null>(null);
   const [mockMode, setMockMode] = useState(false);
 
@@ -1169,7 +1169,7 @@ export function MapPage() {
       setSelectedDestinationNodeId('');
       setGuidedTourActive(true);
       setNavigationActive(true);
-      setNavSheetExpanded(true);
+      setNavSheetState('normal');
 
       // Route strictly to Stop 1 (the first/closest store)
       routeToTourStop(startLatVal, startLngVal, orderedTourStops[0], 0, orderedTourStops.length);
@@ -1286,7 +1286,7 @@ export function MapPage() {
     setSelectedDestinationStoreId(facility.id);
     setSelectedDestinationNodeId('');
     setNavigationActive(true);
-    setNavSheetExpanded(false);
+    setNavSheetState('normal');
   };
 
   const handleResumeOriginalRoute = () => {
