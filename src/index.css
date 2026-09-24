@@ -3635,52 +3635,36 @@ html, body, #root {
 
   /* ── Bottom Sheet Nav Panel ─────────────────────── */
   .map-nav-panel {
-    /* Collapsed state (default) */
     bottom: calc(56px + var(--safe-bottom, 0px)) !important;
-    left: 0 !important;
-    right: 0 !important;
-    border-radius: var(--radius-xl) var(--radius-xl) 0 0 !important;
-    max-height: 95px !important;
-    padding: 0.5rem 1rem 0.75rem !important;
+    left: 8px !important;
+    right: 8px !important;
+    border-radius: 18px !important;
     overflow: hidden !important;
-    transition: max-height 0.4s cubic-bezier(0.32, 0.72, 0, 1),
-                transform 0.35s cubic-bezier(0.32, 0.72, 0, 1) !important;
+    transition: max-height 0.35s cubic-bezier(0.32, 0.72, 0, 1),
+                transform 0.3s cubic-bezier(0.32, 0.72, 0, 1) !important;
+  }
+
+  .map-nav-panel.map-nav-hidden {
+    max-height: 52px !important;
+    padding: 0.35rem 0.85rem 0.45rem !important;
+    overflow: hidden !important;
+  }
+
+  .map-nav-panel.map-nav-normal {
+    max-height: 240px !important;
+    padding: 0.5rem 0.9rem 0.85rem !important;
+    overflow: hidden !important;
   }
 
   /* Expanded state */
   .map-nav-panel.map-nav-expanded {
-    max-height: 52vh !important;
-    overflow: hidden !important;
-  }
-
-  /* Steps: fully collapsed when not expanded — max-height:0 is bulletproof */
-  .map-nav-panel:not(.map-nav-expanded) .nav-sheet-steps {
-    max-height: 0 !important;
-    overflow: hidden !important;
-    opacity: 0 !important;
-    padding-top: 0 !important;
-    margin-top: 0 !important;
-    border-top: none !important;
-    transition: max-height 0.35s ease, opacity 0.2s ease !important;
-  }
-
-  /* Steps: scroll inside expanded sheet */
-  .map-nav-panel.map-nav-expanded .nav-sheet-steps {
-    max-height: calc(52vh - 110px) !important;
+    max-height: min(65vh, 480px) !important;
+    padding: 0.5rem 0.9rem 0.85rem !important;
     overflow-y: auto !important;
-    opacity: 1 !important;
-    transition: max-height 0.4s ease, opacity 0.3s ease 0.1s !important;
   }
 
-  /* Recenter button shifts up when nav panel is active (collapsed) */
-  .map-recenter-btn {
-    bottom: calc(56px + var(--safe-bottom, 0px) + 105px) !important;
-    right: 0.75rem !important;
-  }
-
-  /* Show drag handle and toggle on mobile */
+  /* Show drag handle on mobile */
   .nav-sheet-handle { display: flex !important; }
-  .nav-sheet-toggle { display: flex !important; }
 
   /* ── Search Page ────────────────────────── */
   .search-results-grid {
@@ -3964,32 +3948,115 @@ html, body, #root {
   }
 }
 
-/* ── Map Style Picker (Standard Button) — Mobile ──────────────────────── */
+/* ── Mobile Map Navigation Bottom Sheet (Draggable, Collapsible) ────────── */
+.map-nav-panel {
+  position: absolute;
+  bottom: calc(58px + var(--safe-bottom, 0px));
+  left: 10px;
+  right: 10px;
+  z-index: 1000;
+  border-radius: 20px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.65), 0 0 1px rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--color-border);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  background: rgba(13, 20, 36, 0.94);
+  padding: 0.5rem 1rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  overflow: hidden;
+  user-select: none;
+  transition: max-height 0.35s cubic-bezier(0.32, 0.72, 0, 1), transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform, max-height;
+}
 
-@media (max-width: 640px) {
-  .map-style-picker {
-    bottom: calc(96px + var(--safe-bottom, 0px)) !important;
-    left: 14px !important;
-    right: auto !important;
-    transform: none !important;
+.map-nav-panel.map-nav-hidden {
+  max-height: 52px !important;
+  cursor: pointer;
+  padding: 0.35rem 0.9rem 0.5rem;
+}
+
+.map-nav-panel.map-nav-normal {
+  max-height: 220px;
+}
+
+.map-nav-panel.map-nav-expanded {
+  max-height: min(65vh, 480px) !important;
+}
+
+@media (min-width: 769px) {
+  .map-nav-panel {
+    bottom: 1.25rem;
+    left: 1.25rem;
+    right: auto;
+    width: 440px;
   }
 }
 
-@media (max-width: 768px) and (min-width: 641px) {
-  .map-style-picker {
-    bottom: calc(104px + var(--safe-bottom, 0px)) !important;
-    left: 16px !important;
-    right: auto !important;
-    transform: none !important;
-  }
+.nav-sheet-handle {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 4px 0 6px;
+  cursor: grab;
+  touch-action: none;
 }
 
-@media (max-height: 500px) and (orientation: landscape) {
-  .map-style-picker {
-    bottom: calc(56px + var(--safe-bottom, 0px)) !important;
-    left: 14px !important;
-    transform: none !important;
-  }
+.nav-sheet-handle:active {
+  cursor: grabbing;
+}
+
+.nav-sheet-handle-bar {
+  width: 38px;
+  height: 4.5px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.3);
+  transition: all 0.2s ease;
+}
+
+.nav-sheet-handle:hover .nav-sheet-handle-bar,
+.nav-sheet-handle:active .nav-sheet-handle-bar {
+  background: #38bdf8;
+  width: 48px;
+}
+
+/* ── Floating Pitstop FAB Button ────────────────────────────────────────── */
+.quick-pitstop-fab {
+  position: fixed;
+  right: 16px;
+  z-index: 1005;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.95rem;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 6px 20px rgba(14, 165, 233, 0.45), 0 2px 8px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: bottom 0.35s cubic-bezier(0.32, 0.72, 0, 1), transform 0.2s ease, box-shadow 0.2s ease;
+  user-select: none;
+}
+
+.quick-pitstop-fab:hover {
+  transform: translateY(-2px) scale(1.04);
+  box-shadow: 0 8px 25px rgba(14, 165, 233, 0.6), 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.quick-pitstop-fab:active {
+  transform: translateY(1px) scale(0.97);
+}
+
+.quick-pitstop-fab.active-detour {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  box-shadow: 0 6px 20px rgba(34, 197, 94, 0.45), 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
 /* ═══════════════════════════════════════════════════════

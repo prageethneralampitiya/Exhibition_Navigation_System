@@ -15,14 +15,11 @@ import {
   Check,
   Award,
   Home,
-  Sun,
-  Moon,
-  Map as MapIcon,
-  Satellite,
-  Layers,
   Radio,
   VolumeX,
   QrCode,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { useLiveBroadcast } from '../contexts/LiveBroadcastContext';
 import { AdminModal } from '../components/admin/AdminModal';
@@ -314,27 +311,7 @@ export function MapPage() {
   // Number of leading nodes in calculatedRoute that came from outdoor OSM routing
   // 0 means all nodes are from the internal drawn graph (user is inside campus)
   const [outdoorSegmentCount, setOutdoorSegmentCount] = useState(0);
-  const [mapTheme, setMapTheme] = useState<'dark' | 'streets' | 'light' | '3d' | 'satellite'>('satellite');
   const [showMesh, setShowMesh] = useState(false);
-  const [showMapStylesMenu, setShowMapStylesMenu] = useState(false);
-  const mapStylesMenuRef = useRef<HTMLDivElement>(null);
-
-  // Close map style popover when clicking/touching outside
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent | TouchEvent) {
-      if (mapStylesMenuRef.current && !mapStylesMenuRef.current.contains(e.target as Node)) {
-        setShowMapStylesMenu(false);
-      }
-    }
-    if (showMapStylesMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-      document.addEventListener('touchstart', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('touchstart', handleClickOutside);
-    };
-  }, [showMapStylesMenu]);
 
   // Settings & Guided Tour states
   const [exhibitionSettings, setExhibitionSettings] = useState({
@@ -432,46 +409,60 @@ export function MapPage() {
   // Minimum distance the user must move (metres) before the tour leg route updates
   const TOUR_REROUTE_THRESHOLD_METERS = 5;
 
-  // Bottom sheet drag state (Google Maps style)
-  const [navSheetExpanded, setNavSheetExpanded] = useState(false);
+  // Bottom sheet drag state (Google Maps style: 'hidden' | 'normal' | 'expanded')
+  type NavSheetState = 'hidden' | 'normal' | 'expanded';
+  const [navSheetState, setNavSheetState] = useState<NavSheetState>('normal');
   const sheetRef = useRef<HTMLDivElement>(null);
   const sheetDragStartY = useRef<number | null>(null);
   const sheetDragDelta = useRef<number>(0);
 
-  const handleSheetTouchStart = useCallback((e: React.TouchEvent) => {
-    e.stopPropagation();
-    sheetDragStartY.current = e.touches[0].clientY;
+  const handleSheetTouchStart = useCallback((e: React.TouchEvent | React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    // Don't drag when interacting with buttons, links, or inputs
+    if (target.closest('button') || target.closest('a') || target.closest('input') || target.closest('select')) {
+      return;
+    }
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    sheetDragStartY.current = clientY;
     sheetDragDelta.current = 0;
     if (sheetRef.current) {
       sheetRef.current.style.transition = 'none';
     }
   }, []);
 
-  const handleSheetTouchMove = useCallback((e: React.TouchEvent) => {
-    e.stopPropagation();
+  const handleSheetTouchMove = useCallback((e: React.TouchEvent | React.MouseEvent) => {
     if (sheetDragStartY.current === null) return;
-    const delta = e.touches[0].clientY - sheetDragStartY.current;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    const delta = clientY - sheetDragStartY.current;
     sheetDragDelta.current = delta;
-    // Resist drag past limits
-    const clamped = navSheetExpanded
-      ? Math.max(0, Math.min(delta, 300))   // expanded: only allow dragging DOWN
-      : Math.max(-300, Math.min(delta, 0)); // collapsed: only allow dragging UP
+
     if (sheetRef.current) {
+      // Elastic resistance while dragging
+      const damp = delta * 0.75;
+      const clamped = Math.max(-200, Math.min(damp, 200));
       sheetRef.current.style.transform = `translateY(${clamped}px)`;
     }
-  }, [navSheetExpanded]);
+  }, []);
 
-  const handleSheetTouchEnd = useCallback((e: React.TouchEvent) => {
-    e.stopPropagation();
+  const handleSheetTouchEnd = useCallback(() => {
+    if (sheetDragStartY.current === null) return;
     const delta = sheetDragDelta.current;
     sheetDragStartY.current = null;
     sheetDragDelta.current = 0;
+
     if (sheetRef.current) {
-      sheetRef.current.style.transition = 'transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)';
-      sheetRef.current.style.transform = 'translateY(0)';
+      sheetRef.current.style.transition = 'all 0.35s cubic-bezier(0.32, 0.72, 0, 1)';
+      sheetRef.current.style.transform = '';
     }
-    if (delta < -60) setNavSheetExpanded(true);   // dragged up → expand
-    if (delta > 60) setNavSheetExpanded(false);  // dragged down → collapse
+
+    // Downward swipe (> 40px) -> collapse to hidden (or from expanded to normal)
+    if (delta > 40) {
+      setNavSheetState(curr => (curr === 'expanded' ? 'normal' : 'hidden'));
+    }
+    // Upward drag (< -40px) -> expand (from hidden to normal, or from normal to expanded)
+    else if (delta < -40) {
+      setNavSheetState(curr => (curr === 'hidden' ? 'normal' : 'expanded'));
+    }
   }, []);
 
 
@@ -2293,7 +2284,7 @@ export function MapPage() {
             userLng={userLng}
             userHeading={mockMode ? null : userHeading}
             route={calculatedRoute}
-            theme={(mapTheme === '3d' ? 'dark' : mapTheme) as 'dark' | 'streets' | 'light' | 'satellite'}
+            theme="satellite"
             showGraphMesh={showMesh}
             nodes={nodes}
             edges={edges}
@@ -2320,7 +2311,13 @@ export function MapPage() {
             className="btn btn-primary map-recenter-btn"
             style={{
               position: 'absolute',
-              bottom: navigationActive ? '270px' : '114px',
+              bottom: navigationActive
+                ? (navSheetState === 'hidden'
+                    ? 'calc(114px + var(--safe-bottom, 0px))'
+                    : navSheetState === 'expanded'
+                      ? 'calc(min(65vh, 480px) + 20px)'
+                      : 'calc(235px + var(--safe-bottom, 0px))')
+                : '114px',
               right: '16px',
               zIndex: 1000,
               borderRadius: '50%',
@@ -2337,105 +2334,6 @@ export function MapPage() {
           >
             <Navigation size={18} style={{ transform: 'rotate(45deg)' }} />
           </button>
-
-          {/* Floating Map Style Standard Button (Left Side) */}
-          <div
-            ref={mapStylesMenuRef}
-            className="map-style-picker"
-            style={{
-              position: 'absolute',
-              bottom: navigationActive ? '230px' : '44px',
-              left: '16px',
-              zIndex: 1000,
-              transition: 'bottom 0.3s ease',
-            }}
-          >
-            {/* Popover Style Selector */}
-            {showMapStylesMenu && (
-              <div
-                className="glass"
-                style={{
-                  position: 'absolute',
-                  bottom: '52px',
-                  left: '0',
-                  borderRadius: '12px',
-                  padding: '0.4rem',
-                  boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
-                  border: '1px solid var(--color-border)',
-                  background: 'rgba(11, 15, 26, 0.95)',
-                  backdropFilter: 'blur(16px)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.25rem',
-                  minWidth: '135px',
-                  zIndex: 1002,
-                  animation: 'fadeIn 0.15s ease-out',
-                }}
-              >
-                <div style={{ padding: '0.2rem 0.5rem 0.3rem 0.5rem', fontSize: '0.68rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-muted)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                  Map Style
-                </div>
-                {([
-                  { value: 'satellite', label: 'Satellite', Icon: Satellite },
-                  { value: 'light',     label: 'Light',     Icon: Sun       },
-                  { value: 'dark',      label: 'Dark',      Icon: Moon      },
-                  { value: 'streets',   label: 'Street',    Icon: MapIcon   },
-                ] as const).map((opt) => {
-                  const isActive = mapTheme === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      onClick={() => {
-                        setMapTheme(opt.value);
-                        setShowMapStylesMenu(false);
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        padding: '0.45rem 0.6rem',
-                        borderRadius: '8px',
-                        background: isActive ? 'rgba(99, 102, 241, 0.22)' : 'transparent',
-                        border: isActive ? '1px solid rgba(99, 102, 241, 0.5)' : '1px solid transparent',
-                        color: isActive ? '#a5b4fc' : 'var(--color-text)',
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                        transition: 'all 0.15s ease',
-                      }}
-                    >
-                      <opt.Icon size={16} color={isActive ? '#818cf8' : 'var(--color-muted)'} />
-                      <span style={{ fontSize: '0.8rem', fontWeight: isActive ? 700 : 500 }}>{opt.label}</span>
-                      {isActive && <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: '#818cf8' }}>✓</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Standard Circular Floating Button */}
-            <button
-              onClick={() => setShowMapStylesMenu(!showMapStylesMenu)}
-              className="glass"
-              style={{
-                width: '42px',
-                height: '42px',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                border: showMapStylesMenu ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
-                background: showMapStylesMenu ? 'rgba(99, 102, 241, 0.25)' : 'rgba(11, 15, 26, 0.85)',
-                color: showMapStylesMenu ? '#a5b4fc' : 'var(--color-text)',
-                boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-                transition: 'all 0.2s ease',
-              }}
-              title="Change Map Style"
-              aria-label="Change Map Style"
-            >
-              <Layers size={19} />
-            </button>
-          </div>
 
           {/* Left Floating Controls Stack (Search & Alerts) */}
           <div
@@ -2897,268 +2795,361 @@ export function MapPage() {
             )}
           </div>
 
-
           {/* Bottom Navigation Panel — Google Maps-style draggable bottom sheet */}
           {navigationActive && (
             <div
               ref={sheetRef}
-              className={`glass map-nav-panel${navSheetExpanded ? ' map-nav-expanded' : ''}`}
-              style={{
-                position: 'absolute',
-                bottom: '1rem',
-                left: '1rem',
-                right: '1rem',
-                maxHeight: '200px',
-                zIndex: 1000,
-                borderRadius: 'var(--radius-xl)',
-                padding: '1.25rem 1.5rem',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.75rem',
-                overflow: 'hidden',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
-                transition: 'transform 0.35s cubic-bezier(0.32, 0.72, 0, 1)',
-                willChange: 'transform',
-              }}
+              className={`glass map-nav-panel map-nav-${navSheetState}`}
               onTouchStart={handleSheetTouchStart}
               onTouchMove={handleSheetTouchMove}
               onTouchEnd={handleSheetTouchEnd}
+              onMouseDown={handleSheetTouchStart}
+              onMouseMove={handleSheetTouchMove}
+              onMouseUp={handleSheetTouchEnd}
             >
-              {/* Drag handle — visible only on mobile via CSS */}
+              {/* Drag handle bar at top */}
               <div
                 className="nav-sheet-handle"
-                onClick={() => setNavSheetExpanded(v => !v)}
-                style={{
-                  display: 'none', /* shown via CSS on mobile */
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  padding: '0 0 0.25rem',
-                  cursor: 'grab',
-                  touchAction: 'none',
+                onClick={() => {
+                  setNavSheetState(curr => (curr === 'hidden' ? 'normal' : curr === 'normal' ? 'expanded' : 'normal'));
                 }}
+                title={navSheetState === 'hidden' ? 'Tap or drag up to expand' : 'Swipe down to hide'}
               >
-                <div style={{
-                  width: 40, height: 4, borderRadius: 999,
-                  background: 'rgba(255,255,255,0.2)',
-                }} />
+                <div className="nav-sheet-handle-bar" />
               </div>
 
-              {/* Summary row — always visible */}
-              {guidedTourActive && tourStops.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                      <div style={{
-                        width: 42, height: 42,
-                        background: 'linear-gradient(135deg, #a855f7, #6366f1)',
-                        borderRadius: '50%',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        color: '#fff', flexShrink: 0,
-                        boxShadow: '0 4px 12px rgba(168, 85, 247, 0.4)'
-                      }}>
-                        <Compass size={22} />
-                      </div>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                          <span style={{ fontSize: '0.68rem', fontWeight: 800, color: '#22d3ee', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                            🎪 GUIDED TOUR · STOP {currentTourStopIndex + 1} OF {tourStops.length}
-                          </span>
-                        </div>
-                        <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: '0.1rem 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 'clamp(140px, 40vw, 240px)' }}>
-                          {tourStops[currentTourStopIndex]?.name || 'Next Stall'}
-                        </h3>
-                        <p style={{ fontSize: '0.78rem', color: 'var(--color-muted)', margin: 0 }}>
-                          <span style={{ color: 'var(--color-accent)', fontWeight: 700 }}>{totalDistance} m</span>
-                          {' · '}Est: {totalDistance < 80 ? '< 1 min' : `${Math.ceil(totalDistance / 80)} min`} walking
-                        </p>
-                      </div>
+              {/* State: HIDDEN (Compact Peeking View) */}
+              {navSheetState === 'hidden' ? (
+                <div
+                  onClick={() => setNavSheetState('normal')}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '0.6rem',
+                    cursor: 'pointer',
+                    padding: '0.1rem 0.25rem 0.25rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', minWidth: 0, flex: 1 }}>
+                    <div style={{
+                      width: 28, height: 28,
+                      borderRadius: '50%',
+                      background: guidedTourActive ? 'linear-gradient(135deg, #a855f7, #6366f1)' : 'rgba(99,102,241,0.2)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: '#fff', flexShrink: 0,
+                    }}>
+                      {guidedTourActive ? <Compass size={15} /> : <Route size={15} />}
                     </div>
+                    <div style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <span style={{ fontWeight: 700, fontSize: '0.86rem', color: '#fff' }}>
+                        {guidedTourActive && tourStops.length > 0
+                          ? tourStops[currentTourStopIndex]?.name || 'Next Stall'
+                          : selectedDestinationStoreId
+                            ? (stores.find(s => s.id === selectedDestinationStoreId)?.name || 'Exhibitor')
+                            : (nodes.find(n => n.id === selectedDestinationNodeId)?.label || 'Destination')}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--color-accent)', marginLeft: '0.5rem', fontWeight: 600 }}>
+                        {totalDistance} m
+                      </span>
+                    </div>
+                  </div>
 
-                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+                    {guidedTourActive && (
                       <button
                         className="btn btn-primary btn-sm"
-                        onClick={handleMarkCurrentStopVisited}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleMarkCurrentStopVisited();
+                        }}
                         style={{
-                          fontSize: '0.75rem',
-                          padding: '0.35rem 0.65rem',
+                          fontSize: '0.7rem',
+                          padding: '0.2rem 0.55rem',
                           background: 'linear-gradient(135deg, #22c55e, #16a34a)',
                           border: 'none',
                           fontWeight: 700,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.3rem',
-                          boxShadow: '0 2px 8px rgba(34, 197, 94, 0.3)'
+                          borderRadius: '6px',
                         }}
                       >
-                        <Check size={14} />
-                        {currentTourStopIndex + 1 < tourStops.length ? 'Next Stall ✓' : 'Finish Tour 🎉'}
+                        {currentTourStopIndex + 1 < tourStops.length ? 'Next ✓' : 'Finish 🎉'}
                       </button>
-
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        onClick={handleCancelTour}
-                        style={{ padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.75rem', color: 'var(--color-danger)' }}
-                      >
-                        ✕ End
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Tour Stops Sequence Progress Pills */}
-                  <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', paddingBottom: '0.15rem', scrollbarWidth: 'none' }}>
-                    {tourStops.map((stop, sIdx) => {
-                      const isCurrent = sIdx === currentTourStopIndex;
-                      const isPast = sIdx < currentTourStopIndex || visitedStallIds.includes(stop.id);
-                      return (
-                        <div
-                          key={stop.id}
-                          style={{
-                            padding: '0.2rem 0.5rem',
-                            borderRadius: '6px',
-                            fontSize: '0.68rem',
-                            fontWeight: 700,
-                            whiteSpace: 'nowrap',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.25rem',
-                            background: isCurrent
-                              ? 'rgba(34, 211, 238, 0.2)'
-                              : isPast
-                                ? 'rgba(34, 197, 94, 0.15)'
-                                : 'rgba(255, 255, 255, 0.05)',
-                            border: `1px solid ${isCurrent
-                                ? '#22d3ee'
-                                : isPast
-                                  ? '#22c55e'
-                                  : 'var(--color-border)'
-                              }`,
-                            color: isCurrent ? '#22d3ee' : isPast ? '#22c55e' : 'var(--color-muted)'
-                          }}
-                        >
-                          <span>{isPast ? '✓' : sIdx + 1}</span>
-                          <span>{stop.name}</span>
-                        </div>
-                      );
-                    })}
+                    )}
+                    <span style={{ fontSize: '0.72rem', color: 'var(--color-muted)', display: 'flex', alignItems: 'center', gap: '0.15rem' }}>
+                      <ChevronUp size={16} /> Drag up
+                    </span>
                   </div>
                 </div>
               ) : (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                    <div style={{ width: 42, height: 42, background: 'rgba(99,102,241,0.15)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-primary-h)', flexShrink: 0 }}>
-                      <Route size={20} />
-                    </div>
-                    <div>
-                      <h3 style={{ fontSize: '1rem', fontWeight: 800, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 'clamp(140px, 40vw, 240px)' }}>
-                        {isFarAway
-                          ? `🏫 Head to School Entrance`
-                          : `Navigating to ${selectedDestinationStoreId
-                            ? (stores.find((s) => s.id === selectedDestinationStoreId)?.name || 'Exhibitor')
-                            : (nodes.find((n) => n.id === selectedDestinationNodeId)?.label || 'Facility')}`}
-                      </h3>
-                      <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)', margin: 0 }}>
-                        <span style={{ color: 'var(--color-accent)', fontWeight: 700 }}>{totalDistance} m</span>
-                        {' · '}Est: {totalDistance < 80 ? '< 1 min' : `${Math.ceil(totalDistance / 80)} min`}
-                        {/* GPS accuracy indicator — only shown when real GPS is active */}
-                        {!mockMode && gpsAccuracy !== null && (
-                          <span style={{
-                            marginLeft: '0.5rem',
-                            fontSize: '0.72rem',
-                            fontWeight: 700,
-                            padding: '0.05rem 0.4rem',
-                            borderRadius: '4px',
-                            color: gpsAccuracy <= 5
-                              ? '#22c55e'
-                              : gpsAccuracy <= 15
-                                ? '#eab308'
-                                : '#f97316',
-                            background: gpsAccuracy <= 5
-                              ? 'rgba(34,197,94,0.1)'
-                              : gpsAccuracy <= 15
-                                ? 'rgba(234,179,8,0.1)'
-                                : 'rgba(249,115,22,0.1)',
-                            border: `1px solid ${gpsAccuracy <= 5
-                              ? 'rgba(34,197,94,0.25)'
-                              : gpsAccuracy <= 15
-                                ? 'rgba(234,179,8,0.25)'
-                                : 'rgba(249,115,22,0.25)'}`,
+                /* State: NORMAL or EXPANDED */
+                <>
+                  {guidedTourActive && tourStops.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                      {/* Top Info Header Row */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center', minWidth: 0, flex: 1 }}>
+                          <div style={{
+                            width: 38, height: 38,
+                            background: 'linear-gradient(135deg, #a855f7, #6366f1)',
+                            borderRadius: '50%',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            color: '#fff', flexShrink: 0,
+                            boxShadow: '0 4px 12px rgba(168, 85, 247, 0.4)'
                           }}>
-                            📍 ±{Math.round(gpsAccuracy)} m
-                          </span>
-                        )}
-                      </p>
-                      {/* Entrance-snap notice — shown when poor GPS caused fallback */}
-                      {snappedToNode && !mockMode && (
-                        <p style={{
-                          fontSize: '0.72rem',
-                          color: '#f97316',
-                          margin: '0.2rem 0 0',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.3rem',
-                        }}>
-                          <span style={{ opacity: 0.8 }}>⚠️</span>
-                          Weak GPS — routing from <strong style={{ color: '#fb923c' }}>{snappedToNode}</strong>
-                        </p>
-                      )}
-                    </div>
-                  </div>
+                            <Compass size={20} />
+                          </div>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#22d3ee', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                              🎪 GUIDED TOUR · STOP {currentTourStopIndex + 1} OF {tourStops.length}
+                            </div>
+                            <h3 style={{ fontSize: '0.98rem', fontWeight: 800, margin: '0.05rem 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {tourStops[currentTourStopIndex]?.name || 'Next Stall'}
+                            </h3>
+                            <p style={{ fontSize: '0.75rem', color: 'var(--color-muted)', margin: 0 }}>
+                              <span style={{ color: 'var(--color-accent)', fontWeight: 700 }}>{totalDistance} m</span>
+                              {' · '}Est: {totalDistance < 80 ? '< 1 min' : `${Math.ceil(totalDistance / 80)} min`} walking
+                            </p>
+                          </div>
+                        </div>
 
-                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexShrink: 0 }}>
-                    {/* Expand/collapse toggle — visible on mobile */}
-                    <button
-                      className="nav-sheet-toggle"
-                      onClick={() => setNavSheetExpanded(v => !v)}
+                        {/* Minimize / Expand Toggle Icon Button */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => setNavSheetState('hidden')}
+                            style={{
+                              padding: '0.3rem 0.4rem',
+                              borderRadius: '8px',
+                              color: 'var(--color-muted)',
+                              border: '1px solid var(--color-border)',
+                              background: 'rgba(255,255,255,0.04)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.2rem',
+                              fontSize: '0.72rem',
+                            }}
+                            title="Swipe down or tap to minimize"
+                            aria-label="Minimize detail tab"
+                          >
+                            <ChevronDown size={15} />
+                            <span>Hide</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Clean Dedicated Action Buttons Row (No Clashes!) */}
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', width: '100%', marginTop: '0.1rem' }}>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={handleMarkCurrentStopVisited}
+                          style={{
+                            flex: 1,
+                            fontSize: '0.8rem',
+                            padding: '0.45rem 0.8rem',
+                            background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                            border: 'none',
+                            fontWeight: 700,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '0.35rem',
+                            borderRadius: '10px',
+                            boxShadow: '0 2px 8px rgba(34, 197, 94, 0.35)'
+                          }}
+                        >
+                          <Check size={15} />
+                          <span>{currentTourStopIndex + 1 < tourStops.length ? 'Next Stall ✓' : 'Finish Tour 🎉'}</span>
+                        </button>
+
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={handleCancelTour}
+                          style={{
+                            padding: '0.45rem 0.85rem',
+                            border: '1px solid rgba(244, 63, 94, 0.3)',
+                            borderRadius: '10px',
+                            fontSize: '0.78rem',
+                            color: 'var(--color-danger)',
+                            background: 'rgba(244, 63, 94, 0.08)',
+                            fontWeight: 600,
+                          }}
+                        >
+                          ✕ End
+                        </button>
+                      </div>
+
+                      {/* Tour Stops Sequence Progress Pills */}
+                      <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', paddingBottom: '0.15rem', scrollbarWidth: 'none' }}>
+                        {tourStops.map((stop, sIdx) => {
+                          const isCurrent = sIdx === currentTourStopIndex;
+                          const isPast = sIdx < currentTourStopIndex || visitedStallIds.includes(stop.id);
+                          return (
+                            <div
+                              key={stop.id}
+                              style={{
+                                padding: '0.2rem 0.5rem',
+                                borderRadius: '6px',
+                                fontSize: '0.68rem',
+                                fontWeight: 700,
+                                whiteSpace: 'nowrap',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.25rem',
+                                background: isCurrent
+                                  ? 'rgba(34, 211, 238, 0.2)'
+                                  : isPast
+                                    ? 'rgba(34, 197, 94, 0.15)'
+                                    : 'rgba(255, 255, 255, 0.05)',
+                                border: `1px solid ${isCurrent
+                                    ? '#22d3ee'
+                                    : isPast
+                                      ? '#22c55e'
+                                      : 'var(--color-border)'
+                                  }`,
+                                color: isCurrent ? '#22d3ee' : isPast ? '#22c55e' : 'var(--color-muted)'
+                              }}
+                            >
+                              <span>{isPast ? '✓' : sIdx + 1}</span>
+                              <span>{stop.name}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    /* Single Navigation View */
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center', minWidth: 0, flex: 1 }}>
+                          <div style={{ width: 38, height: 38, background: 'rgba(99,102,241,0.18)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-primary-h)', flexShrink: 0 }}>
+                            <Route size={18} />
+                          </div>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <h3 style={{ fontSize: '0.98rem', fontWeight: 800, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {isFarAway
+                                ? `🏫 Head to School Entrance`
+                                : `Navigating to ${selectedDestinationStoreId
+                                  ? (stores.find((s) => s.id === selectedDestinationStoreId)?.name || 'Exhibitor')
+                                  : (nodes.find((n) => n.id === selectedDestinationNodeId)?.label || 'Facility')}`}
+                            </h3>
+                            <p style={{ fontSize: '0.78rem', color: 'var(--color-muted)', margin: 0 }}>
+                              <span style={{ color: 'var(--color-accent)', fontWeight: 700 }}>{totalDistance} m</span>
+                              {' · '}Est: {totalDistance < 80 ? '< 1 min' : `${Math.ceil(totalDistance / 80)} min`}
+                              {!mockMode && gpsAccuracy !== null && (
+                                <span style={{
+                                  marginLeft: '0.4rem',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 700,
+                                  padding: '0.05rem 0.35rem',
+                                  borderRadius: '4px',
+                                  color: gpsAccuracy <= 5 ? '#22c55e' : gpsAccuracy <= 15 ? '#eab308' : '#f97316',
+                                  background: 'rgba(255,255,255,0.06)',
+                                }}>
+                                  📍 ±{Math.round(gpsAccuracy)}m
+                                </span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Minimize toggle */}
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => setNavSheetState('hidden')}
+                          style={{
+                            padding: '0.3rem 0.4rem',
+                            borderRadius: '8px',
+                            color: 'var(--color-muted)',
+                            border: '1px solid var(--color-border)',
+                            background: 'rgba(255,255,255,0.04)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.2rem',
+                            fontSize: '0.72rem',
+                          }}
+                          title="Swipe down or tap to minimize"
+                          aria-label="Minimize detail tab"
+                        >
+                          <ChevronDown size={15} />
+                          <span>Hide</span>
+                        </button>
+                      </div>
+
+                      {/* Single Navigation Actions Row */}
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => {
+                            setSelectedDestinationStoreId('');
+                            setSelectedDestinationNodeId('');
+                            setStoreSearchQuery('');
+                            setNavSheetState('normal');
+                            setActivePitstopDetour(null);
+                          }}
+                          style={{
+                            flex: 1,
+                            padding: '0.45rem 0.75rem',
+                            border: '1px solid var(--color-border)',
+                            borderRadius: '10px',
+                            fontSize: '0.78rem',
+                            fontWeight: 600,
+                          }}
+                        >
+                          ✕ Clear Route
+                        </button>
+
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => setNavSheetState(curr => curr === 'expanded' ? 'normal' : 'expanded')}
+                          style={{
+                            padding: '0.45rem 0.75rem',
+                            border: '1px solid rgba(34, 211, 238, 0.25)',
+                            borderRadius: '10px',
+                            fontSize: '0.78rem',
+                            color: '#22d3ee',
+                            background: 'rgba(34, 211, 238, 0.08)',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.3rem',
+                          }}
+                        >
+                          {navSheetState === 'expanded' ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+                          <span>{navSheetState === 'expanded' ? 'Hide Steps' : 'View Steps'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Step guidance — visible when expanded */}
+                  {navSheetState === 'expanded' && (
+                    <div
+                      className="nav-sheet-steps"
                       style={{
-                        display: 'none', /* shown via CSS on mobile */
-                        background: 'rgba(255,255,255,0.06)',
-                        border: '1px solid var(--color-border)',
-                        borderRadius: '50%',
-                        width: 30, height: 30,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: 'pointer',
-                        color: 'var(--color-muted)',
-                        transition: 'transform 0.3s',
-                        transform: navSheetExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                        overflowY: 'auto',
+                        paddingRight: '0.5rem',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.5rem',
+                        borderTop: '1px solid var(--color-border)',
+                        paddingTop: '0.75rem',
+                        maxHeight: '38vh',
                       }}
-                      aria-label={navSheetExpanded ? 'Collapse' : 'Expand'}
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <polyline points="18 15 12 9 6 15" />
-                      </svg>
-                    </button>
-
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => {
-                        setSelectedDestinationStoreId('');
-                        setSelectedDestinationNodeId('');
-                        setStoreSearchQuery('');
-                        setNavSheetExpanded(false);
-                        setActivePitstopDetour(null);
-                      }}
-                      style={{ padding: '0.25rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: '6px', fontSize: '0.8rem' }}
-                    >
-                      ✕ Clear
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Step guidance — hidden when collapsed, visible when expanded on mobile */}
-              <div className="nav-sheet-steps" style={{ overflowY: 'auto', paddingRight: '0.5rem', flexDirection: 'column', gap: '0.5rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.75rem' }}>
-                {guideSteps.map((step, idx) => (
-                  <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', fontSize: '0.85rem' }}>
-                    <div style={{ width: 20, height: 20, borderRadius: '50%', background: idx === 0 ? 'rgba(34,211,238,0.15)' : 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
-                      <span style={{ fontSize: '0.6rem', fontWeight: 700, color: idx === 0 ? 'var(--color-accent)' : 'var(--color-muted)' }}>{idx + 1}</span>
+                      {guideSteps.map((step, idx) => (
+                        <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', fontSize: '0.85rem' }}>
+                          <div style={{ width: 20, height: 20, borderRadius: '50%', background: idx === 0 ? 'rgba(34,211,238,0.15)' : 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
+                            <span style={{ fontSize: '0.6rem', fontWeight: 700, color: idx === 0 ? 'var(--color-accent)' : 'var(--color-muted)' }}>{idx + 1}</span>
+                          </div>
+                          <span style={{ color: idx === 0 ? 'var(--color-accent)' : 'inherit', fontWeight: idx === 0 ? 600 : 400, lineHeight: 1.4 }}>
+                            {step}
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                    <span style={{ color: idx === 0 ? 'var(--color-accent)' : 'inherit', fontWeight: idx === 0 ? 600 : 400, lineHeight: 1.4 }}>
-                      {step}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
@@ -3213,10 +3204,11 @@ export function MapPage() {
             </div>
           )}
 
-          {/* Floating Pitstop Button (Bottom-Right corner) */}
+          {/* Floating Pitstop Button (Right Side, floating above Recenter button) */}
           {(navigationActive || guidedTourActive || activePitstopDetour) && (
             <button
               id="quick-pitstop-fab-btn"
+              className={`quick-pitstop-fab ${activePitstopDetour ? 'active-detour' : ''}`}
               onClick={() => {
                 if (activePitstopDetour) {
                   handleResumeOriginalRoute();
@@ -3227,26 +3219,14 @@ export function MapPage() {
               style={{
                 position: 'fixed',
                 right: '16px',
-                bottom: navSheetExpanded ? '330px' : '95px',
-                zIndex: 1030,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.45rem',
-                padding: '0.55rem 0.95rem',
-                borderRadius: '30px',
-                background: activePitstopDetour
-                  ? 'linear-gradient(135deg, #22c55e, #16a34a)'
-                  : 'linear-gradient(135deg, #0ea5e9, #6366f1)',
-                color: '#ffffff',
-                fontWeight: 700,
-                fontSize: '0.82rem',
-                boxShadow: activePitstopDetour
-                  ? '0 6px 20px rgba(34, 197, 94, 0.45), 0 2px 8px rgba(0,0,0,0.3)'
-                  : '0 6px 20px rgba(14, 165, 233, 0.45), 0 2px 8px rgba(0,0,0,0.3)',
-                border: '1.5px solid rgba(255, 255, 255, 0.25)',
-                cursor: 'pointer',
-                transition: 'all 0.25s cubic-bezier(0.32, 0.72, 0, 1)',
-                backdropFilter: 'blur(8px)',
+                bottom: navigationActive
+                  ? (navSheetState === 'hidden'
+                      ? 'calc(170px + var(--safe-bottom, 0px))'
+                      : navSheetState === 'expanded'
+                        ? 'calc(min(65vh, 480px) + 76px)'
+                        : 'calc(290px + var(--safe-bottom, 0px))')
+                  : '170px',
+                zIndex: 1005,
               }}
               title={
                 activePitstopDetour
@@ -3258,7 +3238,7 @@ export function MapPage() {
                 {activePitstopDetour ? '✓' : '🚻'}
               </span>
               <span>
-                {activePitstopDetour ? 'Resume Route' : 'Pitstop'}
+                {activePitstopDetour ? 'Resume' : 'Pitstop'}
               </span>
             </button>
           )}

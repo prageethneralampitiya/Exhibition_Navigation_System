@@ -4,6 +4,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import { LiveBroadcastProvider } from './contexts/LiveBroadcastContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { RealtimeAnnouncements } from './components/RealtimeAnnouncements';
+import { SplashScreen } from './components/SplashScreen';
 import './index.css';
 
 // Lazy load page components to improve initial loading performance
@@ -47,6 +48,7 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <LiveBroadcastProvider>
+          <SplashScreen />
           <div className="site-upper-background" aria-hidden="true" />
           <RealtimeAnnouncements />
           <Suspense fallback={<PageLoader />}>
