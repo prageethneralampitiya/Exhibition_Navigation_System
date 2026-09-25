@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   MapPin,
@@ -98,7 +98,7 @@ const placeholderExhibitions: PlaceholderExhibition[] = [
   },
 ];
 
-function useCarouselScroller(speed = 0.8) {
+function useCarouselScroller(speed = 0.8, repeatCount = 4) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const isDraggingRef = useRef(false);
   const isInteractingRef = useRef(false);
@@ -106,67 +106,86 @@ function useCarouselScroller(speed = 0.8) {
   const startXRef = useRef(0);
   const scrollStartRef = useRef(0);
   const posRef = useRef(0);
-  const halfWidthRef = useRef(0);
+  const singleSetWidthRef = useRef(0);
+  const lastScrollWidthRef = useRef(0);
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Measure and cache half width (width of 1 complete set of cards)
-  const updateMetrics = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    halfWidthRef.current = el.scrollWidth / 2;
-    posRef.current = el.scrollLeft;
-  }, []);
-
+  const repeatCountRef = useRef(repeatCount);
   useEffect(() => {
-    updateMetrics();
-
-    const el = containerRef.current;
-    if (!el) return;
-
-    let resizeObserver: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== 'undefined') {
-      resizeObserver = new ResizeObserver(() => {
-        updateMetrics();
-      });
-      resizeObserver.observe(el);
-    }
-
-    const onResize = () => updateMetrics();
-    window.addEventListener('resize', onResize);
-
-    return () => {
-      window.removeEventListener('resize', onResize);
-      resizeObserver?.disconnect();
-    };
-  }, [updateMetrics]);
+    repeatCountRef.current = repeatCount;
+    singleSetWidthRef.current = 0; // force recalculation when repeatCount changes
+  }, [repeatCount]);
 
   useEffect(() => {
     let animId: number;
     let lastTime = performance.now();
+    let isVisible = true;
+
+    const el = containerRef.current;
+    let observer: IntersectionObserver | null = null;
+    if (el && typeof IntersectionObserver !== 'undefined') {
+      observer = new IntersectionObserver(
+        ([entry]) => {
+          isVisible = entry.isIntersecting;
+          if (entry.isIntersecting && el) {
+            posRef.current = el.scrollLeft;
+            lastTime = performance.now();
+          }
+        },
+        { threshold: 0 }
+      );
+      observer.observe(el);
+    }
 
     const loop = (currentTime: number) => {
-      // Clamp delta to prevent huge jumps when switching tabs
       const delta = Math.min((currentTime - lastTime) / 16.67, 3);
       lastTime = currentTime;
 
-      const el = containerRef.current;
-      if (el && !isInteractingRef.current && !isDraggingRef.current) {
-        posRef.current += speed * delta;
-        const halfWidth = halfWidthRef.current;
-
-        // True seamless infinite loop: wrap back by exactly half without any jump
-        if (halfWidth > 0 && posRef.current >= halfWidth) {
-          posRef.current -= halfWidth;
+      const currentEl = containerRef.current;
+      if (currentEl && isVisible) {
+        const rCount = Math.max(repeatCountRef.current, 1);
+        if (singleSetWidthRef.current <= 0 || currentEl.scrollWidth !== lastScrollWidthRef.current) {
+          lastScrollWidthRef.current = currentEl.scrollWidth;
+          singleSetWidthRef.current = currentEl.scrollWidth / rCount;
         }
 
-        el.scrollLeft = posRef.current;
+        const singleSetWidth = singleSetWidthRef.current;
+
+        if (!isInteractingRef.current && !isDraggingRef.current) {
+          posRef.current += speed * delta;
+
+          // Seamless infinite wrap: when 1 set has scrolled, wrap back
+          if (singleSetWidth > 0 && posRef.current >= singleSetWidth) {
+            posRef.current -= singleSetWidth;
+          }
+
+          currentEl.scrollLeft = posRef.current;
+        } else {
+          // Manual drag or user interaction: wrap seamlessly if crossing bounds
+          if (singleSetWidth > 0) {
+            if (currentEl.scrollLeft >= singleSetWidth * 2) {
+              currentEl.scrollLeft -= singleSetWidth;
+              posRef.current = currentEl.scrollLeft;
+            } else if (currentEl.scrollLeft <= 0) {
+              currentEl.scrollLeft += singleSetWidth;
+              posRef.current = currentEl.scrollLeft;
+            } else {
+              posRef.current = currentEl.scrollLeft;
+            }
+          } else {
+            posRef.current = currentEl.scrollLeft;
+          }
+        }
       }
 
       animId = requestAnimationFrame(loop);
     };
 
     animId = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(animId);
+    return () => {
+      cancelAnimationFrame(animId);
+      observer?.disconnect();
+    };
   }, [speed]);
 
   const pauseAndResume = useCallback((delay = 2200) => {
@@ -306,9 +325,72 @@ export function HomePage() {
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
   const [isVideoLivesModalOpen, setIsVideoLivesModalOpen] = useState(false);
 
+  // Simulated live visitor counter: starts at 1 on reload, animates up to 120–260, then subtly fluctuates
+  const [liveVisitorCount, setLiveVisitorCount] = useState(1);
+
+  useEffect(() => {
+    // Generate realistic target between 120 and 260
+    const targetCount = Math.floor(Math.random() * (260 - 120 + 1)) + 120;
+    const startCount = 1;
+    const duration = 1800; // 1.8 seconds smooth roll-up
+    const startTime = performance.now();
+    let animId: number;
+    let fluctuationTimer: ReturnType<typeof setInterval>;
+
+    const animateCount = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease out cubic
+      const easeProgress = 1 - Math.pow(1 - progress, 3);
+      const current = Math.floor(startCount + (targetCount - startCount) * easeProgress);
+      setLiveVisitorCount(current);
+
+      if (progress < 1) {
+        animId = requestAnimationFrame(animateCount);
+      } else {
+        // Once completed, realistically fluctuate by +/- 1 or 2 every 5 seconds
+        let currentLive = targetCount;
+        fluctuationTimer = setInterval(() => {
+          const delta = (Math.random() > 0.48 ? 1 : -1) * (Math.random() > 0.75 ? 2 : 1);
+          currentLive = Math.max(90, Math.min(320, currentLive + delta));
+          setLiveVisitorCount(currentLive);
+        }, 5000);
+      }
+    };
+
+    animId = requestAnimationFrame(animateCount);
+
+    return () => {
+      cancelAnimationFrame(animId);
+      clearInterval(fluctuationTimer);
+    };
+  }, []);
+
+  // Memoized lists and repeat counts for seamless infinite looping
+  const baseExhibitions = useMemo<CarouselExhibitionItem[]>(() => [
+    ...exhibitions.map((ex): RealExhibitionItem => ({ ...ex, isPlaceholder: false })),
+    ...placeholderExhibitions,
+  ], [exhibitions]);
+
+  const featuredCopies = useMemo(() => {
+    return Math.max(4, Math.ceil(20 / Math.max(baseExhibitions.length, 1)));
+  }, [baseExhibitions.length]);
+
+  const featuredDisplayList = useMemo(() => {
+    return Array.from({ length: featuredCopies }).flatMap(() => baseExhibitions);
+  }, [baseExhibitions, featuredCopies]);
+
+  const storeCopies = useMemo(() => {
+    return stores.length > 0 ? Math.max(6, Math.ceil(24 / stores.length)) : 1;
+  }, [stores.length]);
+
+  const storesDisplayList = useMemo(() => {
+    return stores.length > 0 ? Array.from({ length: storeCopies }).flatMap(() => stores) : [];
+  }, [stores, storeCopies]);
+
   // Interactive auto-scrolling & manually scrollable carousels
-  const featuredCarousel = useCarouselScroller(0.8);
-  const storesCarousel = useCarouselScroller(0.8);
+  const featuredCarousel = useCarouselScroller(0.8, featuredCopies);
+  const storesCarousel = useCarouselScroller(0.8, storeCopies);
 
   useEffect(() => {
     const handleUnread = (e: Event) => {
@@ -684,9 +766,9 @@ export function HomePage() {
             <span>{loading ? '—' : stores.length} Exhibitors</span>
           </div>
           <div className="home-stat-divider" />
-          <div className="home-stat-chip">
-            <MapPin size={14} />
-            <span>Live Navigation</span>
+          <div className="home-stat-chip home-stat-chip-live">
+            <span className="home-live-pulse-dot" />
+            <span>{liveVisitorCount} Live Visitors</span>
           </div>
         </div>
 
@@ -729,14 +811,7 @@ export function HomePage() {
                 {...featuredCarousel.handlers}
               >
                 <div className="home-ex-carousel-track">
-                  {(
-                    [
-                      ...exhibitions.map((ex): RealExhibitionItem => ({ ...ex, isPlaceholder: false })),
-                      ...placeholderExhibitions,
-                      ...exhibitions.map((ex): RealExhibitionItem => ({ ...ex, isPlaceholder: false })),
-                      ...placeholderExhibitions,
-                    ] as CarouselExhibitionItem[]
-                  ).map((item, index) =>
+                  {featuredDisplayList.map((item, index) =>
                     item.isPlaceholder ? (
                       /* Customizable Placeholder Card */
                       <div
@@ -864,11 +939,7 @@ export function HomePage() {
                 {...storesCarousel.handlers}
               >
                 <div className="home-stores-carousel-track">
-                  {(
-                    stores.length < 5
-                      ? [...stores, ...stores, ...stores, ...stores]
-                      : [...stores, ...stores]
-                  ).map((st, index) => (
+                  {storesDisplayList.map((st, index) => (
                     <Link
                       key={`st-${st.id}-${index}`}
                       to={`/stores/${st.id}`}
@@ -878,12 +949,6 @@ export function HomePage() {
                         '--store-cat-color': st.categories?.color || 'var(--color-primary)',
                       } as React.CSSProperties}
                     >
-                      {/* Top colored accent indicator */}
-                      <div
-                        className="home-store-accent"
-                        style={{ background: st.categories?.color || 'var(--color-primary)' }}
-                      />
-
                       {/* Store Logo */}
                       <div className="home-store-carousel-logo">
                         {st.logo_url ? (

@@ -219,7 +219,7 @@ export function StoreDirectoryPage() {
             </button>
           </div>
         ) : viewMode === 'list' ? (
-          filteredStores.map((st) => {
+          filteredStores.map((st, index) => {
             const openStatus = isOpen(st.opening_time, st.closing_time);
             return (
               <Link
@@ -229,14 +229,9 @@ export function StoreDirectoryPage() {
                 id={`store-list-item-${st.id}`}
                 style={{
                   '--accent': st.categories?.color || 'var(--color-primary)',
+                  animationDelay: `${Math.min(index * 0.05, 0.5)}s`,
                 } as React.CSSProperties}
               >
-                {/* Left category color bar */}
-                <div
-                  className="store-list-bar"
-                  style={{ background: st.categories?.color || 'var(--color-primary)' }}
-                />
-
                 {/* Logo */}
                 {st.logo_url ? (
                   <img src={st.logo_url} alt={st.name} className="store-list-logo" />
@@ -244,7 +239,7 @@ export function StoreDirectoryPage() {
                   <div
                     className="store-list-logo-ph"
                     style={{
-                      background: `${st.categories?.color || 'var(--color-surface2)'}20`,
+                      background: 'rgba(255, 255, 255, 0.04)',
                     }}
                   >
                     <Store size={22} color={st.categories?.color || 'var(--color-muted)'} />
@@ -303,12 +298,15 @@ export function StoreDirectoryPage() {
           })
         ) : (
           /* Grid view */
-          filteredStores.map((st) => (
+          filteredStores.map((st, index) => (
             <Link
               key={st.id}
               to={`/stores/${st.id}`}
               className="store-grid-card"
               id={`store-grid-item-${st.id}`}
+              style={{
+                animationDelay: `${Math.min(index * 0.05, 0.5)}s`,
+              }}
             >
               <div
                 className="store-grid-top"

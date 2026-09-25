@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
-import { Megaphone, X, Bell, AlertTriangle, AlertCircle, Check } from 'lucide-react';
+import { Megaphone, X, Bell, AlertTriangle, AlertCircle, Check, Radio, Info } from 'lucide-react';
 import { supabase, type Announcement } from '../lib/supabase';
+import mainDarkBg from '../pics/main dark.png';
 
 export function RealtimeAnnouncements() {
   const [activeToast, setActiveToast] = useState<Announcement | null>(null);
@@ -300,8 +301,9 @@ export function RealtimeAnnouncements() {
             position: 'fixed',
             inset: 0,
             zIndex: 9998,
-            background: 'rgba(5, 7, 12, 0.75)',
-            backdropFilter: 'blur(4px)',
+            background: 'rgba(5, 7, 12, 0.72)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
             display: 'flex',
             justifyContent: 'flex-end',
             animation: 'drawer-fade-in 0.2s ease-out',
@@ -309,88 +311,312 @@ export function RealtimeAnnouncements() {
           onClick={() => setIsHistoryOpen(false)}
         >
           <div
-            className="glass"
             style={{
               width: '100%',
-              maxWidth: '380px',
+              maxWidth: '420px',
               height: '100%',
               maxHeight: '100dvh',
-              background: 'var(--color-bg)',
-              boxShadow: '-8px 0 32px rgba(0,0,0,0.5)',
+              position: 'relative',
+              boxShadow: '-16px 0 48px rgba(0, 0, 0, 0.85)',
+              borderLeft: '1px solid rgba(255, 255, 255, 0.12)',
               display: 'flex',
               flexDirection: 'column',
-              padding: '1.5rem',
-              paddingBottom: 'calc(1.5rem + var(--safe-bottom, 0px))',
-              paddingTop: 'calc(1.5rem + var(--safe-top, 0px))',
+              padding: '1.25rem',
+              paddingBottom: 'calc(1.25rem + var(--safe-bottom, 0px))',
+              paddingTop: 'calc(1.25rem + var(--safe-top, 0px))',
+              overflow: 'hidden',
+              backgroundColor: '#070a14',
               animation: 'drawer-slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', borderBottom: '1px solid var(--color-border)', paddingBottom: '0.75rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Bell size={18} color="var(--color-primary-h)" />
-                <h3 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0 }}>Announcements</h3>
-              </div>
-              <button
-                onClick={() => setIsHistoryOpen(false)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', padding: 0 }}
+            {/* Blurred Background Image: main dark.png */}
+            <div
+              style={{
+                position: 'absolute',
+                inset: -20,
+                backgroundImage: `url(${mainDarkBg})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'right top',
+                backgroundRepeat: 'no-repeat',
+                filter: 'blur(9px)',
+                transform: 'scale(1.06)',
+                pointerEvents: 'none',
+                zIndex: 0,
+                opacity: 0.9,
+              }}
+            />
+
+            {/* Dark Mask layer over blurred image to ensure maximum readability */}
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'linear-gradient(180deg, rgba(8, 12, 22, 0.42) 0%, rgba(6, 9, 18, 0.68) 100%)',
+                pointerEvents: 'none',
+                zIndex: 0,
+              }}
+            />
+
+            {/* Content Container (elevated above background for maximum legibility) */}
+            <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
+              {/* Header */}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: '1rem',
+                  borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                  paddingBottom: '0.85rem',
+                }}
               >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Actions list */}
-            {history.length > 0 && unreadCount > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
-                <button
-                  onClick={handleMarkAllRead}
-                  className="btn btn-ghost btn-sm"
-                  style={{ fontSize: '0.725rem', padding: '0.2rem 0.5rem' }}
-                >
-                  Mark all as read
-                </button>
-              </div>
-            )}
-
-            {/* History Feed list */}
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.75rem', paddingRight: '0.25rem' }}>
-              {history.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '3rem 0', color: 'var(--color-muted)' }}>
-                  <Megaphone size={28} style={{ margin: '0 auto 0.75rem auto', opacity: 0.5 }} />
-                  <p style={{ fontSize: '0.85rem' }}>No announcements broadcasted yet.</p>
-                </div>
-              ) : (
-                history.map((ann) => {
-                  let badgeColor = 'var(--color-primary)';
-                  if (ann.type === 'warning') badgeColor = 'var(--color-warning)';
-                  if (ann.type === 'emergency') badgeColor = '#ef4444';
-
-                  return (
-                    <div
-                      key={ann.id}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                  <div
+                    style={{
+                      width: 36,
+                      height: 36,
+                      borderRadius: '10px',
+                      background: 'rgba(99, 102, 241, 0.14)',
+                      border: '1px solid rgba(99, 102, 241, 0.3)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'var(--color-primary-h)',
+                    }}
+                  >
+                    <Bell size={18} />
+                  </div>
+                  <div>
+                    <h3
                       style={{
-                        background: 'rgba(255,255,255,0.015)',
-                        border: '1px solid var(--color-border)',
-                        borderRadius: '8px',
-                        padding: '0.875rem',
-                        position: 'relative',
-                        borderLeft: `3px solid ${badgeColor}`,
+                        fontSize: '1.05rem',
+                        fontWeight: 800,
+                        margin: 0,
+                        color: '#f8fafc',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.45rem',
                       }}
                     >
-                      <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: ann.type === 'emergency' ? '#ef4444' : 'inherit', margin: '0 0 0.15rem 0' }}>
-                        {ann.title}
-                      </h4>
-                      <p style={{ fontSize: '0.775rem', color: 'var(--color-muted)', margin: 0, lineHeight: 1.4 }}>
-                        {ann.message}
-                      </p>
-                      <span style={{ display: 'block', fontSize: '0.625rem', color: 'var(--color-muted)', marginTop: '0.4rem', textAlign: 'right' }}>
-                        {new Date(ann.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                  );
-                })
+                      Announcements
+                      {unreadCount > 0 && (
+                        <span
+                          style={{
+                            fontSize: '0.62rem',
+                            fontWeight: 800,
+                            padding: '0.1rem 0.4rem',
+                            borderRadius: '999px',
+                            background: '#ef4444',
+                            color: '#fff',
+                          }}
+                        >
+                          {unreadCount}
+                        </span>
+                      )}
+                    </h3>
+                    <p style={{ margin: '0.1rem 0 0 0', fontSize: '0.74rem', color: 'var(--color-muted)' }}>
+                      Live exhibition updates &amp; alerts
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setIsHistoryOpen(false)}
+                  className="btn btn-ghost btn-sm btn-icon"
+                  title="Close announcements"
+                  style={{
+                    borderRadius: '50%',
+                    width: 32,
+                    height: 32,
+                    padding: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--color-muted)',
+                  }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Actions list */}
+              {history.length > 0 && unreadCount > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem' }}>
+                  <button
+                    onClick={handleMarkAllRead}
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      padding: '0.25rem 0.6rem',
+                      borderRadius: '8px',
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      color: '#38bdf8',
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.3rem',
+                      transition: 'all 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'rgba(56, 189, 248, 0.12)';
+                      e.currentTarget.style.borderColor = 'rgba(56, 189, 248, 0.3)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                      e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+                    }}
+                  >
+                    <Check size={12} />
+                    Mark all as read
+                  </button>
+                </div>
               )}
+
+              {/* History Feed list */}
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.65rem',
+                  paddingRight: '0.25rem',
+                }}
+              >
+                {history.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--color-muted)' }}>
+                    <div
+                      style={{
+                        width: 52,
+                        height: 52,
+                        borderRadius: '14px',
+                        background: 'rgba(255, 255, 255, 0.04)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginBottom: '0.75rem',
+                        color: 'var(--color-muted)',
+                      }}
+                    >
+                      <Megaphone size={24} />
+                    </div>
+                    <p style={{ fontSize: '0.86rem', fontWeight: 600, color: '#f8fafc', margin: '0 0 0.2rem 0' }}>
+                      No announcements yet
+                    </p>
+                    <p style={{ fontSize: '0.76rem', margin: 0 }}>
+                      Live broadcasts and exhibition notices will appear here.
+                    </p>
+                  </div>
+                ) : (
+                  history.map((ann, index) => {
+                    let accentColor = '#38bdf8';
+                    let typeLabel = 'Notice';
+                    let IconComponent = Info;
+
+                    if (ann.type === 'warning') {
+                      accentColor = '#f59e0b';
+                      typeLabel = 'Warning';
+                      IconComponent = AlertTriangle;
+                    } else if (ann.type === 'emergency') {
+                      accentColor = '#ef4444';
+                      typeLabel = 'Alert';
+                      IconComponent = AlertCircle;
+                    } else if (ann.type === 'broadcast') {
+                      accentColor = '#a855f7';
+                      typeLabel = 'Broadcast';
+                      IconComponent = Radio;
+                    }
+
+                    return (
+                      <div
+                        key={ann.id}
+                        className="announcement-glass-card"
+                        style={{
+                          background: 'rgba(12, 17, 32, 0.68)',
+                          backdropFilter: 'blur(16px)',
+                          WebkitBackdropFilter: 'blur(16px)',
+                          border: '1px solid rgba(255, 255, 255, 0.11)',
+                          borderRadius: '14px',
+                          padding: '0.9rem 1.05rem',
+                          position: 'relative',
+                          boxShadow: '0 8px 24px -4px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
+                          animation: 'announcement-card-slide-in 0.42s cubic-bezier(0.16, 1, 0.3, 1) both',
+                          animationDelay: `${index * 0.08 + 0.12}s`,
+                          transition: 'background 0.2s ease, border-color 0.2s ease, transform 0.2s ease',
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '0.5rem',
+                            marginBottom: '0.25rem',
+                          }}
+                        >
+                          <h4
+                            style={{
+                              fontSize: '0.88rem',
+                              fontWeight: 750,
+                              color: ann.type === 'emergency' ? '#f87171' : '#f8fafc',
+                              margin: 0,
+                              lineHeight: 1.3,
+                            }}
+                          >
+                            {ann.title}
+                          </h4>
+                          <span
+                            style={{
+                              fontSize: '0.62rem',
+                              fontWeight: 700,
+                              padding: '0.1rem 0.35rem',
+                              borderRadius: '4px',
+                              background: `${accentColor}18`,
+                              color: accentColor,
+                              border: `1px solid ${accentColor}30`,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '0.25rem',
+                              flexShrink: 0,
+                            }}
+                          >
+                            <IconComponent size={10} />
+                            {typeLabel}
+                          </span>
+                        </div>
+
+                        <p
+                          style={{
+                            fontSize: '0.84rem',
+                            color: '#f1f5f9',
+                            margin: '0.25rem 0 0 0',
+                            lineHeight: 1.5,
+                            wordBreak: 'break-word',
+                          }}
+                        >
+                          {ann.message}
+                        </p>
+
+                        <span
+                          style={{
+                            display: 'block',
+                            fontSize: '0.65rem',
+                            color: '#94a3b8',
+                            marginTop: '0.45rem',
+                            textAlign: 'right',
+                            fontFamily: 'monospace',
+                          }}
+                        >
+                          {new Date(ann.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
             </div>
           </div>
 
@@ -402,6 +628,22 @@ export function RealtimeAnnouncements() {
             @keyframes drawer-slide-in {
               from { transform: translateX(100%); }
               to { transform: translateX(0); }
+            }
+            @keyframes announcement-card-slide-in {
+              from {
+                opacity: 0;
+                transform: translateX(-32px);
+              }
+              to {
+                opacity: 1;
+                transform: translateX(0);
+              }
+            }
+            .announcement-glass-card:hover {
+              background: rgba(18, 25, 46, 0.8) !important;
+              border-color: rgba(255, 255, 255, 0.18) !important;
+              transform: translateX(3px) !important;
+              box-shadow: 0 10px 28px -3px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
             }
           `}</style>
         </div>
