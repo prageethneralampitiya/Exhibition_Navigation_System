@@ -64,9 +64,10 @@ export function RealtimeAnnouncements() {
   }
 
   function setupRealtimeSubscription() {
-    const channelName = `announcements-${Math.random().toString(36).substring(2, 10)}`;
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    // Use standardized topic to allow Supabase to efficiently broadcast without creating 500 unique channel topics
     const channel = supabase
-      .channel(channelName)
+      .channel('announcements-public-broadcast')
       .on(
         'postgres_changes',
         {
@@ -96,9 +97,21 @@ export function RealtimeAnnouncements() {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        // High traffic fallback: If WebSocket fails or hits quota, fall back to lightweight HTTP polling
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          if (!pollInterval) {
+            pollInterval = setInterval(fetchActiveAnnouncements, 60_000);
+          }
+        }
+      });
+
+    // 90s safety interval for mobile background tabs
+    const backgroundPoll = setInterval(fetchActiveAnnouncements, 90_000);
 
     return () => {
+      if (pollInterval) clearInterval(pollInterval);
+      clearInterval(backgroundPoll);
       supabase.removeChannel(channel);
     };
   }

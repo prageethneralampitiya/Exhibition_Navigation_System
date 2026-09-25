@@ -27,8 +27,26 @@ function getAnonymousSessionId(): string {
   return id;
 }
 
-// How often to push location to Supabase (ms)
-const SYNC_INTERVAL_MS = 10_000;
+// Quick distance calculation (meters) to avoid DB spam when stationary
+function getFastDistanceMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const dLat = (lat2 - lat1) * 111319.9;
+  const dLon = (lon2 - lon1) * 111319.9 * Math.cos((lat1 * Math.PI) / 180);
+  return Math.sqrt(dLat * dLat + dLon * dLon);
+}
+
+// Deterministic sampling: ~33% of anonymous visitors report location to admin heatmap,
+// reducing concurrent database writes by an extra 67% without affecting the visitor's map.
+function shouldSampleVisitor(sessionId: string): boolean {
+  let hash = 0;
+  for (let i = 0; i < sessionId.length; i++) {
+    hash = (hash << 5) - hash + sessionId.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash) % 3 === 0;
+}
+
+// How often to push location to Supabase (ms) - optimized to 60s for high concurrent traffic (500+ users)
+const SYNC_INTERVAL_MS = 60_000;
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
@@ -47,6 +65,7 @@ export function useGPS(): GPSState {
   const watchIdRef = useRef<number | null>(null);
   const syncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const latestCoordsRef = useRef<{ lat: number; lng: number; acc: number | null } | null>(null);
+  const lastSyncedCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   // Track if we already inserted the initial anonymous row
   const anonRowIdRef = useRef<string | null>(null);
 
@@ -55,55 +74,83 @@ export function useGPS(): GPSState {
     if (!latestCoordsRef.current) return;
     const { lat, lng, acc } = latestCoordsRef.current;
 
-    if (user?.id) {
-      // Authenticated: upsert by user_id (unique constraint)
-      await supabase
-        .from('visitor_locations')
-        .upsert(
-          {
-            user_id: user.id,
-            session_id: null,
-            latitude: lat,
-            longitude: lng,
-            accuracy: acc,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'user_id' }
-        );
-    } else {
-      // Anonymous: update existing row by its known UUID, or insert once
-      // BUG FIX: Never upsert on 'id' (auto-generated) — it always inserts new rows.
-      // Instead: insert once, save the returned id, then UPDATE by that id.
-      if (anonRowIdRef.current) {
-        // Update the existing row
+    // High traffic optimization 1: skip anonymous visitors not in sample (saves 67% DB writes)
+    if (!user?.id) {
+      const sessionId = getAnonymousSessionId();
+      if (!shouldSampleVisitor(sessionId)) {
+        return; // Visitor's local GPS still works 100% on their screen
+      }
+    }
+
+    // High traffic optimization 2: skip database push if user hasn't moved at least 12 meters
+    if (lastSyncedCoordsRef.current) {
+      const movedMeters = getFastDistanceMeters(
+        lastSyncedCoordsRef.current.lat,
+        lastSyncedCoordsRef.current.lng,
+        lat,
+        lng
+      );
+      if (movedMeters < 12) {
+        return;
+      }
+    }
+
+    try {
+      if (user?.id) {
+        // Authenticated: upsert by user_id (unique constraint)
         await supabase
           .from('visitor_locations')
-          .update({
-            latitude: lat,
-            longitude: lng,
-            accuracy: acc,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', anonRowIdRef.current);
+          .upsert(
+            {
+              user_id: user.id,
+              session_id: null,
+              latitude: lat,
+              longitude: lng,
+              accuracy: acc,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'user_id' }
+          );
+        lastSyncedCoordsRef.current = { lat, lng };
       } else {
-        // First sync for this anonymous session — insert a new row
-        const { data } = await supabase
-          .from('visitor_locations')
-          .insert({
-            user_id: null,
-            session_id: getAnonymousSessionId(),
-            latitude: lat,
-            longitude: lng,
-            accuracy: acc,
-            updated_at: new Date().toISOString(),
-          })
-          .select('id')
-          .single();
+        // Anonymous: update existing row by its known UUID, or insert once
+        // BUG FIX: Never upsert on 'id' (auto-generated) — it always inserts new rows.
+        // Instead: insert once, save the returned id, then UPDATE by that id.
+        if (anonRowIdRef.current) {
+          // Update the existing row
+          await supabase
+            .from('visitor_locations')
+            .update({
+              latitude: lat,
+              longitude: lng,
+              accuracy: acc,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', anonRowIdRef.current);
+          lastSyncedCoordsRef.current = { lat, lng };
+        } else {
+          // First sync for this anonymous session — insert a new row
+          const { data } = await supabase
+            .from('visitor_locations')
+            .insert({
+              user_id: null,
+              session_id: getAnonymousSessionId(),
+              latitude: lat,
+              longitude: lng,
+              accuracy: acc,
+              updated_at: new Date().toISOString(),
+            })
+            .select('id')
+            .single();
 
-        if (data?.id) {
-          anonRowIdRef.current = data.id;
+          if (data?.id) {
+            anonRowIdRef.current = data.id;
+            lastSyncedCoordsRef.current = { lat, lng };
+          }
         }
       }
+    } catch {
+      // Quietly ignore transient network or rate-limiting errors during crowd spikes
     }
   }, [user]);
 

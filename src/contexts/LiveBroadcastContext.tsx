@@ -45,9 +45,9 @@ export function LiveBroadcastProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     fetchActiveBroadcast();
 
-    const channelName = `live-broadcast-ctx-${Math.random().toString(36).substring(2, 10)}`;
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
     const channel = supabase
-      .channel(channelName)
+      .channel('live-broadcast-public-feed')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'announcements' },
@@ -77,9 +77,19 @@ export function LiveBroadcastProvider({ children }: { children: ReactNode }) {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          if (!pollInterval) {
+            pollInterval = setInterval(fetchActiveBroadcast, 60_000);
+          }
+        }
+      });
+
+    const backgroundPoll = setInterval(fetchActiveBroadcast, 90_000);
 
     return () => {
+      if (pollInterval) clearInterval(pollInterval);
+      clearInterval(backgroundPoll);
       supabase.removeChannel(channel);
     };
   }, []);

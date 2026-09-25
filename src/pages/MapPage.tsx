@@ -481,16 +481,24 @@ export function MapPage() {
   const geoWatchIdRef = useRef<number | null>(null);
   const lastLoggedDestinationRef = useRef('');
 
+  // Cache key and TTL (15 minutes) for navigation graph and stores to protect Supabase under 500+ concurrent visitors
+  const NAV_RESOURCES_CACHE_KEY = 'invex_nav_resources_v2';
+  const NAV_RESOURCES_CACHE_TTL = 15 * 60 * 1000;
+
   useEffect(() => {
     loadNavigationResources();
     startLocationTracking();
 
-    // Realtime subscription: auto-refresh nodes/edges when admin saves new path nodes
-    const graphChannel = supabase
-      .channel('map-graph-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'navigation_nodes' }, refreshGraphData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'navigation_edges' }, refreshGraphData)
-      .subscribe();
+    // High concurrency optimization: Only connect WebSocket if user is admin.
+    // Regular visitors (500+ users) will not consume Supabase's 200 Realtime connection quota.
+    let graphChannel: ReturnType<typeof supabase.channel> | null = null;
+    if (profile?.role === 'admin') {
+      graphChannel = supabase
+        .channel('map-graph-live')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'navigation_nodes' }, refreshGraphData)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'navigation_edges' }, refreshGraphData)
+        .subscribe();
+    }
 
     const gpsFilter = filterRef.current;
     return () => {
@@ -498,30 +506,70 @@ export function MapPage() {
         navigator.geolocation.clearWatch(geoWatchIdRef.current);
       }
       gpsFilter.reset();
-      supabase.removeChannel(graphChannel);
+      if (graphChannel) {
+        supabase.removeChannel(graphChannel);
+      }
     };
 
-  }, []);
+  }, [profile?.role]);
 
   async function loadNavigationResources() {
     try {
       setLoading(true);
-      const [storesRes, nodesRes, edgesRes] = await Promise.all([
-        supabase
-          .from('stores')
-          .select(`
-            *,
-            categories:category_id (id, name, color),
-            exhibitions:exhibition_id (id, title)
-          `)
-          .eq('is_active', true),
-        supabase.from('navigation_nodes').select('*'),
-        supabase.from('navigation_edges').select('*'),
-      ]);
 
-      const activeStores = storesRes.data || [];
-      const navigationNodes = nodesRes.data || [];
-      const navigationEdges = edgesRes.data || [];
+      const isPrivileged = profile?.role === 'admin' || profile?.role === 'store_admin';
+      const cached = !isPrivileged ? sessionStorage.getItem(NAV_RESOURCES_CACHE_KEY) : null;
+      let activeStores: StoreType[] = [];
+      let navigationNodes: NavigationNode[] = [];
+      let navigationEdges: NavigationEdge[] = [];
+
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (
+            Date.now() - (parsed.timestamp || 0) < NAV_RESOURCES_CACHE_TTL &&
+            Array.isArray(parsed.stores) &&
+            Array.isArray(parsed.nodes) &&
+            Array.isArray(parsed.edges)
+          ) {
+            activeStores = parsed.stores;
+            navigationNodes = parsed.nodes;
+            navigationEdges = parsed.edges;
+          }
+        } catch {
+          sessionStorage.removeItem(NAV_RESOURCES_CACHE_KEY);
+        }
+      }
+
+      if (activeStores.length === 0) {
+        const [storesRes, nodesRes, edgesRes] = await Promise.all([
+          supabase
+            .from('stores')
+            .select(`
+              *,
+              categories:category_id (id, name, color),
+              exhibitions:exhibition_id (id, title)
+            `)
+            .eq('is_active', true),
+          supabase.from('navigation_nodes').select('*'),
+          supabase.from('navigation_edges').select('*'),
+        ]);
+
+        activeStores = storesRes.data || [];
+        navigationNodes = nodesRes.data || [];
+        navigationEdges = edgesRes.data || [];
+
+        if (!isPrivileged && activeStores.length > 0) {
+          try {
+            sessionStorage.setItem(NAV_RESOURCES_CACHE_KEY, JSON.stringify({
+              stores: activeStores,
+              nodes: navigationNodes,
+              edges: navigationEdges,
+              timestamp: Date.now(),
+            }));
+          } catch {}
+        }
+      }
 
       // Ensure Kalawana National School landmark is always present on the map
       const kalawanaSchoolStore: StoreType = {
@@ -624,7 +672,8 @@ export function MapPage() {
         setMapCenterLng(entranceNode?.longitude ?? 80.401000);
       }
     } catch (err) {
-      console.error('Error fetching navigation data:', err);
+      console.warn('Network error or rate-limit fetching navigation data; engaging offline fallback:', err);
+      setStores((prev) => (prev.length > 0 ? prev : DEFAULT_DEMO_STALLS));
     } finally {
       setLoading(false);
     }
@@ -634,6 +683,7 @@ export function MapPage() {
    *  Called by the realtime subscription whenever the admin saves new path nodes. */
   async function refreshGraphData() {
     try {
+      sessionStorage.removeItem(NAV_RESOURCES_CACHE_KEY);
       const [nodesRes, edgesRes] = await Promise.all([
         supabase.from('navigation_nodes').select('*'),
         supabase.from('navigation_edges').select('*'),
