@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { CalendarDays, Store, Megaphone, Users, Activity, Settings, ShieldCheck, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { CalendarDays, Store, Megaphone, Users, Activity, Settings, ShieldCheck, ShieldAlert, CheckCircle2, Radio } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { StatCard } from '../../components/admin/StatCard';
+import { fetchLiveCounterConfig, saveLiveCounterConfig } from '../../services/appSettingsService';
 
 interface DashboardStats {
   registeredCount: number;
@@ -42,6 +43,18 @@ export function AdminDashboardPage() {
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Live counter time-slot settings
+  interface SlotRow { id: string; label: string; start_time: string; end_time: string; count: string; interval: string; }
+  const [liveSlots, setLiveSlots] = useState<SlotRow[]>([
+    { id: 'slot-1', label: 'Morning Opening',  start_time: '09:00', end_time: '11:00', count: '80',  interval: '30' },
+    { id: 'slot-2', label: 'Late Morning',      start_time: '11:00', end_time: '13:00', count: '200', interval: '20' },
+    { id: 'slot-3', label: 'Afternoon Peak',    start_time: '13:00', end_time: '16:00', count: '260', interval: '15' },
+    { id: 'slot-4', label: 'Late Afternoon',    start_time: '16:00', end_time: '19:00', count: '190', interval: '20' },
+    { id: 'slot-5', label: 'Evening Wind-down', start_time: '19:00', end_time: '21:00', count: '110', interval: '30' },
+  ]);
+  const [liveOutsideCount, setLiveOutsideCount] = useState('0');
+  const [liveCounterSaving, setLiveCounterSaving] = useState(false);
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -101,6 +114,20 @@ export function AdminDashboardPage() {
           } catch (e) {
             console.error('Error parsing settings:', e);
           }
+        }
+
+        // Load live counter config
+        const liveConfig = await fetchLiveCounterConfig();
+        setLiveOutsideCount(String(liveConfig.outside_hours_count ?? 0));
+        if (liveConfig.time_slots && liveConfig.time_slots.length > 0) {
+          setLiveSlots(liveConfig.time_slots.map((s) => ({
+            id: s.id,
+            label: s.label,
+            start_time: `${String(s.start_hour).padStart(2,'0')}:${String(s.start_minute).padStart(2,'0')}`,
+            end_time:   `${String(s.end_hour).padStart(2,'0')}:${String(s.end_minute).padStart(2,'0')}`,
+            count:    String(s.initial_visitor_count),
+            interval: String(s.fluctuation_interval_sec),
+          })));
         }
 
         const [recentAnnouncements, recentProfiles, recentVisitorLocations] = await Promise.all([
@@ -292,6 +319,44 @@ export function AdminDashboardPage() {
       setSettingsSaving(false);
     }
   };
+
+  const handleSaveLiveCounter = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsedSlots = liveSlots.map((row) => {
+      const [sh, sm] = row.start_time.split(':').map(Number);
+      const [eh, em] = row.end_time.split(':').map(Number);
+      return {
+        id: row.id,
+        label: row.label.trim() || 'Unnamed Slot',
+        start_hour: sh,   start_minute: sm,
+        end_hour:   eh,   end_minute:   em,
+        initial_visitor_count:    Math.max(0, parseInt(row.count, 10) || 0),
+        fluctuation_interval_sec: Math.max(5, parseInt(row.interval, 10) || 30),
+      };
+    });
+    setLiveCounterSaving(true);
+    try {
+      await saveLiveCounterConfig({
+        time_slots: parsedSlots,
+        outside_hours_count: Math.max(0, parseInt(liveOutsideCount, 10) || 0),
+      });
+      setToastMessage('Live counter settings saved! Visitor counter will update on next home page load.');
+      setTimeout(() => setToastMessage(null), 4000);
+    } catch (err) {
+      console.error('Error saving live counter config:', err);
+      alert('Failed to save live counter settings.');
+    } finally {
+      setLiveCounterSaving(false);
+    }
+  };
+
+  // Slot editor helpers
+  const updateSlot = (id: string, field: string, value: string) =>
+    setLiveSlots((prev) => prev.map((s) => s.id === id ? { ...s, [field]: value } : s));
+  const addSlot = () =>
+    setLiveSlots((prev) => [...prev, { id: `slot-${Date.now()}`, label: 'New Period', start_time: '09:00', end_time: '21:00', count: '100', interval: '30' }]);
+  const removeSlot = (id: string) =>
+    setLiveSlots((prev) => prev.filter((s) => s.id !== id));
 
   return (
     <main className="admin-page">
@@ -624,6 +689,134 @@ export function AdminDashboardPage() {
               style={{ minWidth: '140px' }}
             >
               {settingsSaving ? <span className="spinner" /> : 'Save Settings'}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {/* Live Visitor Counter Settings — Time Slot Editor */}
+      <section style={{ marginTop: '1.5rem', marginBottom: '2rem' }}>
+        <form onSubmit={handleSaveLiveCounter} className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+
+          {/* Header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderBottom: '1px solid var(--color-border)', paddingBottom: '0.75rem' }}>
+            <Radio size={18} color="var(--color-success)" />
+            <h2 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>Live Visitor Counter — Time Slots</h2>
+            <span style={{ marginLeft: 'auto', fontSize: '0.72rem', fontWeight: 700, padding: '0.2rem 0.6rem', borderRadius: '20px', background: 'rgba(34,197,94,0.12)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.25)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e', display: 'inline-block' }} />
+              Shown on Home Page
+            </span>
+          </div>
+
+          <p style={{ fontSize: '0.82rem', color: 'var(--color-muted)', margin: 0, lineHeight: 1.55 }}>
+            Define visitor count per time period for the <strong style={{ color: 'var(--color-text)' }}>9 AM – 9 PM</strong> exhibition window.
+            The displayed count = <strong style={{ color: 'var(--color-text)' }}>Slot Count + Real Registered Visitors</strong>, then fluctuates ±1/2 at each interval.
+            Outside all slots the counter shows the Outside Hours count (usually 0).
+          </p>
+
+          {/* Column Headers */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 90px 90px 90px 90px 32px', gap: '0.5rem', padding: '0 0.25rem' }}>
+            {['Period Label', 'Start', 'End', 'Count', 'Interval (s)', ''].map((h) => (
+              <span key={h} style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</span>
+            ))}
+          </div>
+
+          {/* Slot Rows */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {liveSlots.map((slot) => (
+              <div key={slot.id} style={{ display: 'grid', gridTemplateColumns: '1.8fr 90px 90px 90px 90px 32px', gap: '0.5rem', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={slot.label}
+                  onChange={(e) => updateSlot(slot.id, 'label', e.target.value)}
+                  placeholder="e.g. Afternoon Peak"
+                  style={{ fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}
+                />
+                <input
+                  type="time"
+                  className="form-input"
+                  value={slot.start_time}
+                  onChange={(e) => updateSlot(slot.id, 'start_time', e.target.value)}
+                  style={{ fontSize: '0.82rem', padding: '0.4rem 0.5rem' }}
+                />
+                <input
+                  type="time"
+                  className="form-input"
+                  value={slot.end_time}
+                  onChange={(e) => updateSlot(slot.id, 'end_time', e.target.value)}
+                  style={{ fontSize: '0.82rem', padding: '0.4rem 0.5rem' }}
+                />
+                <input
+                  type="number"
+                  className="form-input"
+                  min="0"
+                  value={slot.count}
+                  onChange={(e) => updateSlot(slot.id, 'count', e.target.value)}
+                  placeholder="150"
+                  style={{ fontSize: '0.82rem', padding: '0.4rem 0.5rem' }}
+                />
+                <input
+                  type="number"
+                  className="form-input"
+                  min="5"
+                  value={slot.interval}
+                  onChange={(e) => updateSlot(slot.id, 'interval', e.target.value)}
+                  placeholder="30"
+                  style={{ fontSize: '0.82rem', padding: '0.4rem 0.5rem' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => removeSlot(slot.id)}
+                  title="Remove this slot"
+                  style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', color: '#f87171', borderRadius: '6px', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, fontSize: '1rem', fontWeight: 700, lineHeight: 1 }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Add Slot + Outside Hours */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '1rem', paddingTop: '0.25rem' }}>
+            <button
+              type="button"
+              onClick={addSlot}
+              className="btn btn-ghost btn-sm"
+              style={{ fontSize: '0.8rem' }}
+            >
+              + Add Time Slot
+            </button>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginLeft: 'auto' }}>
+              <label style={{ fontSize: '0.8rem', color: 'var(--color-muted)', whiteSpace: 'nowrap' }}>
+                Outside Hours Count (9 PM – 9 AM):
+              </label>
+              <input
+                id="live-outside-count"
+                type="number"
+                className="form-input"
+                min="0"
+                value={liveOutsideCount}
+                onChange={(e) => setLiveOutsideCount(e.target.value)}
+                style={{ width: '80px', fontSize: '0.82rem', padding: '0.4rem 0.5rem' }}
+                placeholder="0"
+              />
+            </div>
+          </div>
+
+          {/* Toast */}
+          {toastMessage && (
+            <div style={{ background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)', color: '#4ade80', padding: '0.6rem 1rem', borderRadius: '8px', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <CheckCircle2 size={16} />
+              <span>{toastMessage}</span>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="submit" className="btn btn-primary" disabled={liveCounterSaving} style={{ minWidth: '180px' }}>
+              {liveCounterSaving ? <span className="spinner" /> : <Radio size={14} />}
+              Save Counter Settings
             </button>
           </div>
         </form>

@@ -57,6 +57,9 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
     hasDismissedRef.current = true;
     setIsExiting(true);
 
+    // Notify listeners that splash intro dissolve has begun
+    window.dispatchEvent(new CustomEvent('invex:splash-exit'));
+
     try {
       sessionStorage.setItem('invex_splash_shown', 'true');
     } catch {
@@ -66,6 +69,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
     // Wait for the dissolve animation to complete before removing from DOM
     setTimeout(() => {
       setIsVisible(false);
+      window.dispatchEvent(new CustomEvent('invex:splash-dismissed'));
       onDismiss?.();
     }, 850);
   }, [isExiting, onDismiss]);

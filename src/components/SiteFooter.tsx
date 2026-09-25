@@ -29,7 +29,7 @@ export function SiteFooter({
   partnerKeyword = 'Powered By',
 }: SiteFooterProps) {
   return (
-    <footer className="site-partner-ribbon" role="contentinfo" aria-label="Partner Ribbon">
+    <footer className="site-partner-ribbon scroll-reveal" role="contentinfo" aria-label="Partner Ribbon">
       <div className="partner-ribbon-container">
         {/* Left Entity / Main Logo */}
         <div className="partner-ribbon-col partner-ribbon-left">

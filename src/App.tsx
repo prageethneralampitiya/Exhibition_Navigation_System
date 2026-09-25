@@ -48,7 +48,8 @@ function App() {
     <BrowserRouter>
       <AuthProvider>
         <LiveBroadcastProvider>
-          <SplashScreen />
+          {/* ── Opening Intro Splash Screen (duration in seconds: change 4.5 here if you want a shorter/longer intro) ── */}
+          <SplashScreen durationSeconds={3.5} />
           <div className="site-upper-background" aria-hidden="true" />
           <RealtimeAnnouncements />
           <Suspense fallback={<PageLoader />}>

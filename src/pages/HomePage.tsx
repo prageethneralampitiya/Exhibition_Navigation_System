@@ -30,6 +30,19 @@ import { SiteFooter } from '../components/SiteFooter';
 import { EmergencyContactsModal } from '../components/EmergencyContactsModal';
 import { VideoLivesModal } from '../components/VideoLivesModal';
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ⏱️ TIMING CONFIGURATION: INTRO SPLASH & HOME FADE-IN DELAY
+// ═══════════════════════════════════════════════════════════════════════════════
+// Change this value (in milliseconds) to adjust how long the home screen waits
+// for the opening intro to finish before starting its fade-in animation.
+//
+// 👉 YOU CAN CHANGE THIS TIME HERE:
+//    • 4500 = 4.5 seconds (starts fade-in as opening intro begins dissolving)
+//    • 5000 = 5.0 seconds (starts fade-in after opening intro has dissolved)
+//    • 0    = Instant (fade-in immediately without waiting for intro)
+// ═══════════════════════════════════════════════════════════════════════════════
+export const HOME_INTRO_FADE_DELAY_MS = 3900;
+
 // ── Customizable Placeholder Exhibition Slots ───────────────────────
 // You can edit titles, locations, dates, or accent colors anytime.
 // Once you add real exhibitions in Admin, they will seamlessly appear alongside these!
@@ -325,44 +338,131 @@ export function HomePage() {
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
   const [isVideoLivesModalOpen, setIsVideoLivesModalOpen] = useState(false);
 
-  // Simulated live visitor counter: starts at 1 on reload, animates up to 120–260, then subtly fluctuates
-  const [liveVisitorCount, setLiveVisitorCount] = useState(1);
+  // Live visitor counter: time-slot aware, driven by admin settings + real visitors
+  const [liveVisitorCount, setLiveVisitorCount] = useState(0);
 
   useEffect(() => {
-    // Generate realistic target between 120 and 260
-    const targetCount = Math.floor(Math.random() * (260 - 120 + 1)) + 120;
-    const startCount = 1;
-    const duration = 1800; // 1.8 seconds smooth roll-up
-    const startTime = performance.now();
     let animId: number;
     let fluctuationTimer: ReturnType<typeof setInterval>;
+    let slotCheckTimer: ReturnType<typeof setInterval>;
+    let currentLive = 0;
+    let currentSlotId: string | null = '__init__';
+    let cleanedUp = false;
 
-    const animateCount = (now: number) => {
-      const elapsed = now - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      // Ease out cubic
-      const easeProgress = 1 - Math.pow(1 - progress, 3);
-      const current = Math.floor(startCount + (targetCount - startCount) * easeProgress);
-      setLiveVisitorCount(current);
+    // Helper: find which time slot is active right now
+    function getActiveSlot(slots: import('../services/appSettingsService').TimeSlot[]) {
+      const now = new Date();
+      const cur = now.getHours() * 60 + now.getMinutes();
+      return slots.find((s) => {
+        const start = s.start_hour * 60 + s.start_minute;
+        const end = s.end_hour * 60 + s.end_minute;
+        return cur >= start && cur < end;
+      }) ?? null;
+    }
 
-      if (progress < 1) {
-        animId = requestAnimationFrame(animateCount);
-      } else {
-        // Once completed, realistically fluctuate by +/- 1 or 2 every 5 seconds
-        let currentLive = targetCount;
-        fluctuationTimer = setInterval(() => {
-          const delta = (Math.random() > 0.48 ? 1 : -1) * (Math.random() > 0.75 ? 2 : 1);
-          currentLive = Math.max(90, Math.min(320, currentLive + delta));
-          setLiveVisitorCount(currentLive);
-        }, 5000);
+    // Helper: smoothly animate from current value to a new target
+    function animateTo(target: number, onDone: () => void) {
+      cancelAnimationFrame(animId);
+      const from = currentLive;
+      const duration = 1400;
+      const startTime = performance.now();
+      const step = (now: number) => {
+        if (cleanedUp) return;
+        const progress = Math.min((now - startTime) / duration, 1);
+        const ease = 1 - Math.pow(1 - progress, 3);
+        currentLive = Math.round(from + (target - from) * ease);
+        setLiveVisitorCount(currentLive);
+        if (progress < 1) { animId = requestAnimationFrame(step); }
+        else { currentLive = target; onDone(); }
+      };
+      animId = requestAnimationFrame(step);
+    }
+
+    // Helper: start the ±1/2 fluctuation interval
+    function startFluctuation(intervalMs: number, minVal: number) {
+      clearInterval(fluctuationTimer);
+      fluctuationTimer = setInterval(() => {
+        if (cleanedUp) return;
+        const delta = (Math.random() > 0.48 ? 1 : -1) * (Math.random() > 0.75 ? 2 : 1);
+        currentLive = Math.max(minVal, currentLive + delta);
+        setLiveVisitorCount(currentLive);
+      }, intervalMs);
+    }
+
+    // Apply the correct slot (or outside-hours). Only triggers if slot actually changed.
+    function applyCurrentSlot(
+      config: import('../services/appSettingsService').LiveCounterConfig,
+      realVisitors: number,
+      forceAnimate = false
+    ) {
+      const slot = getActiveSlot(config.time_slots);
+      const newSlotId = slot?.id ?? 'outside';
+      if (newSlotId === currentSlotId && !forceAnimate) return; // slot unchanged, no action
+      currentSlotId = newSlotId;
+
+      const baseCount = slot ? slot.initial_visitor_count : config.outside_hours_count;
+      const target = baseCount + realVisitors;
+      const intervalMs = Math.max(5000, (slot ? slot.fluctuation_interval_sec : 60) * 1000);
+      const minVal = config.outside_hours_count + realVisitors;
+
+      clearInterval(fluctuationTimer);
+      animateTo(target, () => startFluctuation(intervalMs, minVal));
+    }
+
+    async function initCounter() {
+      const { fetchLiveCounterConfig } = await import('../services/appSettingsService');
+      const config = await fetchLiveCounterConfig();
+
+      // Fetch real registered visitor count
+      let realVisitors = 0;
+      try {
+        const { count } = await supabase
+          .from('profiles')
+          .select('id', { count: 'exact', head: true });
+        realVisitors = count ?? 0;
+      } catch { /* silent */ }
+
+      if (cleanedUp) return;
+
+      // Initial roll-up from 0
+      currentSlotId = '__init__';
+      applyCurrentSlot(config, realVisitors, true);
+
+      // Re-evaluate slot every 60 s (slot boundaries change over time)
+      slotCheckTimer = setInterval(() => {
+        if (!cleanedUp) applyCurrentSlot(config, realVisitors);
+      }, 60_000);
+    }
+
+    initCounter();
+
+    // Respond immediately when admin saves new settings
+    const onConfigUpdate = async (e: Event) => {
+      const newConfig = (e as CustomEvent).detail as import('../services/appSettingsService').LiveCounterConfig;
+      clearInterval(slotCheckTimer);
+      currentSlotId = '__init__'; // force re-apply
+      let realVisitors = 0;
+      try {
+        const { count } = await supabase.from('profiles').select('id', { count: 'exact', head: true });
+        realVisitors = count ?? 0;
+      } catch {
+        // ignore
+      }
+      if (!cleanedUp) {
+        applyCurrentSlot(newConfig, realVisitors, true);
+        slotCheckTimer = setInterval(() => {
+          if (!cleanedUp) applyCurrentSlot(newConfig, realVisitors);
+        }, 60_000);
       }
     };
-
-    animId = requestAnimationFrame(animateCount);
+    window.addEventListener('live-counter-updated', onConfigUpdate);
 
     return () => {
+      cleanedUp = true;
       cancelAnimationFrame(animId);
       clearInterval(fluctuationTimer);
+      clearInterval(slotCheckTimer);
+      window.removeEventListener('live-counter-updated', onConfigUpdate);
     };
   }, []);
 
@@ -444,24 +544,73 @@ export function HomePage() {
 
   // ── Scroll Reveal Intersection Observer ─────────────────────
   useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('is-in-view');
-          }
-        });
-      },
-      {
-        threshold: 0.1,
-        rootMargin: '0px 0px -40px 0px',
-      }
-    );
+    let observer: IntersectionObserver | null = null;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    let isDisposed = false;
 
-    const elements = document.querySelectorAll('.scroll-reveal');
-    elements.forEach((el) => observer.observe(el));
+    const startObserving = () => {
+      if (isDisposed || observer) return;
 
-    return () => observer.disconnect();
+      observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting || entry.boundingClientRect.bottom < 0) {
+              entry.target.classList.add('is-in-view');
+              observer?.unobserve(entry.target);
+            }
+          });
+        },
+        {
+          threshold: 0.05,
+          rootMargin: '0px 0px -25px 0px',
+        }
+      );
+
+      const elements = document.querySelectorAll('.scroll-reveal');
+      elements.forEach((el) => {
+        if (!el.classList.contains('is-in-view')) {
+          observer!.observe(el);
+        }
+      });
+    };
+
+    // If the user clicks or presses a key to skip the intro early, start immediately
+    const handleSplashExit = () => {
+      if (timerId) clearTimeout(timerId);
+      startObserving();
+    };
+
+    window.addEventListener('invex:splash-exit', handleSplashExit);
+    window.addEventListener('invex:splash-dismissed', handleSplashExit);
+
+    // Check if the splash overlay is currently active in the DOM
+    const isSplashActive = Boolean(document.querySelector('.splash-overlay:not(.splash-exiting)'));
+    const initialDelay = isSplashActive ? HOME_INTRO_FADE_DELAY_MS : 0;
+
+    if (initialDelay > 0) {
+      timerId = setTimeout(() => {
+        startObserving();
+      }, initialDelay);
+    } else {
+      const rafId = requestAnimationFrame(() => {
+        startObserving();
+      });
+      return () => {
+        isDisposed = true;
+        cancelAnimationFrame(rafId);
+        window.removeEventListener('invex:splash-exit', handleSplashExit);
+        window.removeEventListener('invex:splash-dismissed', handleSplashExit);
+        observer?.disconnect();
+      };
+    }
+
+    return () => {
+      isDisposed = true;
+      if (timerId) clearTimeout(timerId);
+      window.removeEventListener('invex:splash-exit', handleSplashExit);
+      window.removeEventListener('invex:splash-dismissed', handleSplashExit);
+      observer?.disconnect();
+    };
   }, [loading, exhibitions, stores]);
 
   const handleSignOut = async () => {
@@ -487,16 +636,16 @@ export function HomePage() {
         <GPSPermissionBanner inFlow />
 
         {/* ── Centered Logo in Middle of Front Page ─────────── */}
-        <div className="home-hero-center">
-          <img 
-            src={invexLogo} 
-            alt="INVEX 2026 Logo" 
+        <div className="home-hero-center scroll-reveal">
+          <img
+            src={invexLogo}
+            alt="INVEX 2026 Logo"
             className="home-hero-logo"
           />
         </div>
 
         {/* ── Hero Welcome Greeting ────────────────────────── */}
-        <div className="home-welcome-banner">
+        <div className="home-welcome-banner scroll-reveal">
           <span className="home-welcome-line1">{getGreeting()},</span>
           <span className="home-welcome-line2">
             {profile?.name?.split(' ')[0] || 'Visitor'} <span className="home-welcome-wave">👋</span>
@@ -504,7 +653,7 @@ export function HomePage() {
         </div>
 
         {/* ── Interactive Floor Map Bar ─────────────────────── */}
-        <section className="home-map-cta-enhanced">
+        <section className="home-map-cta-enhanced scroll-reveal">
           <div className="home-map-cta-glow" />
           <div className="home-map-cta-content">
             <div className="home-map-cta-icon">
@@ -544,6 +693,7 @@ export function HomePage() {
         {profile?.role === 'store_admin' && (
           <section
             id="store-admin-banner"
+            className="scroll-reveal"
             style={{
               background: 'linear-gradient(135deg, rgba(99,102,241,0.15) 0%, rgba(168,85,247,0.15) 100%)',
               border: '1px solid rgba(99,102,241,0.35)',
@@ -605,7 +755,7 @@ export function HomePage() {
         )}
 
         {/* ── Box Under Logo Holding Nav & Utility Items ────── */}
-        <div className="home-action-box glass">
+        <div className="home-action-box glass scroll-reveal">
           {/* Navigation Links */}
           <div className="home-action-box-links">
             {/* 1. Floor Map changed to Emergancy Contacts */}
@@ -755,7 +905,7 @@ export function HomePage() {
         </div>
 
         {/* ── Stats Bar ──────────────────────────────────────── */}
-        <div className="home-stats-bar">
+        <div className="home-stats-bar scroll-reveal">
           <div className="home-stat-chip">
             <TrendingUp size={14} />
             <span>{loading ? '—' : exhibitions.length} Active Events</span>
