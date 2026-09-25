@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   MapPin,
@@ -33,7 +33,7 @@ import { VideoLivesModal } from '../components/VideoLivesModal';
 // ── Customizable Placeholder Exhibition Slots ───────────────────────
 // You can edit titles, locations, dates, or accent colors anytime.
 // Once you add real exhibitions in Admin, they will seamlessly appear alongside these!
-export interface PlaceholderExhibition {
+interface PlaceholderExhibition {
   id: string;
   title: string;
   location: string;
@@ -45,11 +45,11 @@ export interface PlaceholderExhibition {
   isPlaceholder: true;
 }
 
-export interface RealExhibitionItem extends Exhibition {
+interface RealExhibitionItem extends Exhibition {
   isPlaceholder: false;
 }
 
-export type CarouselExhibitionItem = PlaceholderExhibition | RealExhibitionItem;
+type CarouselExhibitionItem = PlaceholderExhibition | RealExhibitionItem;
 
 const placeholderExhibitions: PlaceholderExhibition[] = [
   {
@@ -98,30 +98,70 @@ const placeholderExhibitions: PlaceholderExhibition[] = [
   },
 ];
 
-function useCarouselScroller(speed = 0.5) {
+function useCarouselScroller(speed = 0.8) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const isInteractingRef = useRef(false);
   const isDraggingRef = useRef(false);
+  const isInteractingRef = useRef(false);
+  const hasDraggedRef = useRef(false);
   const startXRef = useRef(0);
   const scrollStartRef = useRef(0);
-  const resumeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const posRef = useRef(0);
+  const halfWidthRef = useRef(0);
+  const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Measure and cache half width (width of 1 complete set of cards)
+  const updateMetrics = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    halfWidthRef.current = el.scrollWidth / 2;
+    posRef.current = el.scrollLeft;
+  }, []);
+
+  useEffect(() => {
+    updateMetrics();
+
+    const el = containerRef.current;
+    if (!el) return;
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        updateMetrics();
+      });
+      resizeObserver.observe(el);
+    }
+
+    const onResize = () => updateMetrics();
+    window.addEventListener('resize', onResize);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      resizeObserver?.disconnect();
+    };
+  }, [updateMetrics]);
 
   useEffect(() => {
     let animId: number;
     let lastTime = performance.now();
 
     const loop = (currentTime: number) => {
-      const delta = (currentTime - lastTime) / 16.67;
+      // Clamp delta to prevent huge jumps when switching tabs
+      const delta = Math.min((currentTime - lastTime) / 16.67, 3);
       lastTime = currentTime;
 
       const el = containerRef.current;
       if (el && !isInteractingRef.current && !isDraggingRef.current) {
-        el.scrollLeft += speed * delta;
-        // Seamless loop back to start
-        if (el.scrollLeft >= el.scrollWidth - el.clientWidth - 2) {
-          el.scrollLeft = 1;
+        posRef.current += speed * delta;
+        const halfWidth = halfWidthRef.current;
+
+        // True seamless infinite loop: wrap back by exactly half without any jump
+        if (halfWidth > 0 && posRef.current >= halfWidth) {
+          posRef.current -= halfWidth;
         }
+
+        el.scrollLeft = posRef.current;
       }
+
       animId = requestAnimationFrame(loop);
     };
 
@@ -129,16 +169,20 @@ function useCarouselScroller(speed = 0.5) {
     return () => cancelAnimationFrame(animId);
   }, [speed]);
 
-  const pauseAndResume = () => {
+  const pauseAndResume = useCallback((delay = 2200) => {
     isInteractingRef.current = true;
     if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
     resumeTimerRef.current = setTimeout(() => {
       isInteractingRef.current = false;
-    }, 2800);
-  };
+      const el = containerRef.current;
+      if (el) {
+        posRef.current = el.scrollLeft;
+      }
+    }, delay);
+  }, []);
 
-  const scroll = (direction: 'left' | 'right') => {
-    pauseAndResume();
+  const scroll = useCallback((direction: 'left' | 'right') => {
+    pauseAndResume(3500);
     const el = containerRef.current;
     if (!el) return;
     const distance = Math.max(el.clientWidth * 0.7, 260);
@@ -146,42 +190,104 @@ function useCarouselScroller(speed = 0.5) {
       left: direction === 'left' ? -distance : distance,
       behavior: 'smooth',
     });
-  };
+    setTimeout(() => {
+      if (el) posRef.current = el.scrollLeft;
+    }, 400);
+  }, [pauseAndResume]);
 
   const onMouseDown = (e: React.MouseEvent) => {
     const el = containerRef.current;
     if (!el) return;
     isDraggingRef.current = true;
+    isInteractingRef.current = true;
+    hasDraggedRef.current = false;
     startXRef.current = e.pageX - el.offsetLeft;
     scrollStartRef.current = el.scrollLeft;
-    pauseAndResume();
   };
 
   const onMouseMove = (e: React.MouseEvent) => {
     if (!isDraggingRef.current) return;
-    e.preventDefault();
     const el = containerRef.current;
     if (!el) return;
     const x = e.pageX - el.offsetLeft;
-    const walk = (x - startXRef.current) * 1.4;
+    const walk = (x - startXRef.current) * 1.25;
+    if (Math.abs(walk) > 4) {
+      hasDraggedRef.current = true;
+    }
     el.scrollLeft = scrollStartRef.current - walk;
+    posRef.current = el.scrollLeft;
   };
 
   const onMouseUp = () => {
+    if (isDraggingRef.current) {
+      isDraggingRef.current = false;
+      pauseAndResume(2000);
+    }
+  };
+
+  const onMouseEnter = () => {
+    isInteractingRef.current = true;
+  };
+
+  const onMouseLeave = () => {
     isDraggingRef.current = false;
+    isInteractingRef.current = false;
+    const el = containerRef.current;
+    if (el) {
+      posRef.current = el.scrollLeft;
+    }
+  };
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    const el = containerRef.current;
+    if (!el) return;
+    isDraggingRef.current = true;
+    isInteractingRef.current = true;
+    hasDraggedRef.current = false;
+    startXRef.current = e.touches[0].pageX - el.offsetLeft;
+    scrollStartRef.current = el.scrollLeft;
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (!isDraggingRef.current) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const x = e.touches[0].pageX - el.offsetLeft;
+    const walk = (x - startXRef.current) * 1.25;
+    if (Math.abs(walk) > 4) {
+      hasDraggedRef.current = true;
+    }
+    el.scrollLeft = scrollStartRef.current - walk;
+    posRef.current = el.scrollLeft;
+  };
+
+  const onTouchEnd = () => {
+    isDraggingRef.current = false;
+    pauseAndResume(2200);
+  };
+
+  const onClickCapture = (e: React.MouseEvent) => {
+    // If the user was dragging/swiping, prevent clicking card links
+    if (hasDraggedRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      hasDraggedRef.current = false;
+    }
   };
 
   return {
     ref: containerRef,
     scroll,
     handlers: {
-      onMouseEnter: () => { isInteractingRef.current = true; },
-      onMouseLeave: () => { isInteractingRef.current = false; isDraggingRef.current = false; },
       onMouseDown,
       onMouseMove,
       onMouseUp,
-      onTouchStart: pauseAndResume,
-      onWheel: pauseAndResume,
+      onMouseEnter,
+      onMouseLeave,
+      onTouchStart,
+      onTouchMove,
+      onTouchEnd,
+      onClickCapture,
     },
   };
 }
@@ -201,8 +307,8 @@ export function HomePage() {
   const [isVideoLivesModalOpen, setIsVideoLivesModalOpen] = useState(false);
 
   // Interactive auto-scrolling & manually scrollable carousels
-  const featuredCarousel = useCarouselScroller(0.48);
-  const storesCarousel = useCarouselScroller(0.48);
+  const featuredCarousel = useCarouselScroller(0.8);
+  const storesCarousel = useCarouselScroller(0.8);
 
   useEffect(() => {
     const handleUnread = (e: Event) => {
@@ -220,33 +326,7 @@ export function HomePage() {
     window.dispatchEvent(new CustomEvent('open-announcements-history'));
   };
 
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
-
-  // ── Scroll Reveal Intersection Observer ─────────────────────
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('is-in-view');
-          }
-        });
-      },
-      {
-        threshold: 0.1,
-        rootMargin: '0px 0px -40px 0px',
-      }
-    );
-
-    const elements = document.querySelectorAll('.scroll-reveal');
-    elements.forEach((el) => observer.observe(el));
-
-    return () => observer.disconnect();
-  }, [loading, exhibitions, stores]);
-
-  async function loadDashboardData() {
+  const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true);
       const [exhibitionsRes, storesRes] = await Promise.all([
@@ -274,7 +354,33 @@ export function HomePage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    loadDashboardData();
+  }, [loadDashboardData]);
+
+  // ── Scroll Reveal Intersection Observer ─────────────────────
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-in-view');
+          }
+        });
+      },
+      {
+        threshold: 0.1,
+        rootMargin: '0px 0px -40px 0px',
+      }
+    );
+
+    const elements = document.querySelectorAll('.scroll-reveal');
+    elements.forEach((el) => observer.observe(el));
+
+    return () => observer.disconnect();
+  }, [loading, exhibitions, stores]);
 
   const handleSignOut = async () => {
     try {

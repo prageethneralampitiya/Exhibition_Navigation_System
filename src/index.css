@@ -1584,11 +1584,12 @@ button.home-box-link {
   user-select: none;
   scrollbar-width: none;
   -ms-overflow-style: none;
-  mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 1) 2%, rgba(0, 0, 0, 1) 98%, transparent 100%);
-  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 1) 2%, rgba(0, 0, 0, 1) 98%, transparent 100%);
+  touch-action: pan-y;
+  mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 1) 2.5%, rgba(0, 0, 0, 1) 97.5%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 1) 2.5%, rgba(0, 0, 0, 1) 97.5%, transparent 100%);
   padding: 0.6rem 0.2rem 1.2rem;
-  scroll-behavior: auto; /* auto allows immediate response for drag & RAF auto-scroll */
-  -webkit-overflow-scrolling: touch;
+  scroll-behavior: auto;
+  contain: paint;
 }
 
 .home-ex-carousel-viewport::-webkit-scrollbar,
@@ -1606,6 +1607,7 @@ button.home-box-link {
   display: flex;
   gap: 1.25rem;
   width: max-content;
+  transform: translateZ(0);
   will-change: scroll-position;
 }
 
@@ -1618,8 +1620,8 @@ button.home-box-link {
   display: flex;
   flex-direction: column;
   background: linear-gradient(140deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 40%, rgba(13, 16, 28, 0.82) 100%);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-top: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 1.35rem;
@@ -1631,6 +1633,7 @@ button.home-box-link {
               border-color 0.3s ease,
               background 0.3s ease;
   position: relative;
+  transform: translateZ(0);
   box-shadow: 0 12px 30px -4px rgba(0, 0, 0, 0.55),
               inset 0 1px 0 rgba(255, 255, 255, 0.22),
               inset 0 -1px 0 rgba(0, 0, 0, 0.4);
@@ -1877,12 +1880,13 @@ button.home-box-link {
   text-align: center;
   padding: 1.1rem 0.85rem 0.95rem;
   background: linear-gradient(150deg, rgba(20, 26, 42, 0.76) 0%, rgba(12, 16, 28, 0.92) 100%);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-top: 1px solid rgba(255, 255, 255, 0.22);
   border-radius: 1.35rem;
   position: relative;
+  transform: translateZ(0);
   overflow: hidden;
   text-decoration: none;
   color: inherit;
