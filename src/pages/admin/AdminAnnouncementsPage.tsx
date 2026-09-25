@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Plus, Edit2, Trash2, Check, Megaphone, BellRing } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Plus, Edit2, Trash2, Check, Megaphone, BellRing, PhoneCall } from 'lucide-react';
 import { supabase, type Announcement } from '../../lib/supabase';
 import { AdminModal } from '../../components/admin/AdminModal';
 import { useAuth } from '../../contexts/AuthContext';
@@ -229,10 +230,16 @@ export function AdminAnnouncementsPage() {
           <h1>Announcements</h1>
           <p>Broadcast alerts, news, and safety guidelines to visitors</p>
         </div>
-        <button className="btn btn-primary" onClick={handleOpenAdd}>
-          <Plus size={16} />
-          Broadcast Announcement
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <Link to="/emergency" className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <PhoneCall size={16} />
+            Emergency &amp; Lives Settings
+          </Link>
+          <button className="btn btn-primary" onClick={handleOpenAdd}>
+            <Plus size={16} />
+            Broadcast Announcement
+          </button>
+        </div>
       </header>
 
       {/* Voice Broadcast Manager Card */}

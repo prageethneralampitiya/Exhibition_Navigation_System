@@ -18,6 +18,7 @@ const AdminAnnouncementsPage = lazy(() => import('./pages/admin/AdminAnnouncemen
 const AdminVisitorsPage = lazy(() => import('./pages/admin/AdminVisitorsPage').then(m => ({ default: m.AdminVisitorsPage })));
 const AdminUsersPage = lazy(() => import('./pages/admin/AdminUsersPage').then(m => ({ default: m.AdminUsersPage })));
 const AdminAnalyticsPage = lazy(() => import('./pages/admin/AdminAnalyticsPage').then(m => ({ default: m.AdminAnalyticsPage })));
+const AdminEmergencyPage = lazy(() => import('./pages/admin/AdminEmergencyPage').then(m => ({ default: m.AdminEmergencyPage })));
 
 // Centered loading fallback component
 function PageLoader() {
@@ -62,6 +63,7 @@ function AdminApp() {
                       <Route path="categories" element={<AdminCategoriesPage />} />
                       <Route path="nodes" element={<AdminNodesPage />} />
                       <Route path="announcements" element={<AdminAnnouncementsPage />} />
+                      <Route path="emergency" element={<AdminEmergencyPage />} />
                       <Route path="visitors" element={<AdminVisitorsPage />} />
                       <Route path="users" element={<AdminUsersPage />} />
                       <Route path="analytics" element={<AdminAnalyticsPage />} />

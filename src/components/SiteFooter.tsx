@@ -23,10 +23,10 @@ export function SiteFooter({
   leftLogoUrl = defaultInvexLogo,
   leftLogoAlt = 'INVEX 2026',
   rightLogoUrl = defaultPartnerLogo,
-  rightLogoAlt = 'Official Partner',
+  rightLogoAlt = 'CipherX',
   rightLogo2Url = defaultPartner2Logo,
-  rightLogo2Alt = 'Official Partner 2',
-  partnerKeyword = 'Partner with',
+  rightLogo2Alt = 'PrintX',
+  partnerKeyword = 'Powered By',
 }: SiteFooterProps) {
   return (
     <footer className="site-partner-ribbon scroll-reveal" role="contentinfo" aria-label="Partner Ribbon">
@@ -55,22 +55,36 @@ export function SiteFooter({
         <div className="partner-ribbon-col partner-ribbon-right">
           <div className="partner-logos-group">
             {rightLogoUrl && (
-              <div className="partner-ribbon-logo-wrap glow-cyan" title={rightLogoAlt}>
+              <a
+                href="https://cipherx.com.lk"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="partner-ribbon-logo-wrap glow-cyan"
+                title="CipherX - cipherx.com.lk"
+                style={{ textDecoration: 'none', display: 'inline-flex' }}
+              >
                 <img
                   src={rightLogoUrl}
                   alt={rightLogoAlt}
                   className="partner-ribbon-logo partner-logo-1"
                 />
-              </div>
+              </a>
             )}
             {rightLogo2Url && (
-              <div className="partner-ribbon-logo-wrap glow-purple" title={rightLogo2Alt}>
+              <a
+                href="https://printx.web.lk"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="partner-ribbon-logo-wrap glow-purple"
+                title="PrintX - printx.web.lk"
+                style={{ textDecoration: 'none', display: 'inline-flex' }}
+              >
                 <img
                   src={rightLogo2Url}
                   alt={rightLogo2Alt}
                   className="partner-ribbon-logo partner-logo-2"
                 />
-              </div>
+              </a>
             )}
           </div>
         </div>

@@ -292,28 +292,36 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
 
           <div className="splash-partners-row">
             {partner1Url && (
-              <div
+              <a
+                href="https://cipherx.com.lk"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="splash-partner-capsule glow-cyan"
-                title="Powered By"
+                title="CipherX - cipherx.com.lk"
+                style={{ textDecoration: 'none' }}
               >
                 <img
                   src={partner1Url}
-                  alt="Powered By"
+                  alt="CipherX"
                   className="splash-partner-logo partner-1"
                 />
-              </div>
+              </a>
             )}
             {partner2Url && (
-              <div
+              <a
+                href="https://printx.web.lk"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="splash-partner-capsule glow-purple"
-                title="Powered By"
+                title="PrintX - printx.web.lk"
+                style={{ textDecoration: 'none' }}
               >
                 <img
                   src={partner2Url}
-                  alt="Powered By"
+                  alt="PrintX"
                   className="splash-partner-logo partner-2"
                 />
-              </div>
+              </a>
             )}
           </div>
         </footer>

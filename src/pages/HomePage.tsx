@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   MapPin,
@@ -9,8 +9,6 @@ import {
   CalendarDays,
   ArrowRight,
   Star,
-  Search,
-  Bell,
   Sparkles,
   Clock,
   TrendingUp,
@@ -19,7 +17,9 @@ import {
   GraduationCap,
   Radio,
   VolumeX,
-  Layers,
+  PhoneCall,
+  Video,
+  Megaphone,
 } from 'lucide-react';
 import { supabase, type Exhibition, type Store as StoreType } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -27,6 +27,8 @@ import { GPSPermissionBanner } from '../components/GPSPermissionBanner';
 import { useLiveBroadcast } from '../contexts/LiveBroadcastContext';
 import invexLogo from '../pics/logo.png';
 import { SiteFooter } from '../components/SiteFooter';
+import { EmergencyContactsModal } from '../components/EmergencyContactsModal';
+import { VideoLivesModal } from '../components/VideoLivesModal';
 
 // ── Customizable Placeholder Exhibition Slots ───────────────────────
 // You can edit titles, locations, dates, or accent colors anytime.
@@ -96,6 +98,94 @@ const placeholderExhibitions: PlaceholderExhibition[] = [
   },
 ];
 
+function useCarouselScroller(speed = 0.5) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const isInteractingRef = useRef(false);
+  const isDraggingRef = useRef(false);
+  const startXRef = useRef(0);
+  const scrollStartRef = useRef(0);
+  const resumeTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    let animId: number;
+    let lastTime = performance.now();
+
+    const loop = (currentTime: number) => {
+      const delta = (currentTime - lastTime) / 16.67;
+      lastTime = currentTime;
+
+      const el = containerRef.current;
+      if (el && !isInteractingRef.current && !isDraggingRef.current) {
+        el.scrollLeft += speed * delta;
+        // Seamless loop back to start
+        if (el.scrollLeft >= el.scrollWidth - el.clientWidth - 2) {
+          el.scrollLeft = 1;
+        }
+      }
+      animId = requestAnimationFrame(loop);
+    };
+
+    animId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(animId);
+  }, [speed]);
+
+  const pauseAndResume = () => {
+    isInteractingRef.current = true;
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+    resumeTimerRef.current = setTimeout(() => {
+      isInteractingRef.current = false;
+    }, 2800);
+  };
+
+  const scroll = (direction: 'left' | 'right') => {
+    pauseAndResume();
+    const el = containerRef.current;
+    if (!el) return;
+    const distance = Math.max(el.clientWidth * 0.7, 260);
+    el.scrollBy({
+      left: direction === 'left' ? -distance : distance,
+      behavior: 'smooth',
+    });
+  };
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    const el = containerRef.current;
+    if (!el) return;
+    isDraggingRef.current = true;
+    startXRef.current = e.pageX - el.offsetLeft;
+    scrollStartRef.current = el.scrollLeft;
+    pauseAndResume();
+  };
+
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (!isDraggingRef.current) return;
+    e.preventDefault();
+    const el = containerRef.current;
+    if (!el) return;
+    const x = e.pageX - el.offsetLeft;
+    const walk = (x - startXRef.current) * 1.4;
+    el.scrollLeft = scrollStartRef.current - walk;
+  };
+
+  const onMouseUp = () => {
+    isDraggingRef.current = false;
+  };
+
+  return {
+    ref: containerRef,
+    scroll,
+    handlers: {
+      onMouseEnter: () => { isInteractingRef.current = true; },
+      onMouseLeave: () => { isInteractingRef.current = false; isDraggingRef.current = false; },
+      onMouseDown,
+      onMouseMove,
+      onMouseUp,
+      onTouchStart: pauseAndResume,
+      onWheel: pauseAndResume,
+    },
+  };
+}
+
 export function HomePage() {
   const { user, profile, signOut } = useAuth();
   const navigate = useNavigate();
@@ -105,6 +195,14 @@ export function HomePage() {
   const [exhibitions, setExhibitions] = useState<Exhibition[]>([]);
   const [stores, setStores] = useState<StoreType[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Modals for new buttons
+  const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
+  const [isVideoLivesModalOpen, setIsVideoLivesModalOpen] = useState(false);
+
+  // Interactive auto-scrolling & manually scrollable carousels
+  const featuredCarousel = useCarouselScroller(0.48);
+  const storesCarousel = useCarouselScroller(0.48);
 
   useEffect(() => {
     const handleUnread = (e: Event) => {
@@ -322,103 +420,133 @@ export function HomePage() {
         <div className="home-action-box glass">
           {/* Navigation Links */}
           <div className="home-action-box-links">
-            <Link to="/map" className="home-box-link link-map" id="nav-floor-map">
-              <div className="home-box-link-icon icon-map">
-                <Navigation size={24} strokeWidth={2.2} />
+            {/* 1. Floor Map changed to Emergancy Contacts */}
+            <button
+              type="button"
+              onClick={() => setIsEmergencyModalOpen(true)}
+              className="home-box-link link-emergency"
+              id="nav-emergency-contacts"
+              title="Emergency Contacts & Hotlines"
+            >
+              <div className="home-box-link-icon icon-emergency">
+                <PhoneCall size={22} strokeWidth={2.2} />
               </div>
               <div className="home-box-link-text">
-                <span className="home-box-link-title">Floor Map</span>
-                <span className="home-box-link-desc">Live GPS Route</span>
+                <span className="home-box-link-title">Emergancy Contacts</span>
+                <span className="home-box-link-desc">Hotlines</span>
               </div>
-            </Link>
+            </button>
 
-            <Link to="/map3d" className="home-box-link link-3d" id="nav-3d-campus">
-              <div className="home-box-link-icon icon-3d">
-                <Layers size={24} strokeWidth={2.2} />
+            {/* 2. 3D Campus replaced with Broadcast */}
+            <button
+              type="button"
+              onClick={() => {
+                if (activeBroadcast) {
+                  if (isPlaying) {
+                    handleMute();
+                  } else {
+                    handleListen();
+                  }
+                } else {
+                  handleOpenAnnouncements();
+                }
+              }}
+              className={`home-box-link link-broadcast ${isPlaying ? 'is-playing' : ''}`}
+              id="nav-broadcast"
+              title={activeBroadcast ? (isPlaying ? 'Mute live voice broadcast' : 'Listen to live voice broadcast') : 'Live Voice Broadcast'}
+            >
+              <div className="home-box-link-icon icon-broadcast" style={{ position: 'relative' }}>
+                {isPlaying ? <VolumeX size={22} strokeWidth={2.2} /> : <Radio size={22} strokeWidth={2.2} />}
+                {activeBroadcast && (
+                  <span
+                    className="live-dot-pulse"
+                    style={{
+                      position: 'absolute',
+                      top: 6,
+                      right: 6,
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      backgroundColor: '#ef4444',
+                    }}
+                  />
+                )}
               </div>
               <div className="home-box-link-text">
-                <span className="home-box-link-title">3D Campus</span>
-                <span className="home-box-link-desc">Virtual View</span>
+                <span className="home-box-link-title">Broadcast</span>
+                <span className="home-box-link-desc">
+                  {isPlaying ? 'Live Audio' : activeBroadcast ? 'On Air' : 'Voice Stream'}
+                </span>
               </div>
-            </Link>
+            </button>
 
-            <Link to="/exhibitions" className="home-box-link link-events" id="nav-exhibitions">
-              <div className="home-box-link-icon icon-events">
-                <CalendarDays size={24} strokeWidth={2.2} />
+            {/* 3. Event replaced with Video Lives */}
+            <button
+              type="button"
+              onClick={() => setIsVideoLivesModalOpen(true)}
+              className="home-box-link link-videolives"
+              id="nav-video-lives"
+              title="Live Video Streams (YouTube & Facebook)"
+            >
+              <div className="home-box-link-icon icon-videolives">
+                <Video size={22} strokeWidth={2.2} />
               </div>
               <div className="home-box-link-text">
-                <span className="home-box-link-title">Events</span>
-                <span className="home-box-link-desc">Schedules</span>
+                <span className="home-box-link-title">Video Lives</span>
+                <span className="home-box-link-desc">YouTube &amp; FB</span>
               </div>
-            </Link>
+            </button>
 
-            <Link to="/stores" className="home-box-link link-stalls" id="nav-stalls">
-              <div className="home-box-link-icon icon-stalls">
-                <Store size={24} strokeWidth={2.2} />
-              </div>
-              <div className="home-box-link-text">
-                <span className="home-box-link-title">Stalls</span>
-                <span className="home-box-link-desc">Directory</span>
-              </div>
-            </Link>
-          </div>
-
-          <div className="home-action-box-divider" />
-
-          {/* Action Controls & Utilities */}
-          <div className="home-action-box-bottom">
-
-            <div className="home-action-box-buttons">
-              {/* Quick Search */}
-              <Link to="/search" className="btn btn-ghost btn-sm navbar-action-btn" id="nav-search-btn" title="Search stalls and events">
-                <Search size={14} />
-                <span>Search</span>
-              </Link>
-
-              {/* Announcements Bell */}
-              <button
-                onClick={handleOpenAnnouncements}
-                className="btn btn-ghost btn-sm btn-icon navbar-bell-btn"
-                title="View Announcements"
-                id="nav-announcements-btn"
-              >
-                <Bell size={16} />
+            {/* 4. Stalls replaced with Announcement */}
+            <button
+              type="button"
+              onClick={handleOpenAnnouncements}
+              className="home-box-link link-announcements"
+              id="nav-announcements"
+              title="Exhibition Announcements & Alerts"
+            >
+              <div className="home-box-link-icon icon-announcements" style={{ position: 'relative' }}>
+                <Megaphone size={22} strokeWidth={2.2} />
                 {unreadNotifications > 0 && (
-                  <span className="notification-dot">
+                  <span
+                    className="notification-dot"
+                    style={{
+                      position: 'absolute',
+                      top: -4,
+                      right: -4,
+                      minWidth: 18,
+                      height: 18,
+                      borderRadius: 9,
+                      background: '#ef4444',
+                      color: '#fff',
+                      fontSize: '0.68rem',
+                      fontWeight: 800,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '0 4px',
+                      border: '2px solid rgba(13, 16, 28, 0.9)',
+                    }}
+                  >
                     {unreadNotifications > 9 ? '9+' : unreadNotifications}
                   </span>
                 )}
-              </button>
+              </div>
+              <div className="home-box-link-text">
+                <span className="home-box-link-title">Announcement</span>
+                <span className="home-box-link-desc">
+                  {unreadNotifications > 0 ? `${unreadNotifications} Unread` : 'Live Alerts'}
+                </span>
+              </div>
+            </button>
+          </div>
 
-              {/* Live Audio / Broadcast Button */}
-              {activeBroadcast && (
-                <button
-                  id="nav-live-audio-btn"
-                  onClick={isPlaying ? handleMute : handleListen}
-                  className={`btn btn-ghost btn-sm navbar-broadcast-btn ${isPlaying ? 'playing' : ''}`}
-                  title={isPlaying ? 'Mute broadcast' : 'Listen to broadcast'}
-                >
-                  {isPlaying ? <VolumeX size={14} /> : <Radio size={14} />}
-                  <span>Broadcast</span>
-                  {isPlaying && (
-                    <span
-                      className="live-dot-pulse"
-                      style={{
-                        width: '7px',
-                        height: '7px',
-                        borderRadius: '50%',
-                        backgroundColor: '#ef4444',
-                        display: 'inline-block',
-                        marginLeft: '2px',
-                      }}
-                    />
-                  )}
-                </button>
-              )}
-
-              {/* User Profile / Admin / Auth */}
-              {user ? (
-                <>
+          {/* User Profile / Admin controls (Search, Bell, Broadcast, and Sign In buttons hidden) */}
+          {user && (
+            <>
+              <div className="home-action-box-divider" />
+              <div className="home-action-box-bottom">
+                <div className="home-action-box-buttons" style={{ justifyContent: 'center' }}>
                   <Link to="/profile" className="btn btn-ghost btn-sm navbar-action-btn" id="nav-profile-btn" title="My Profile">
                     <User size={14} />
                     <span>Profile</span>
@@ -432,15 +560,10 @@ export function HomePage() {
                   <button className="btn btn-danger btn-sm navbar-signout-btn" onClick={handleSignOut} id="nav-signout-btn" title="Sign Out">
                     <LogOut size={14} />
                   </button>
-                </>
-              ) : (
-                <Link to="/login" className="btn btn-primary btn-sm navbar-login-btn" id="nav-login-btn">
-                  <User size={14} />
-                  <span>Sign In</span>
-                </Link>
-              )}
-            </div>
-          </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         {/* ── Stats Bar ──────────────────────────────────────── */}
@@ -479,7 +602,7 @@ export function HomePage() {
                 </div>
                 <div>
                   <h2 className="home-section-title">Featured Exhibitions</h2>
-                  <p className="home-section-sub">Ongoing events & summits near you</p>
+                  <p className="home-section-sub">Ongoing events &amp; summits near you</p>
                 </div>
               </div>
               <Link to="/exhibitions" className="home-view-all-link" id="home-view-all-exhibitions">
@@ -494,7 +617,11 @@ export function HomePage() {
                 ))}
               </div>
             ) : (
-              <div className="home-ex-carousel-viewport">
+              <div
+                ref={featuredCarousel.ref}
+                className="home-ex-carousel-viewport"
+                {...featuredCarousel.handlers}
+              >
                 <div className="home-ex-carousel-track">
                   {(
                     [
@@ -605,7 +732,7 @@ export function HomePage() {
                 </div>
                 <div>
                   <h2 className="home-section-title">Participant Exhibitors</h2>
-                  <p className="home-section-sub">Browse booths, stalls & brand partners</p>
+                  <p className="home-section-sub">Browse booths, stalls &amp; brand partners</p>
                 </div>
               </div>
               <Link to="/stores" className="home-view-all-link" id="home-view-all-stores">
@@ -625,69 +752,99 @@ export function HomePage() {
                 <p>No active exhibitors found.</p>
               </div>
             ) : (
-              <div className="home-stores-grid">
-                {stores.map((st) => (
-                  <Link
-                    key={st.id}
-                    to={`/stores/${st.id}`}
-                    className="home-store-card"
-                    id={`home-store-card-${st.id}`}
-                    style={{
-                      '--store-cat-color': st.categories?.color || 'var(--color-primary)',
-                    } as React.CSSProperties}
-                  >
-                    {/* Category color accent bar */}
-                    <div
-                      className="home-store-accent"
-                      style={{ background: st.categories?.color || 'var(--color-primary)' }}
-                    />
+              <div
+                ref={storesCarousel.ref}
+                className="home-stores-carousel-viewport"
+                {...storesCarousel.handlers}
+              >
+                <div className="home-stores-carousel-track">
+                  {(
+                    stores.length < 5
+                      ? [...stores, ...stores, ...stores, ...stores]
+                      : [...stores, ...stores]
+                  ).map((st, index) => (
+                    <Link
+                      key={`st-${st.id}-${index}`}
+                      to={`/stores/${st.id}`}
+                      className="home-store-carousel-card"
+                      id={`home-store-card-${st.id}-${index}`}
+                      style={{
+                        '--store-cat-color': st.categories?.color || 'var(--color-primary)',
+                      } as React.CSSProperties}
+                    >
+                      {/* Top colored accent indicator */}
+                      <div
+                        className="home-store-accent"
+                        style={{ background: st.categories?.color || 'var(--color-primary)' }}
+                      />
 
-                    {/* Logo */}
-                    <div className="home-store-logo-wrap">
-                      {st.logo_url ? (
-                        <img src={st.logo_url} alt={st.name} className="home-store-logo" />
-                      ) : (
-                        <div className="home-store-logo-placeholder">
-                          <Store size={18} color="var(--color-muted)" />
+                      {/* Store Logo */}
+                      <div className="home-store-carousel-logo">
+                        {st.logo_url ? (
+                          <img src={st.logo_url} alt={st.name} />
+                        ) : (
+                          <Store size={24} color={st.categories?.color || 'var(--color-primary)'} />
+                        )}
+                      </div>
+
+                      {/* Store Name */}
+                      <h3 className="home-store-carousel-name">{st.name}</h3>
+
+                      {/* Meta location */}
+                      <span className="home-store-carousel-meta">
+                        <MapPin size={11} /> Floor {st.floor || '1'}
+                      </span>
+
+                      {/* Category Chip */}
+                      {st.categories && (
+                        <span
+                          className="home-store-cat-chip"
+                          style={{
+                            marginTop: '0.6rem',
+                            background: `${st.categories.color}20`,
+                            color: st.categories.color || 'var(--color-primary-h)',
+                            borderColor: `${st.categories.color}40`,
+                            fontSize: '0.72rem',
+                          }}
+                        >
+                          {st.categories.name}
+                        </span>
+                      )}
+
+                      {/* Promotion Sparkle */}
+                      {(st.phone || st.website) && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            top: 10,
+                            right: 10,
+                            color: 'var(--color-warning)',
+                          }}
+                        >
+                          <Sparkles size={13} />
                         </div>
                       )}
-                    </div>
-
-                    {/* Info */}
-                    <div className="home-store-info">
-                      <h3 className="home-store-name">{st.name}</h3>
-                      <span className="home-store-meta">
-                        Floor {st.floor || '1'}
-                        {st.categories ? ` · ${st.categories.name}` : ''}
-                      </span>
-                    </div>
-
-                    {/* Category chip */}
-                    {st.categories && (
-                      <span
-                        className="home-store-cat-chip"
-                        style={{
-                          background: `${st.categories.color}20`,
-                          color: st.categories.color || 'var(--color-primary-h)',
-                          borderColor: `${st.categories.color}40`,
-                        }}
-                      >
-                        {st.categories.name}
-                      </span>
-                    )}
-
-                    {/* Promo star */}
-                    {(st.phone || st.website) && (
-                      <Sparkles size={13} className="home-store-sparkle" color="var(--color-warning)" />
-                    )}
-                  </Link>
-                ))}
+                    </Link>
+                  ))}
+                </div>
               </div>
             )}
           </section>
 
         </div>
       </div>
+
+      {/* Emergency Contacts Modal */}
+      <EmergencyContactsModal
+        isOpen={isEmergencyModalOpen}
+        onClose={() => setIsEmergencyModalOpen(false)}
+      />
+
+      {/* Video Lives Modal */}
+      <VideoLivesModal
+        isOpen={isVideoLivesModalOpen}
+        onClose={() => setIsVideoLivesModalOpen(false)}
+      />
 
       {/* Contact & Partner Information Ribbon Footer */}
       <SiteFooter />

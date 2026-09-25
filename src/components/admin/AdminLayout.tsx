@@ -18,6 +18,7 @@ import {
   UserCheck,
   Maximize2,
   Coffee,
+  PhoneCall,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -35,6 +36,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/categories',    icon: <Tag size={18} />,             label: 'Categories' },
   { to: '/nodes',         icon: <Navigation2 size={18} />,     label: 'Nav Nodes' },
   { to: '/announcements', icon: <Megaphone size={18} />,       label: 'Announcements' },
+  { to: '/emergency',     icon: <PhoneCall size={18} />,       label: 'Emergency & Lives' },
   { to: '/visitors',      icon: <Users size={18} />,           label: 'Visitors' },
   { to: '/users',         icon: <UserCheck size={18} />,       label: 'Users' },
   { to: '/analytics',     icon: <BarChart3 size={18} />,       label: 'Analytics' },
