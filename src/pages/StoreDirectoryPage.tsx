@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Search, MapPin, Clock, ArrowLeft, Store, Star,
@@ -46,18 +46,24 @@ export function StoreDirectoryPage() {
     }
   }
 
-  const filteredStores = stores.filter((st) => {
-    const matchesSearch =
-      st.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (st.description && st.description.toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchesCategory = !selectedCategory || st.category_id === selectedCategory;
-    const matchesFloor = !selectedFloor || st.floor === selectedFloor;
-    return matchesSearch && matchesCategory && matchesFloor;
-  });
+  const query = searchQuery.trim().toLowerCase();
+  const filteredStores = useMemo(() => {
+    return stores.filter((st) => {
+      const matchesSearch =
+        !query ||
+        st.name.toLowerCase().includes(query) ||
+        (st.description && st.description.toLowerCase().includes(query));
+      const matchesCategory = !selectedCategory || st.category_id === selectedCategory;
+      const matchesFloor = !selectedFloor || st.floor === selectedFloor;
+      return matchesSearch && matchesCategory && matchesFloor;
+    });
+  }, [stores, query, selectedCategory, selectedFloor]);
 
-  const floorLevels = Array.from(
-    new Set(stores.map((s) => s.floor).filter(Boolean))
-  ).sort();
+  const floorLevels = useMemo(() => {
+    return Array.from(
+      new Set(stores.map((s) => s.floor).filter(Boolean))
+    ).sort();
+  }, [stores]);
 
   const isOpen = (openingTime?: string | null, closingTime?: string | null) => {
     if (!openingTime || !closingTime) return null;
@@ -229,12 +235,14 @@ export function StoreDirectoryPage() {
                 id={`store-list-item-${st.id}`}
                 style={{
                   '--accent': st.categories?.color || 'var(--color-primary)',
-                  animationDelay: `${Math.min(index * 0.05, 0.5)}s`,
-                } as React.CSSProperties}
+                  ...(query || selectedCategory || selectedFloor
+                    ? { animation: 'none' }
+                    : { animationDelay: `${Math.min(index * 0.04, 0.4)}s` }),
+                } as unknown as React.CSSProperties}
               >
                 {/* Logo */}
                 {st.logo_url ? (
-                  <img src={st.logo_url} alt={st.name} className="store-list-logo" />
+                  <img src={st.logo_url} alt={st.name} className="store-list-logo" loading="lazy" decoding="async" />
                 ) : (
                   <div
                     className="store-list-logo-ph"
@@ -305,7 +313,9 @@ export function StoreDirectoryPage() {
               className="store-grid-card"
               id={`store-grid-item-${st.id}`}
               style={{
-                animationDelay: `${Math.min(index * 0.05, 0.5)}s`,
+                ...(query || selectedCategory || selectedFloor
+                  ? { animation: 'none' }
+                  : { animationDelay: `${Math.min(index * 0.04, 0.4)}s` }),
               }}
             >
               <div
@@ -315,7 +325,7 @@ export function StoreDirectoryPage() {
                 }}
               >
                 {st.logo_url ? (
-                  <img src={st.logo_url} alt={st.name} className="store-grid-logo" />
+                  <img src={st.logo_url} alt={st.name} className="store-grid-logo" loading="lazy" decoding="async" />
                 ) : (
                   <div className="store-grid-logo-ph">
                     <Store size={26} color={st.categories?.color || 'var(--color-muted)'} />

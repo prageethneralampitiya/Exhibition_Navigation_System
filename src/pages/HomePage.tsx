@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo, memo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   MapPin,
@@ -111,24 +111,138 @@ const placeholderExhibitions: PlaceholderExhibition[] = [
   },
 ];
 
-function useCarouselScroller(speed = 0.8, repeatCount = 4) {
+function useCarouselScroller(speed = 0.65, repeatCount = 3) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const isDraggingRef = useRef(false);
   const isInteractingRef = useRef(false);
+  const isMomentumRef = useRef(false);
   const hasDraggedRef = useRef(false);
   const startXRef = useRef(0);
+  const startYRef = useRef(0);
   const scrollStartRef = useRef(0);
   const posRef = useRef(0);
   const singleSetWidthRef = useRef(0);
-  const lastScrollWidthRef = useRef(0);
+  const directionLockedRef = useRef<'horizontal' | 'vertical' | null>(null);
+  const lastPointerXRef = useRef(0);
+  const lastPointerTimeRef = useRef(0);
+  const velocityRef = useRef(0);
   const resumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const momentumRafIdRef = useRef<number | null>(null);
+  const isInitializedRef = useRef(false);
 
   const repeatCountRef = useRef(repeatCount);
   useEffect(() => {
     repeatCountRef.current = repeatCount;
-    singleSetWidthRef.current = 0; // force recalculation when repeatCount changes
+    const el = containerRef.current;
+    if (el && el.scrollWidth > 0) {
+      singleSetWidthRef.current = el.scrollWidth / Math.max(repeatCount, 1);
+    }
   }, [repeatCount]);
 
+  // Measure singleSetWidth and initialize in middle set without layout thrashing
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const measureWidth = () => {
+      if (el.scrollWidth > 0) {
+        const sWidth = el.scrollWidth / Math.max(repeatCountRef.current, 1);
+        singleSetWidthRef.current = sWidth;
+        if (!isInitializedRef.current && sWidth > 0) {
+          // Initialize in Set 1 (middle set) so users can immediately sweep left-to-right AND right-to-left
+          el.scrollLeft = sWidth;
+          posRef.current = sWidth;
+          isInitializedRef.current = true;
+        }
+      }
+    };
+
+    // Initial check
+    measureWidth();
+    // Re-check after images/content might have settled
+    const initTimer = setTimeout(measureWidth, 150);
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => {
+        measureWidth();
+      });
+      ro.observe(el);
+    }
+
+    return () => {
+      clearTimeout(initTimer);
+      ro?.disconnect();
+    };
+  }, []);
+
+  const pauseAndResume = useCallback((delay = 2000) => {
+    isInteractingRef.current = true;
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+    resumeTimerRef.current = setTimeout(() => {
+      isInteractingRef.current = false;
+      const el = containerRef.current;
+      if (el) {
+        posRef.current = el.scrollLeft;
+      }
+    }, delay);
+  }, []);
+
+  const stopMomentum = useCallback(() => {
+    if (momentumRafIdRef.current) {
+      cancelAnimationFrame(momentumRafIdRef.current);
+      momentumRafIdRef.current = null;
+    }
+    isMomentumRef.current = false;
+  }, []);
+
+  // Smooth momentum gliding after finger sweep / flick
+  const startMomentum = useCallback((initialVelocity: number) => {
+    stopMomentum();
+    const el = containerRef.current;
+    if (!el) return;
+
+    // initialVelocity is in px/ms. Negative means swiped left (cards move right: +scrollLeft)
+    let frameVelocity = -initialVelocity * 16;
+    const maxV = 28;
+    frameVelocity = Math.max(-maxV, Math.min(maxV, frameVelocity));
+
+    if (Math.abs(frameVelocity) < 0.8) {
+      pauseAndResume(1800);
+      return;
+    }
+
+    isMomentumRef.current = true;
+    isInteractingRef.current = true;
+
+    const glide = () => {
+      const sWidth = singleSetWidthRef.current;
+      frameVelocity *= 0.94; // Smooth natural exponential friction
+
+      if (Math.abs(frameVelocity) < 0.15 || !isMomentumRef.current) {
+        stopMomentum();
+        pauseAndResume(2000);
+        return;
+      }
+
+      posRef.current += frameVelocity;
+
+      if (sWidth > 0) {
+        if (posRef.current >= sWidth * 2) {
+          posRef.current -= sWidth;
+        } else if (posRef.current < sWidth) {
+          posRef.current += sWidth;
+        }
+      }
+
+      el.scrollLeft = posRef.current;
+      momentumRafIdRef.current = requestAnimationFrame(glide);
+    };
+
+    momentumRafIdRef.current = requestAnimationFrame(glide);
+  }, [pauseAndResume, stopMomentum]);
+
+  // Main gentle auto-scroll loop
   useEffect(() => {
     let animId: number;
     let lastTime = performance.now();
@@ -156,38 +270,18 @@ function useCarouselScroller(speed = 0.8, repeatCount = 4) {
 
       const currentEl = containerRef.current;
       if (currentEl && isVisible) {
-        const rCount = Math.max(repeatCountRef.current, 1);
-        if (singleSetWidthRef.current <= 0 || currentEl.scrollWidth !== lastScrollWidthRef.current) {
-          lastScrollWidthRef.current = currentEl.scrollWidth;
-          singleSetWidthRef.current = currentEl.scrollWidth / rCount;
-        }
+        const sWidth = singleSetWidthRef.current;
 
-        const singleSetWidth = singleSetWidthRef.current;
-
-        if (!isInteractingRef.current && !isDraggingRef.current) {
+        if (!isInteractingRef.current && !isDraggingRef.current && !isMomentumRef.current) {
           posRef.current += speed * delta;
 
-          // Seamless infinite wrap: when 1 set has scrolled, wrap back
-          if (singleSetWidth > 0 && posRef.current >= singleSetWidth) {
-            posRef.current -= singleSetWidth;
+          if (sWidth > 0 && posRef.current >= sWidth * 2) {
+            posRef.current -= sWidth;
           }
 
           currentEl.scrollLeft = posRef.current;
-        } else {
-          // Manual drag or user interaction: wrap seamlessly if crossing bounds
-          if (singleSetWidth > 0) {
-            if (currentEl.scrollLeft >= singleSetWidth * 2) {
-              currentEl.scrollLeft -= singleSetWidth;
-              posRef.current = currentEl.scrollLeft;
-            } else if (currentEl.scrollLeft <= 0) {
-              currentEl.scrollLeft += singleSetWidth;
-              posRef.current = currentEl.scrollLeft;
-            } else {
-              posRef.current = currentEl.scrollLeft;
-            }
-          } else {
-            posRef.current = currentEl.scrollLeft;
-          }
+        } else if (isDraggingRef.current) {
+          posRef.current = currentEl.scrollLeft;
         }
       }
 
@@ -197,23 +291,13 @@ function useCarouselScroller(speed = 0.8, repeatCount = 4) {
     animId = requestAnimationFrame(loop);
     return () => {
       cancelAnimationFrame(animId);
+      stopMomentum();
       observer?.disconnect();
     };
-  }, [speed]);
-
-  const pauseAndResume = useCallback((delay = 2200) => {
-    isInteractingRef.current = true;
-    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
-    resumeTimerRef.current = setTimeout(() => {
-      isInteractingRef.current = false;
-      const el = containerRef.current;
-      if (el) {
-        posRef.current = el.scrollLeft;
-      }
-    }, delay);
-  }, []);
+  }, [speed, stopMomentum]);
 
   const scroll = useCallback((direction: 'left' | 'right') => {
+    stopMomentum();
     pauseAndResume(3500);
     const el = containerRef.current;
     if (!el) return;
@@ -223,36 +307,71 @@ function useCarouselScroller(speed = 0.8, repeatCount = 4) {
       behavior: 'smooth',
     });
     setTimeout(() => {
-      if (el) posRef.current = el.scrollLeft;
-    }, 400);
-  }, [pauseAndResume]);
+      if (el) {
+        const sWidth = singleSetWidthRef.current;
+        if (sWidth > 0) {
+          if (el.scrollLeft >= sWidth * 2) el.scrollLeft -= sWidth;
+          else if (el.scrollLeft < sWidth) el.scrollLeft += sWidth;
+        }
+        posRef.current = el.scrollLeft;
+      }
+    }, 450);
+  }, [pauseAndResume, stopMomentum]);
 
+  // Mouse handlers for desktop click-and-drag
   const onMouseDown = (e: React.MouseEvent) => {
     const el = containerRef.current;
-    if (!el) return;
+    if (!el || e.button !== 0) return;
+    stopMomentum();
     isDraggingRef.current = true;
     isInteractingRef.current = true;
     hasDraggedRef.current = false;
-    startXRef.current = e.pageX - el.offsetLeft;
+    startXRef.current = e.pageX;
     scrollStartRef.current = el.scrollLeft;
+    lastPointerXRef.current = e.pageX;
+    lastPointerTimeRef.current = performance.now();
+    velocityRef.current = 0;
   };
 
   const onMouseMove = (e: React.MouseEvent) => {
     if (!isDraggingRef.current) return;
     const el = containerRef.current;
     if (!el) return;
-    const x = e.pageX - el.offsetLeft;
-    const walk = (x - startXRef.current) * 1.25;
-    if (Math.abs(walk) > 4) {
+    const deltaX = e.pageX - startXRef.current;
+    if (Math.abs(deltaX) > 4) {
       hasDraggedRef.current = true;
     }
-    el.scrollLeft = scrollStartRef.current - walk;
-    posRef.current = el.scrollLeft;
+    const now = performance.now();
+    const dt = now - lastPointerTimeRef.current;
+    if (dt > 10) {
+      const instantVelocity = (e.pageX - lastPointerXRef.current) / dt;
+      velocityRef.current = instantVelocity * 0.7 + velocityRef.current * 0.3;
+      lastPointerXRef.current = e.pageX;
+      lastPointerTimeRef.current = now;
+    }
+
+    let targetScroll = scrollStartRef.current - deltaX;
+    const sWidth = singleSetWidthRef.current;
+    if (sWidth > 0) {
+      while (targetScroll >= sWidth * 2) {
+        targetScroll -= sWidth;
+        scrollStartRef.current -= sWidth;
+      }
+      while (targetScroll < sWidth) {
+        targetScroll += sWidth;
+        scrollStartRef.current += sWidth;
+      }
+    }
+    el.scrollLeft = targetScroll;
+    posRef.current = targetScroll;
   };
 
   const onMouseUp = () => {
-    if (isDraggingRef.current) {
-      isDraggingRef.current = false;
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    if (hasDraggedRef.current && Math.abs(velocityRef.current) > 0.12) {
+      startMomentum(velocityRef.current);
+    } else {
       pauseAndResume(2000);
     }
   };
@@ -262,44 +381,104 @@ function useCarouselScroller(speed = 0.8, repeatCount = 4) {
   };
 
   const onMouseLeave = () => {
-    isDraggingRef.current = false;
-    isInteractingRef.current = false;
-    const el = containerRef.current;
-    if (el) {
-      posRef.current = el.scrollLeft;
+    if (isDraggingRef.current) {
+      onMouseUp();
+    } else {
+      isInteractingRef.current = false;
     }
   };
 
+  // Touch handlers for mobile finger sweep with direction lock & momentum
   const onTouchStart = (e: React.TouchEvent) => {
     const el = containerRef.current;
-    if (!el) return;
+    if (!el || e.touches.length !== 1) return;
+    stopMomentum();
     isDraggingRef.current = true;
     isInteractingRef.current = true;
     hasDraggedRef.current = false;
-    startXRef.current = e.touches[0].pageX - el.offsetLeft;
+    directionLockedRef.current = null;
+    const touch = e.touches[0];
+    startXRef.current = touch.pageX;
+    startYRef.current = touch.pageY;
     scrollStartRef.current = el.scrollLeft;
+    lastPointerXRef.current = touch.pageX;
+    lastPointerTimeRef.current = performance.now();
+    velocityRef.current = 0;
   };
 
   const onTouchMove = (e: React.TouchEvent) => {
     if (!isDraggingRef.current) return;
     const el = containerRef.current;
-    if (!el) return;
-    const x = e.touches[0].pageX - el.offsetLeft;
-    const walk = (x - startXRef.current) * 1.25;
-    if (Math.abs(walk) > 4) {
+    if (!el || e.touches.length !== 1) return;
+
+    const touch = e.touches[0];
+    const deltaX = touch.pageX - startXRef.current;
+    const deltaY = touch.pageY - startYRef.current;
+
+    // Check lock direction if not set yet
+    if (!directionLockedRef.current) {
+      const absX = Math.abs(deltaX);
+      const absY = Math.abs(deltaY);
+      if (absX > 6 || absY > 6) {
+        if (absX >= absY) {
+          directionLockedRef.current = 'horizontal';
+        } else {
+          // Vertical movement dominates: yield completely to native vertical page scroll
+          directionLockedRef.current = 'vertical';
+          isDraggingRef.current = false;
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+
+    if (directionLockedRef.current !== 'horizontal') return;
+
+    if (Math.abs(deltaX) > 4) {
       hasDraggedRef.current = true;
     }
-    el.scrollLeft = scrollStartRef.current - walk;
-    posRef.current = el.scrollLeft;
+
+    const now = performance.now();
+    const dt = now - lastPointerTimeRef.current;
+    if (dt > 10) {
+      const instantVelocity = (touch.pageX - lastPointerXRef.current) / dt;
+      velocityRef.current = instantVelocity * 0.7 + velocityRef.current * 0.3;
+      lastPointerXRef.current = touch.pageX;
+      lastPointerTimeRef.current = now;
+    }
+
+    // 1:1 direct finger tracking with seamless infinite wrap
+    let targetScroll = scrollStartRef.current - deltaX;
+    const sWidth = singleSetWidthRef.current;
+    if (sWidth > 0) {
+      while (targetScroll >= sWidth * 2) {
+        targetScroll -= sWidth;
+        scrollStartRef.current -= sWidth;
+      }
+      while (targetScroll < sWidth) {
+        targetScroll += sWidth;
+        scrollStartRef.current += sWidth;
+      }
+    }
+
+    el.scrollLeft = targetScroll;
+    posRef.current = targetScroll;
   };
 
   const onTouchEnd = () => {
+    if (!isDraggingRef.current && directionLockedRef.current !== 'horizontal') return;
     isDraggingRef.current = false;
-    pauseAndResume(2200);
+    directionLockedRef.current = null;
+
+    if (hasDraggedRef.current && Math.abs(velocityRef.current) > 0.12) {
+      startMomentum(velocityRef.current);
+    } else {
+      pauseAndResume(2000);
+    }
   };
 
   const onClickCapture = (e: React.MouseEvent) => {
-    // If the user was dragging/swiping, prevent clicking card links
     if (hasDraggedRef.current) {
       e.preventDefault();
       e.stopPropagation();
@@ -324,21 +503,8 @@ function useCarouselScroller(speed = 0.8, repeatCount = 4) {
   };
 }
 
-export function HomePage() {
-  const { user, profile, signOut } = useAuth();
-  const navigate = useNavigate();
-  const { activeBroadcast, isPlaying, handleListen, handleMute } = useLiveBroadcast();
-
-  const [unreadNotifications, setUnreadNotifications] = useState(0);
-  const [exhibitions, setExhibitions] = useState<Exhibition[]>([]);
-  const [stores, setStores] = useState<StoreType[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  // Modals for new buttons
-  const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
-  const [isVideoLivesModalOpen, setIsVideoLivesModalOpen] = useState(false);
-
-  // Live visitor counter: time-slot aware, driven by admin settings + real visitors
+// ── Isolated Live Visitor Counter: Prevents full HomePage re-renders ────────
+const LiveVisitorBadge = memo(function LiveVisitorBadge() {
   const [liveVisitorCount, setLiveVisitorCount] = useState(0);
 
   useEffect(() => {
@@ -349,7 +515,6 @@ export function HomePage() {
     let currentSlotId: string | null = '__init__';
     let cleanedUp = false;
 
-    // Helper: find which time slot is active right now
     function getActiveSlot(slots: import('../services/appSettingsService').TimeSlot[]) {
       const now = new Date();
       const cur = now.getHours() * 60 + now.getMinutes();
@@ -360,7 +525,6 @@ export function HomePage() {
       }) ?? null;
     }
 
-    // Helper: smoothly animate from current value to a new target
     function animateTo(target: number, onDone: () => void) {
       cancelAnimationFrame(animId);
       const from = currentLive;
@@ -378,7 +542,6 @@ export function HomePage() {
       animId = requestAnimationFrame(step);
     }
 
-    // Helper: start the ±1/2 fluctuation interval
     function startFluctuation(intervalMs: number, minVal: number) {
       clearInterval(fluctuationTimer);
       fluctuationTimer = setInterval(() => {
@@ -389,7 +552,6 @@ export function HomePage() {
       }, intervalMs);
     }
 
-    // Apply the correct slot (or outside-hours). Only triggers if slot actually changed.
     function applyCurrentSlot(
       config: import('../services/appSettingsService').LiveCounterConfig,
       realVisitors: number,
@@ -397,7 +559,7 @@ export function HomePage() {
     ) {
       const slot = getActiveSlot(config.time_slots);
       const newSlotId = slot?.id ?? 'outside';
-      if (newSlotId === currentSlotId && !forceAnimate) return; // slot unchanged, no action
+      if (newSlotId === currentSlotId && !forceAnimate) return;
       currentSlotId = newSlotId;
 
       const baseCount = slot ? slot.initial_visitor_count : config.outside_hours_count;
@@ -413,7 +575,6 @@ export function HomePage() {
       const { fetchLiveCounterConfig } = await import('../services/appSettingsService');
       const config = await fetchLiveCounterConfig();
 
-      // Fetch real registered visitor count
       let realVisitors = 0;
       try {
         const { count } = await supabase
@@ -424,11 +585,9 @@ export function HomePage() {
 
       if (cleanedUp) return;
 
-      // Initial roll-up from 0
       currentSlotId = '__init__';
       applyCurrentSlot(config, realVisitors, true);
 
-      // Re-evaluate slot every 60 s (slot boundaries change over time)
       slotCheckTimer = setInterval(() => {
         if (!cleanedUp) applyCurrentSlot(config, realVisitors);
       }, 60_000);
@@ -436,11 +595,10 @@ export function HomePage() {
 
     initCounter();
 
-    // Respond immediately when admin saves new settings
     const onConfigUpdate = async (e: Event) => {
       const newConfig = (e as CustomEvent).detail as import('../services/appSettingsService').LiveCounterConfig;
       clearInterval(slotCheckTimer);
-      currentSlotId = '__init__'; // force re-apply
+      currentSlotId = '__init__';
       let realVisitors = 0;
       try {
         const { count } = await supabase.from('profiles').select('id', { count: 'exact', head: true });
@@ -466,31 +624,45 @@ export function HomePage() {
     };
   }, []);
 
-  // Memoized lists and repeat counts for seamless infinite looping
+  return (
+    <div className="home-stat-chip home-stat-chip-live">
+      <span className="home-live-pulse-dot" />
+      <span>{liveVisitorCount} Live Visitors</span>
+    </div>
+  );
+});
+
+export function HomePage() {
+  const { user, profile, signOut } = useAuth();
+  const navigate = useNavigate();
+  const { activeBroadcast, isPlaying, handleListen, handleMute } = useLiveBroadcast();
+
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [exhibitions, setExhibitions] = useState<Exhibition[]>([]);
+  const [stores, setStores] = useState<StoreType[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Modals for new buttons
+  const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
+  const [isVideoLivesModalOpen, setIsVideoLivesModalOpen] = useState(false);
+
+  // Memoized lists and 3 repeat sets for lightweight, seamless infinite looping
   const baseExhibitions = useMemo<CarouselExhibitionItem[]>(() => [
     ...exhibitions.map((ex): RealExhibitionItem => ({ ...ex, isPlaceholder: false })),
     ...placeholderExhibitions,
   ], [exhibitions]);
 
-  const featuredCopies = useMemo(() => {
-    return Math.max(4, Math.ceil(20 / Math.max(baseExhibitions.length, 1)));
-  }, [baseExhibitions.length]);
-
   const featuredDisplayList = useMemo(() => {
-    return Array.from({ length: featuredCopies }).flatMap(() => baseExhibitions);
-  }, [baseExhibitions, featuredCopies]);
-
-  const storeCopies = useMemo(() => {
-    return stores.length > 0 ? Math.max(6, Math.ceil(24 / stores.length)) : 1;
-  }, [stores.length]);
+    return Array.from({ length: 3 }).flatMap(() => baseExhibitions);
+  }, [baseExhibitions]);
 
   const storesDisplayList = useMemo(() => {
-    return stores.length > 0 ? Array.from({ length: storeCopies }).flatMap(() => stores) : [];
-  }, [stores, storeCopies]);
+    return stores.length > 0 ? Array.from({ length: 3 }).flatMap(() => stores) : [];
+  }, [stores]);
 
-  // Interactive auto-scrolling & manually scrollable carousels
-  const featuredCarousel = useCarouselScroller(0.8, featuredCopies);
-  const storesCarousel = useCarouselScroller(0.8, storeCopies);
+  // Interactive auto-scrolling & manually scrollable carousels with smooth momentum
+  const featuredCarousel = useCarouselScroller(0.65, 3);
+  const storesCarousel = useCarouselScroller(0.65, 3);
 
   useEffect(() => {
     const handleUnread = (e: Event) => {
@@ -916,10 +1088,7 @@ export function HomePage() {
             <span>{loading ? '—' : stores.length} Exhibitors</span>
           </div>
           <div className="home-stat-divider" />
-          <div className="home-stat-chip home-stat-chip-live">
-            <span className="home-live-pulse-dot" />
-            <span>{liveVisitorCount} Live Visitors</span>
-          </div>
+          <LiveVisitorBadge />
         </div>
 
         {/* ── Transition Bridge to Lower Discovery Section ─────── */}
@@ -1015,7 +1184,7 @@ export function HomePage() {
                       >
                         <div className="home-ex-thumb">
                           {item.image_url ? (
-                            <img src={item.image_url} alt={item.title} className="home-ex-thumb-img" />
+                            <img src={item.image_url} alt={item.title} className="home-ex-thumb-img" loading="lazy" decoding="async" />
                           ) : (
                             <div className="home-ex-thumb-placeholder">
                               <CalendarDays size={24} color="rgba(255,255,255,0.4)" />
@@ -1102,7 +1271,7 @@ export function HomePage() {
                       {/* Store Logo */}
                       <div className="home-store-carousel-logo">
                         {st.logo_url ? (
-                          <img src={st.logo_url} alt={st.name} />
+                          <img src={st.logo_url} alt={st.name} loading="lazy" decoding="async" />
                         ) : (
                           <Store size={24} color={st.categories?.color || 'var(--color-primary)'} />
                         )}

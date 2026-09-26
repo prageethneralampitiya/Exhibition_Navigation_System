@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Search, Calendar, MapPin, ArrowLeft, CalendarDays, Star,
@@ -59,19 +59,32 @@ export function ExhibitionDirectoryPage() {
     }
   }
 
-  const filteredExhibitions = exhibitions.filter((ex) => {
-    const matchesSearch =
-      ex.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (ex.location && ex.location.toLowerCase().includes(searchQuery.toLowerCase()));
-    const status = getExhibitionStatus(ex);
-    if (filterStatus !== 'all') return matchesSearch && status === filterStatus;
-    return matchesSearch;
-  });
+  const query = searchQuery.trim().toLowerCase();
+  const filteredExhibitions = useMemo(() => {
+    return exhibitions.filter((ex) => {
+      const matchesSearch =
+        !query ||
+        ex.title.toLowerCase().includes(query) ||
+        (ex.location && ex.location.toLowerCase().includes(query));
+      if (!matchesSearch) return false;
+      if (filterStatus === 'all') return true;
+      return getExhibitionStatus(ex) === filterStatus;
+    });
+  }, [exhibitions, query, filterStatus]);
 
-  const countByStatus = (status: FilterStatus) => {
-    if (status === 'all') return exhibitions.length;
-    return exhibitions.filter((ex) => getExhibitionStatus(ex) === status).length;
-  };
+  const statusCounts = useMemo(() => {
+    const counts: Record<FilterStatus, number> = {
+      all: exhibitions.length,
+      active: 0,
+      upcoming: 0,
+      ended: 0,
+    };
+    for (const ex of exhibitions) {
+      const s = getExhibitionStatus(ex);
+      counts[s] = (counts[s] || 0) + 1;
+    }
+    return counts;
+  }, [exhibitions]);
 
   return (
     <div className="profile-page ex-dir-enhanced" style={{ maxWidth: 860 }}>
@@ -118,7 +131,7 @@ export function ExhibitionDirectoryPage() {
         <div className="ex-status-tabs">
           {(['all', 'active', 'upcoming', 'ended'] as FilterStatus[]).map((status) => {
             const cfg = STATUS_CONFIG[status];
-            const count = countByStatus(status);
+            const count = statusCounts[status];
             return (
               <button
                 key={status}
@@ -172,7 +185,7 @@ export function ExhibitionDirectoryPage() {
                 {/* Left visual thumbnail */}
                 <div className="ex-card-thumb">
                   {ex.image_url ? (
-                    <img src={ex.image_url} alt={ex.title} className="ex-card-thumb-img" />
+                    <img src={ex.image_url} alt={ex.title} className="ex-card-thumb-img" loading="lazy" decoding="async" />
                   ) : (
                     <div className="ex-card-thumb-ph">
                       <CalendarDays size={28} color="rgba(255,255,255,0.35)" />

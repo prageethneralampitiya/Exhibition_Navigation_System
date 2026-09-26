@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -16,7 +16,8 @@ import {
   type Store as StoreType,
   type ExhibitionEvent,
 } from '../lib/supabase';
-import { MapView } from '../components/MapView';
+
+const MapView = lazy(() => import('../components/MapView').then(m => ({ default: m.MapView })));
 
 export function ExhibitionDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -181,11 +182,13 @@ export function ExhibitionDetailPage() {
         {/* Map Container */}
         <div style={{ height: '320px', width: '100%', position: 'relative' }}>
           {exhibition.latitude !== null && exhibition.longitude !== null ? (
-            <MapView
-              latitude={exhibition.latitude}
-              longitude={exhibition.longitude}
-              stores={stores}
-            />
+            <Suspense fallback={<div className="skeleton" style={{ width: '100%', height: '100%', borderRadius: 'var(--radius-lg)' }} />}>
+              <MapView
+                latitude={exhibition.latitude}
+                longitude={exhibition.longitude}
+                stores={stores}
+              />
+            </Suspense>
           ) : (
             <div
               style={{

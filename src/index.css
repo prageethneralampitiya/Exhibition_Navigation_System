@@ -1340,10 +1340,9 @@ button.home-box-link {
 /* ── Scroll Transition Effects: Ultra-smooth GPU composited ─────── */
 .scroll-reveal {
   opacity: 0;
-  transform: translateY(32px);
-  transition: opacity 0.65s cubic-bezier(0.22, 1, 0.36, 1),
-              transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: opacity, transform;
+  transform: translateY(28px);
+  transition: opacity 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .scroll-reveal.is-in-view {
@@ -1505,62 +1504,11 @@ button.home-box-link {
   transform: translateY(0);
 }
 
-/* Staggered Exhibition Cards */
-.home-content-block .home-ex-card {
-  opacity: 0;
-  transform: translateY(24px) scale(0.97);
-  transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1),
-              transform 0.6s cubic-bezier(0.22, 1, 0.36, 1),
-              box-shadow 0.35s cubic-bezier(0.16, 1, 0.3, 1),
-              border-color 0.3s ease,
-              background 0.3s ease;
-}
-
-.home-content-block.is-in-view .home-ex-card {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
-.home-content-block.is-in-view .home-ex-card:nth-child(1) { transition-delay: 0.08s; }
-.home-content-block.is-in-view .home-ex-card:nth-child(2) { transition-delay: 0.16s; }
-.home-content-block.is-in-view .home-ex-card:nth-child(3) { transition-delay: 0.24s; }
-.home-content-block.is-in-view .home-ex-card:nth-child(4) { transition-delay: 0.32s; }
-.home-content-block.is-in-view .home-ex-card:nth-child(5) { transition-delay: 0.40s; }
-.home-content-block.is-in-view .home-ex-card:nth-child(6) { transition-delay: 0.48s; }
-
-.home-content-block.is-in-view .home-ex-card:hover {
-  transform: translateY(-6px) scale(1.02);
-  transition-delay: 0s !important;
-}
-
-/* Staggered Store / Exhibitor Cards */
+/* Carousel cards inside content blocks are directly visible and stable */
+.home-content-block .home-ex-card,
 .home-content-block .home-store-carousel-card {
-  opacity: 0;
-  transform: translateY(22px) scale(0.97);
-  transition: opacity 0.55s cubic-bezier(0.22, 1, 0.36, 1),
-              transform 0.55s cubic-bezier(0.22, 1, 0.36, 1),
-              background 0.28s ease,
-              box-shadow 0.28s ease,
-              border-color 0.28s ease;
-}
-
-.home-content-block.is-in-view .home-store-carousel-card {
   opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
-.home-content-block.is-in-view .home-store-carousel-card:nth-child(1) { transition-delay: 0.06s; }
-.home-content-block.is-in-view .home-store-carousel-card:nth-child(2) { transition-delay: 0.12s; }
-.home-content-block.is-in-view .home-store-carousel-card:nth-child(3) { transition-delay: 0.18s; }
-.home-content-block.is-in-view .home-store-carousel-card:nth-child(4) { transition-delay: 0.24s; }
-.home-content-block.is-in-view .home-store-carousel-card:nth-child(5) { transition-delay: 0.30s; }
-.home-content-block.is-in-view .home-store-carousel-card:nth-child(6) { transition-delay: 0.36s; }
-.home-content-block.is-in-view .home-store-carousel-card:nth-child(7) { transition-delay: 0.42s; }
-.home-content-block.is-in-view .home-store-carousel-card:nth-child(8) { transition-delay: 0.48s; }
-
-.home-content-block.is-in-view .home-store-carousel-card:hover {
-  transform: translateY(-4px);
-  transition-delay: 0s !important;
+  transform: none;
 }
 
 /* Skeletons and Empty State entrance */
@@ -1831,11 +1779,10 @@ button.home-box-link {
   scrollbar-width: none;
   -ms-overflow-style: none;
   touch-action: pan-y;
-  mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 1) 2.5%, rgba(0, 0, 0, 1) 97.5%, transparent 100%);
-  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 1) 2.5%, rgba(0, 0, 0, 1) 97.5%, transparent 100%);
   padding: 0.6rem 0.2rem 1.2rem;
   scroll-behavior: auto;
-  contain: paint;
+  contain: layout paint;
+  -webkit-overflow-scrolling: touch;
 }
 
 .home-ex-carousel-viewport::-webkit-scrollbar,
@@ -1865,24 +1812,21 @@ button.home-box-link {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(140deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 40%, rgba(13, 16, 28, 0.82) 100%);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 40%, rgba(13, 16, 28, 0.88) 100%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-top: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 1.35rem;
   overflow: hidden;
   text-decoration: none;
   color: inherit;
-  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow 0.35s cubic-bezier(0.16, 1, 0.3, 1),
-              border-color 0.3s ease,
-              background 0.3s ease;
+  transition: transform 0.2s ease,
+              box-shadow 0.2s ease,
+              border-color 0.2s ease;
   position: relative;
-  transform: translateZ(0);
-  box-shadow: 0 12px 30px -4px rgba(0, 0, 0, 0.55),
-              inset 0 1px 0 rgba(255, 255, 255, 0.22),
-              inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+  box-shadow: 0 10px 24px -4px rgba(0, 0, 0, 0.45),
+              inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
 .home-ex-card:hover {
@@ -2119,17 +2063,19 @@ button.home-box-link {
   padding: 1rem 0.65rem 0.85rem;
   min-height: 114px;
   border-radius: 1.15rem;
-  background: rgba(255, 255, 255, 0.02);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.04);
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+  background: rgba(18, 22, 38, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.25);
   text-decoration: none;
   color: inherit;
-  transition: all 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 0.2s ease,
+              box-shadow 0.2s ease,
+              border-color 0.2s ease,
+              background 0.2s ease;
   position: relative;
   overflow: hidden;
-  transform: translateZ(0);
 }
 
 .home-store-carousel-card:hover {
@@ -2540,19 +2486,20 @@ button.home-box-link {
   align-items: center;
   gap: 1.15rem;
   padding: 1.05rem 1.35rem;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.01) 100%);
-  backdrop-filter: blur(18px) saturate(130%);
-  -webkit-backdrop-filter: blur(18px) saturate(130%);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.015) 100%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 1.15rem;
   text-decoration: none;
   color: inherit;
   overflow: hidden;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 25px rgba(0, 0, 0, 0.2);
-  transition: all 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 20px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
   position: relative;
-  animation: storeItemEntrance 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
-  will-change: transform, opacity;
+  animation: storeItemEntrance 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 95px;
 }
 
 .store-list-card:hover {
@@ -2700,18 +2647,19 @@ button.home-box-link {
 .store-grid-card {
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.02);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(18, 22, 38, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 1.15rem;
   overflow: hidden;
   text-decoration: none;
   color: inherit;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
-  transition: all 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
-  animation: storeItemEntrance 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
-  will-change: transform, opacity;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  animation: storeItemEntrance 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 160px;
 }
 
 .store-grid-card:hover {
@@ -2885,18 +2833,20 @@ button.home-box-link {
   display: flex;
   align-items: stretch;
   gap: 0;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.01) 100%);
-  backdrop-filter: blur(18px) saturate(130%);
-  -webkit-backdrop-filter: blur(18px) saturate(130%);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.015) 100%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 1.15rem;
   text-decoration: none;
   color: inherit;
   overflow: hidden;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 10px 25px rgba(0, 0, 0, 0.2);
-  transition: all 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 20px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
   position: relative;
-  animation: storeItemEntrance 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: storeItemEntrance 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 140px;
 }
 
 .ex-dir-card:hover {
@@ -4888,6 +4838,40 @@ button.home-box-link {
     transition: none !important;
   }
 }
+
+/* ── Mobile Performance & 120Hz Smooth Scrolling Overrides ─────────── */
+@media (max-width: 768px) {
+  .glass {
+    background: rgba(19, 25, 41, 0.88);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .home-ex-card {
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    background: rgba(14, 18, 32, 0.94);
+  }
+  .home-store-carousel-card {
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    background: rgba(16, 20, 36, 0.94);
+  }
+  .ex-dir-card,
+  .store-list-card {
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    background: rgba(18, 23, 38, 0.94);
+  }
+  .store-grid-card {
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    background: rgba(18, 23, 38, 0.94);
+  }
+  .site-upper-background {
+    contain: strict;
+  }
+}
+
 
 
 
