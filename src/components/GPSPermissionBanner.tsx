@@ -33,19 +33,43 @@ export function GPSPermissionBanner({ onDismiss, inFlow = false }: GPSPermission
         animation: 'none',
       } : undefined}
     >
-      <div className="glass alert alert-warning" style={{ borderRadius: '1rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-        <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: 2, color: 'var(--color-warning)' }} />
+      <div
+        className="glass alert alert-warning gps-banner-card"
+        style={{
+          borderRadius: '1.15rem',
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: '0.75rem',
+          background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.22) 0%, rgba(180, 83, 9, 0.14) 100%)',
+          border: '1px solid rgba(245, 158, 11, 0.42)',
+          color: '#fef08a',
+          boxShadow: '0 8px 24px -4px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.12)',
+        }}
+      >
+        <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: 2, color: '#fbbf24' }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontWeight: 700, marginBottom: '0.2rem', fontSize: '0.875rem' }}>
+          <p style={{ fontWeight: 700, marginBottom: '0.2rem', fontSize: '0.875rem', color: '#fef08a' }}>
             {permission === 'denied' ? 'GPS access denied' : 'GPS not active'}
           </p>
-          <p style={{ fontSize: '0.8rem', opacity: 0.85, lineHeight: 1.4 }}>
+          <p style={{ fontSize: '0.8rem', opacity: 0.9, lineHeight: 1.4, color: 'rgba(254, 240, 138, 0.9)' }}>
             {error ?? 'Enable location access to use navigation features.'}
           </p>
           {permission !== 'denied' && (
             <button
-              className="btn btn-sm btn-ghost"
-              style={{ marginTop: '0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+              className="btn btn-sm"
+              style={{
+                marginTop: '0.55rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                background: 'rgba(255, 255, 255, 0.08)',
+                border: '1px solid rgba(255, 255, 255, 0.18)',
+                borderRadius: '0.7rem',
+                color: '#ffffff',
+                padding: '0.32rem 0.8rem',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+              }}
               onClick={() => {
                 // Request orientation permissions on user gesture
                 const DeviceEvent = window.DeviceOrientationEvent as any;
@@ -60,7 +84,7 @@ export function GPSPermissionBanner({ onDismiss, inFlow = false }: GPSPermission
             </button>
           )}
           {permission === 'denied' && (
-            <p style={{ fontSize: '0.75rem', opacity: 0.7, marginTop: '0.35rem' }}>
+            <p style={{ fontSize: '0.75rem', opacity: 0.75, marginTop: '0.35rem', color: '#fef08a' }}>
               Go to your browser settings → Site permissions → Location → Allow.
             </p>
           )}
@@ -68,7 +92,7 @@ export function GPSPermissionBanner({ onDismiss, inFlow = false }: GPSPermission
         <button
           onClick={handleDismiss}
           style={{
-            background: 'rgba(255, 255, 255, 0.1)',
+            background: 'rgba(255, 255, 255, 0.12)',
             border: 'none',
             borderRadius: '50%',
             width: 26,
@@ -78,7 +102,7 @@ export function GPSPermissionBanner({ onDismiss, inFlow = false }: GPSPermission
             justifyContent: 'center',
             color: 'inherit',
             cursor: 'pointer',
-            opacity: 0.8,
+            opacity: 0.85,
             padding: 0,
             flexShrink: 0,
           }}

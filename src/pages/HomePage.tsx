@@ -111,12 +111,15 @@ const placeholderExhibitions: PlaceholderExhibition[] = [
   },
 ];
 
-function useCarouselScroller(speed = 0.65, repeatCount = 3) {
+function useCarouselScroller(speed = 0.65, repeatCount = 6) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const isDraggingRef = useRef(false);
   const isInteractingRef = useRef(false);
   const isMomentumRef = useRef(false);
   const hasDraggedRef = useRef(false);
+  const isWindowScrollingRef = useRef(false);
+  const isVisibleRef = useRef(false);
+  const isLoopRunningRef = useRef(false);
   const startXRef = useRef(0);
   const startYRef = useRef(0);
   const scrollStartRef = useRef(0);
@@ -135,31 +138,69 @@ function useCarouselScroller(speed = 0.65, repeatCount = 3) {
     repeatCountRef.current = repeatCount;
     const el = containerRef.current;
     if (el && el.scrollWidth > 0) {
-      singleSetWidthRef.current = el.scrollWidth / Math.max(repeatCount, 1);
+      const rCount = Math.max(repeatCount, 1);
+      const sWidth = el.scrollWidth / rCount;
+      singleSetWidthRef.current = sWidth;
+      const midPoint = Math.floor(rCount / 2) * sWidth;
+      if (sWidth > 0 && Math.abs(el.scrollLeft - midPoint) > sWidth * 2) {
+        let p = el.scrollLeft;
+        while (p >= midPoint + sWidth) p -= sWidth;
+        while (p < midPoint) p += sWidth;
+        el.scrollLeft = p;
+        posRef.current = p;
+      }
     }
   }, [repeatCount]);
 
-  // Measure singleSetWidth and initialize in middle set without layout thrashing
+  // Pause carousel calculations while the user is actively scrolling the page vertically
+  useEffect(() => {
+    let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+    const onWindowScroll = () => {
+      isWindowScrollingRef.current = true;
+      if (scrollTimer) clearTimeout(scrollTimer);
+      scrollTimer = setTimeout(() => {
+        isWindowScrollingRef.current = false;
+        const el = containerRef.current;
+        if (el) posRef.current = el.scrollLeft;
+      }, 200);
+    };
+
+    window.addEventListener('scroll', onWindowScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onWindowScroll);
+      if (scrollTimer) clearTimeout(scrollTimer);
+    };
+  }, []);
+
+  // Measure singleSetWidth and initialize in middle safe zone so users can immediately sweep left-to-right AND right-to-left
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
     const measureWidth = () => {
       if (el.scrollWidth > 0) {
-        const sWidth = el.scrollWidth / Math.max(repeatCountRef.current, 1);
+        const rCount = Math.max(repeatCountRef.current, 1);
+        const sWidth = el.scrollWidth / rCount;
         singleSetWidthRef.current = sWidth;
-        if (!isInitializedRef.current && sWidth > 0) {
-          // Initialize in Set 1 (middle set) so users can immediately sweep left-to-right AND right-to-left
-          el.scrollLeft = sWidth;
-          posRef.current = sWidth;
-          isInitializedRef.current = true;
+        const midPoint = Math.floor(rCount / 2) * sWidth;
+        if (sWidth > 0) {
+          if (!isInitializedRef.current) {
+            el.scrollLeft = midPoint;
+            posRef.current = midPoint;
+            isInitializedRef.current = true;
+          } else if (Math.abs(el.scrollLeft - midPoint) > sWidth * 2) {
+            let p = el.scrollLeft;
+            while (p >= midPoint + sWidth) p -= sWidth;
+            while (p < midPoint) p += sWidth;
+            el.scrollLeft = p;
+            posRef.current = p;
+          }
         }
       }
     };
 
     // Initial check
     measureWidth();
-    // Re-check after images/content might have settled
     const initTimer = setTimeout(measureWidth, 150);
 
     let ro: ResizeObserver | null = null;
@@ -202,13 +243,13 @@ function useCarouselScroller(speed = 0.65, repeatCount = 3) {
     const el = containerRef.current;
     if (!el) return;
 
-    // initialVelocity is in px/ms. Negative means swiped left (cards move right: +scrollLeft)
-    let frameVelocity = -initialVelocity * 16;
-    const maxV = 28;
+    // Cap velocity to avoid chaotic spinning on low-end hardware
+    let frameVelocity = -initialVelocity * 15;
+    const maxV = 18;
     frameVelocity = Math.max(-maxV, Math.min(maxV, frameVelocity));
 
-    if (Math.abs(frameVelocity) < 0.8) {
-      pauseAndResume(1800);
+    if (Math.abs(frameVelocity) < 0.6) {
+      pauseAndResume(1200);
       return;
     }
 
@@ -217,20 +258,23 @@ function useCarouselScroller(speed = 0.65, repeatCount = 3) {
 
     const glide = () => {
       const sWidth = singleSetWidthRef.current;
-      frameVelocity *= 0.94; // Smooth natural exponential friction
+      const rCount = repeatCountRef.current;
+      frameVelocity *= 0.93; // Smooth natural friction
 
-      if (Math.abs(frameVelocity) < 0.15 || !isMomentumRef.current) {
+      if (Math.abs(frameVelocity) < 0.2 || !isMomentumRef.current) {
         stopMomentum();
-        pauseAndResume(2000);
+        pauseAndResume(1500);
         return;
       }
 
       posRef.current += frameVelocity;
 
-      if (sWidth > 0) {
-        if (posRef.current >= sWidth * 2) {
+      if (sWidth > 0 && rCount > 1) {
+        const midPoint = Math.floor(rCount / 2) * sWidth;
+        while (posRef.current >= midPoint + sWidth) {
           posRef.current -= sWidth;
-        } else if (posRef.current < sWidth) {
+        }
+        while (posRef.current < midPoint) {
           posRef.current += sWidth;
         }
       }
@@ -242,55 +286,77 @@ function useCarouselScroller(speed = 0.65, repeatCount = 3) {
     momentumRafIdRef.current = requestAnimationFrame(glide);
   }, [pauseAndResume, stopMomentum]);
 
-  // Main gentle auto-scroll loop
+  // Main gentle auto-scroll loop (stops RAF when offscreen to save battery and CPU)
   useEffect(() => {
     let animId: number;
     let lastTime = performance.now();
-    let isVisible = true;
+
+    const loop = (currentTime: number) => {
+      if (!isVisibleRef.current) {
+        isLoopRunningRef.current = false;
+        return;
+      }
+
+      const delta = Math.min((currentTime - lastTime) / 16.67, 3);
+      lastTime = currentTime;
+
+      const currentEl = containerRef.current;
+      if (
+        currentEl &&
+        !isWindowScrollingRef.current &&
+        !isInteractingRef.current &&
+        !isDraggingRef.current &&
+        !isMomentumRef.current
+      ) {
+        posRef.current += speed * delta;
+        const sWidth = singleSetWidthRef.current;
+        const rCount = repeatCountRef.current;
+
+        if (sWidth > 0 && rCount > 1) {
+          const midPoint = Math.floor(rCount / 2) * sWidth;
+          while (posRef.current >= midPoint + sWidth) {
+            posRef.current -= sWidth;
+          }
+          while (posRef.current < midPoint) {
+            posRef.current += sWidth;
+          }
+        }
+
+        currentEl.scrollLeft = posRef.current;
+      } else if (isDraggingRef.current && currentEl) {
+        posRef.current = currentEl.scrollLeft;
+      }
+
+      animId = requestAnimationFrame(loop);
+    };
 
     const el = containerRef.current;
     let observer: IntersectionObserver | null = null;
     if (el && typeof IntersectionObserver !== 'undefined') {
       observer = new IntersectionObserver(
         ([entry]) => {
-          isVisible = entry.isIntersecting;
-          if (entry.isIntersecting && el) {
-            posRef.current = el.scrollLeft;
+          isVisibleRef.current = entry.isIntersecting;
+          if (entry.isIntersecting) {
+            if (el) posRef.current = el.scrollLeft;
             lastTime = performance.now();
+            if (!isLoopRunningRef.current) {
+              isLoopRunningRef.current = true;
+              animId = requestAnimationFrame(loop);
+            }
           }
         },
         { threshold: 0 }
       );
       observer.observe(el);
+    } else {
+      isVisibleRef.current = true;
+      isLoopRunningRef.current = true;
+      animId = requestAnimationFrame(loop);
     }
 
-    const loop = (currentTime: number) => {
-      const delta = Math.min((currentTime - lastTime) / 16.67, 3);
-      lastTime = currentTime;
-
-      const currentEl = containerRef.current;
-      if (currentEl && isVisible) {
-        const sWidth = singleSetWidthRef.current;
-
-        if (!isInteractingRef.current && !isDraggingRef.current && !isMomentumRef.current) {
-          posRef.current += speed * delta;
-
-          if (sWidth > 0 && posRef.current >= sWidth * 2) {
-            posRef.current -= sWidth;
-          }
-
-          currentEl.scrollLeft = posRef.current;
-        } else if (isDraggingRef.current) {
-          posRef.current = currentEl.scrollLeft;
-        }
-      }
-
-      animId = requestAnimationFrame(loop);
-    };
-
-    animId = requestAnimationFrame(loop);
     return () => {
       cancelAnimationFrame(animId);
+      isLoopRunningRef.current = false;
       stopMomentum();
       observer?.disconnect();
     };
@@ -301,19 +367,31 @@ function useCarouselScroller(speed = 0.65, repeatCount = 3) {
     pauseAndResume(3500);
     const el = containerRef.current;
     if (!el) return;
+    const sWidth = singleSetWidthRef.current;
+    const rCount = repeatCountRef.current;
     const distance = Math.max(el.clientWidth * 0.7, 260);
-    el.scrollBy({
-      left: direction === 'left' ? -distance : distance,
+
+    let target = el.scrollLeft + (direction === 'left' ? -distance : distance);
+
+    if (sWidth > 0 && rCount > 1) {
+      const midPoint = Math.floor(rCount / 2) * sWidth;
+      while (target >= midPoint + sWidth * 2) target -= sWidth;
+      while (target < midPoint - sWidth) target += sWidth;
+    }
+
+    el.scrollTo({
+      left: target,
       behavior: 'smooth',
     });
+
     setTimeout(() => {
-      if (el) {
-        const sWidth = singleSetWidthRef.current;
-        if (sWidth > 0) {
-          if (el.scrollLeft >= sWidth * 2) el.scrollLeft -= sWidth;
-          else if (el.scrollLeft < sWidth) el.scrollLeft += sWidth;
-        }
-        posRef.current = el.scrollLeft;
+      if (el && sWidth > 0 && rCount > 1) {
+        const midPoint = Math.floor(rCount / 2) * sWidth;
+        let cur = el.scrollLeft;
+        while (cur >= midPoint + sWidth) cur -= sWidth;
+        while (cur < midPoint) cur += sWidth;
+        el.scrollLeft = cur;
+        posRef.current = cur;
       }
     }, 450);
   }, [pauseAndResume, stopMomentum]);
@@ -352,12 +430,14 @@ function useCarouselScroller(speed = 0.65, repeatCount = 3) {
 
     let targetScroll = scrollStartRef.current - deltaX;
     const sWidth = singleSetWidthRef.current;
-    if (sWidth > 0) {
-      while (targetScroll >= sWidth * 2) {
+    const rCount = repeatCountRef.current;
+    if (sWidth > 0 && rCount > 1) {
+      const midPoint = Math.floor(rCount / 2) * sWidth;
+      while (targetScroll >= midPoint + sWidth) {
         targetScroll -= sWidth;
         scrollStartRef.current -= sWidth;
       }
-      while (targetScroll < sWidth) {
+      while (targetScroll < midPoint) {
         targetScroll += sWidth;
         scrollStartRef.current += sWidth;
       }
@@ -426,6 +506,7 @@ function useCarouselScroller(speed = 0.65, repeatCount = 3) {
           // Vertical movement dominates: yield completely to native vertical page scroll
           directionLockedRef.current = 'vertical';
           isDraggingRef.current = false;
+          pauseAndResume(400); // release interaction lock so vertical scroll isn't blocked
           return;
         }
       } else {
@@ -448,15 +529,17 @@ function useCarouselScroller(speed = 0.65, repeatCount = 3) {
       lastPointerTimeRef.current = now;
     }
 
-    // 1:1 direct finger tracking with seamless infinite wrap
+    // 1:1 direct finger tracking with seamless infinite wrap around safe midPoint
     let targetScroll = scrollStartRef.current - deltaX;
     const sWidth = singleSetWidthRef.current;
-    if (sWidth > 0) {
-      while (targetScroll >= sWidth * 2) {
+    const rCount = repeatCountRef.current;
+    if (sWidth > 0 && rCount > 1) {
+      const midPoint = Math.floor(rCount / 2) * sWidth;
+      while (targetScroll >= midPoint + sWidth) {
         targetScroll -= sWidth;
         scrollStartRef.current -= sWidth;
       }
-      while (targetScroll < sWidth) {
+      while (targetScroll < midPoint) {
         targetScroll += sWidth;
         scrollStartRef.current += sWidth;
       }
@@ -467,15 +550,24 @@ function useCarouselScroller(speed = 0.65, repeatCount = 3) {
   };
 
   const onTouchEnd = () => {
-    if (!isDraggingRef.current && directionLockedRef.current !== 'horizontal') return;
+    const wasHorizontal = isDraggingRef.current && directionLockedRef.current === 'horizontal';
+    const hadVelocity = Math.abs(velocityRef.current) > 0.12;
+
     isDraggingRef.current = false;
     directionLockedRef.current = null;
 
-    if (hasDraggedRef.current && Math.abs(velocityRef.current) > 0.12) {
+    if (wasHorizontal && hasDraggedRef.current && hadVelocity) {
       startMomentum(velocityRef.current);
     } else {
-      pauseAndResume(2000);
+      pauseAndResume(1500);
     }
+  };
+
+  const onTouchCancel = () => {
+    isDraggingRef.current = false;
+    directionLockedRef.current = null;
+    stopMomentum();
+    pauseAndResume(1000);
   };
 
   const onClickCapture = (e: React.MouseEvent) => {
@@ -483,6 +575,24 @@ function useCarouselScroller(speed = 0.65, repeatCount = 3) {
       e.preventDefault();
       e.stopPropagation();
       hasDraggedRef.current = false;
+    }
+  };
+
+  const onWheel = () => {
+    pauseAndResume(2000);
+    const el = containerRef.current;
+    if (!el) return;
+    const sWidth = singleSetWidthRef.current;
+    const rCount = repeatCountRef.current;
+    if (sWidth > 0 && rCount > 1) {
+      const midPoint = Math.floor(rCount / 2) * sWidth;
+      if (el.scrollLeft >= midPoint + sWidth * 1.5 || el.scrollLeft <= midPoint - sWidth * 0.5) {
+        let cur = el.scrollLeft;
+        while (cur >= midPoint + sWidth) cur -= sWidth;
+        while (cur < midPoint) cur += sWidth;
+        el.scrollLeft = cur;
+        posRef.current = cur;
+      }
     }
   };
 
@@ -498,7 +608,9 @@ function useCarouselScroller(speed = 0.65, repeatCount = 3) {
       onTouchStart,
       onTouchMove,
       onTouchEnd,
+      onTouchCancel,
       onClickCapture,
+      onWheel,
     },
   };
 }
@@ -646,23 +758,35 @@ export function HomePage() {
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
   const [isVideoLivesModalOpen, setIsVideoLivesModalOpen] = useState(false);
 
-  // Memoized lists and 3 repeat sets for lightweight, seamless infinite looping
+  // Memoized lists and dynamic repeat sets for buttery seamless infinite looping
   const baseExhibitions = useMemo<CarouselExhibitionItem[]>(() => [
     ...exhibitions.map((ex): RealExhibitionItem => ({ ...ex, isPlaceholder: false })),
     ...placeholderExhibitions,
   ], [exhibitions]);
 
+  const featuredCopies = useMemo(() => {
+    const count = baseExhibitions.length;
+    if (count === 0) return 6;
+    return Math.max(6, Math.ceil(24 / count));
+  }, [baseExhibitions.length]);
+
   const featuredDisplayList = useMemo(() => {
-    return Array.from({ length: 3 }).flatMap(() => baseExhibitions);
-  }, [baseExhibitions]);
+    return Array.from({ length: featuredCopies }).flatMap(() => baseExhibitions);
+  }, [baseExhibitions, featuredCopies]);
+
+  const storeCopies = useMemo(() => {
+    const count = stores.length;
+    if (count === 0) return 6;
+    return Math.max(6, Math.ceil(24 / count));
+  }, [stores.length]);
 
   const storesDisplayList = useMemo(() => {
-    return stores.length > 0 ? Array.from({ length: 3 }).flatMap(() => stores) : [];
-  }, [stores]);
+    return stores.length > 0 ? Array.from({ length: storeCopies }).flatMap(() => stores) : [];
+  }, [stores, storeCopies]);
 
   // Interactive auto-scrolling & manually scrollable carousels with smooth momentum
-  const featuredCarousel = useCarouselScroller(0.65, 3);
-  const storesCarousel = useCarouselScroller(0.65, 3);
+  const featuredCarousel = useCarouselScroller(0.65, featuredCopies);
+  const storesCarousel = useCarouselScroller(0.65, storeCopies);
 
   useEffect(() => {
     const handleUnread = (e: Event) => {

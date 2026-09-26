@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Search, MapPin, Clock, ArrowLeft, Store, Star,
@@ -16,6 +16,12 @@ export function StoreDirectoryPage() {
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedFloor, setSelectedFloor] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('list');
+
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  }, []);
 
   useEffect(() => {
     loadData();

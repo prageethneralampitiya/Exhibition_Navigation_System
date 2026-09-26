@@ -43,7 +43,13 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
   partner1Url = defaultPartnerLogo,
   partner2Url = defaultPartner2Logo,
 }) => {
-  const [isVisible, setIsVisible] = useState(true);
+  const [isVisible, setIsVisible] = useState(() => {
+    try {
+      return sessionStorage.getItem('invex_splash_shown') !== 'true';
+    } catch {
+      return true;
+    }
+  });
   const [isExiting, setIsExiting] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -97,19 +103,31 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleDismiss]);
 
-  // Auto-dismiss timer
+  // Auto-dismiss timer (shorter on mobile for quick app launch)
   useEffect(() => {
-    if (durationSeconds <= 0) return;
+    if (!isVisible) return;
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+    const effectiveDuration = isMobile ? Math.min(durationSeconds, 2.2) : durationSeconds;
+    if (effectiveDuration <= 0) return;
 
     const timer = setTimeout(() => {
       handleDismiss();
-    }, durationSeconds * 1000);
+    }, effectiveDuration * 1000);
 
     return () => clearTimeout(timer);
-  }, [durationSeconds, handleDismiss]);
+  }, [durationSeconds, handleDismiss, isVisible]);
 
-  // Canvas Mist / Cloud Particle Simulation
+  // Canvas Mist / Cloud Particle Simulation (disabled on mobile to protect low-power Android CPUs)
   useEffect(() => {
+    if (!isVisible) return;
+    const isLowPowerDevice = typeof window !== 'undefined' && (
+      window.innerWidth < 768 ||
+      (typeof navigator !== 'undefined' && navigator.hardwareConcurrency != null && navigator.hardwareConcurrency <= 4)
+    );
+    if (isLowPowerDevice) {
+      return;
+    }
+
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d', { alpha: true });
@@ -125,8 +143,8 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({
     };
     window.addEventListener('resize', handleResize);
 
-    // Initialize 42 organic mist billow particles
-    const particleCount = 42;
+    // Initialize organic mist billow particles
+    const particleCount = 28;
     const particles: MistParticle[] = [];
 
     for (let i = 0; i < particleCount; i++) {

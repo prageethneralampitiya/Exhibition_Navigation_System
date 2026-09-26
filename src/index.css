@@ -271,9 +271,11 @@ html, body, #root {
 }
 
 .alert-warning {
-  background: rgba(245,158,11,0.12);
-  border: 1px solid rgba(245,158,11,0.3);
-  color: #fde68a;
+  background: rgba(245, 158, 11, 0.16);
+  background-image: linear-gradient(135deg, rgba(245, 158, 11, 0.22) 0%, rgba(180, 83, 9, 0.14) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.42);
+  color: #fef08a;
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 }
 
 /* ── Logo / Brand ────────────────────────────────────── */
@@ -1800,8 +1802,6 @@ button.home-box-link {
   display: flex;
   gap: 1.25rem;
   width: max-content;
-  transform: translateZ(0);
-  will-change: scroll-position;
 }
 
 
@@ -4839,36 +4839,116 @@ button.home-box-link {
   }
 }
 
-/* ── Mobile Performance & 120Hz Smooth Scrolling Overrides ─────────── */
+/* ── Mobile Performance & Zero-Lag Hardware Acceleration (≤ 768px) ── */
 @media (max-width: 768px) {
-  .glass {
-    background: rgba(19, 25, 41, 0.88);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+  /* 1. Complete elimination of GPU-killing backdrop-filter blurs across all mobile components */
+  *,
+  *::before,
+  *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
   }
+
+  /* 2. Rich, solid surfaces with zero blur shader passes */
+  .glass:not(.alert):not(.alert-warning):not(.alert-error):not(.alert-success):not(.alert-info):not(.gps-banner-card) {
+    background: #0f1526 !important;
+  }
+
+  /* Transparent yellow mix styling for warning banners on both mobile & desktop */
+  .alert-warning,
+  .glass.alert-warning,
+  .gps-banner .alert-warning,
+  .gps-banner-card {
+    background: rgba(245, 158, 11, 0.16) !important;
+    background-image: linear-gradient(135deg, rgba(245, 158, 11, 0.22) 0%, rgba(180, 83, 9, 0.14) 100%) !important;
+    border: 1px solid rgba(245, 158, 11, 0.42) !important;
+    color: #fef08a !important;
+    box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+  }
+
+  .alert-error,
+  .glass.alert-error {
+    background: rgba(244, 63, 94, 0.16) !important;
+    border: 1px solid rgba(244, 63, 94, 0.38) !important;
+    color: #fda4af !important;
+  }
+
+  .alert-success,
+  .glass.alert-success {
+    background: rgba(16, 185, 129, 0.16) !important;
+    border: 1px solid rgba(16, 185, 129, 0.38) !important;
+    color: #6ee7b7 !important;
+  }
+
+  .home-action-box {
+    background: #0d1222 !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+  }
+
+  .home-stats-bar {
+    background: #0c101e !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  }
+
+  .home-content-block-purple {
+    background: #0d1122 !important;
+    border: 1px solid rgba(168, 85, 247, 0.22) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+  }
+
+  .home-content-block-cyan {
+    background: #0b1322 !important;
+    border: 1px solid rgba(34, 211, 238, 0.2) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
+  }
+
   .home-ex-card {
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    background: rgba(14, 18, 32, 0.94);
+    background: #11162a !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35) !important;
   }
+
   .home-store-carousel-card {
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    background: rgba(16, 20, 36, 0.94);
+    background: #111728 !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35) !important;
   }
+
   .ex-dir-card,
-  .store-list-card {
-    backdrop-filter: blur(5px);
-    -webkit-backdrop-filter: blur(5px);
-    background: rgba(18, 23, 38, 0.94);
-  }
+  .store-list-card,
   .store-grid-card {
-    backdrop-filter: blur(5px);
-    -webkit-backdrop-filter: blur(5px);
-    background: rgba(18, 23, 38, 0.94);
+    background: #10162a !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
   }
+
+  /* 3. Turn off continuous ambient glow layers and huge blurs on mobile */
+  .home-content-block-glow {
+    display: none !important;
+  }
+
+  .home-transition-beam {
+    display: none !important;
+  }
+
+  /* 4. Carousel viewports: smooth hardware scrolling without layer thrashing */
+  .home-ex-carousel-viewport,
+  .home-stores-carousel-viewport {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+
+  .home-ex-carousel-track,
+  .home-stores-carousel-track {
+    will-change: auto !important;
+    transform: none !important;
+  }
+
+  /* 5. Constrain upper background so it doesn't cause repaint churn */
   .site-upper-background {
     contain: strict;
+    transform: translateZ(0);
   }
 }
 
