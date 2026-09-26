@@ -10,11 +10,14 @@ import {
   Clock,
   Image as ImageIcon,
   ClipboardList,
+  Ticket,
+  Sparkles,
 } from 'lucide-react';
 import { supabase, type Exhibition, type ExhibitionEvent } from '../../lib/supabase';
 import { AdminTable } from '../../components/admin/AdminTable';
 import { AdminModal } from '../../components/admin/AdminModal';
 import { useAuth } from '../../contexts/AuthContext';
+import { parseEventDescription, formatEventDescription } from '../../utils/events';
 
 export function AdminExhibitionsPage() {
   const { user } = useAuth();
@@ -28,6 +31,10 @@ export function AdminExhibitionsPage() {
   const [currentExhibition, setCurrentExhibition] = useState<Partial<Exhibition> | null>(null);
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // Dedicated Price and Offers states
+  const [formPrice, setFormPrice] = useState('');
+  const [formOffers, setFormOffers] = useState('');
 
   // Tab state inside modal
   const [activeModalTab, setActiveModalTab] = useState<'details' | 'schedule'>('details');
@@ -113,6 +120,8 @@ export function AdminExhibitionsPage() {
       is_featured: false,
       is_active: true,
     });
+    setFormPrice('');
+    setFormOffers('');
     setFormError('');
     setActiveModalTab('details');
     setEvents([]);
@@ -120,7 +129,13 @@ export function AdminExhibitionsPage() {
   };
 
   const handleOpenEdit = (exhibition: Exhibition) => {
-    setCurrentExhibition(exhibition);
+    const parsed = parseEventDescription(exhibition.description);
+    setCurrentExhibition({
+      ...exhibition,
+      description: parsed.description,
+    });
+    setFormPrice(parsed.price);
+    setFormOffers(parsed.offers);
     setFormError('');
     setActiveModalTab('details');
     loadExhibitionEvents(exhibition.id);
@@ -144,9 +159,15 @@ export function AdminExhibitionsPage() {
       setSubmitting(true);
       setFormError('');
 
+      const combinedDescription = formatEventDescription(
+        currentExhibition.description || '',
+        formPrice,
+        formOffers
+      );
+
       const payload = {
         title: currentExhibition.title,
-        description: currentExhibition.description || null,
+        description: combinedDescription || null,
         image_url: currentExhibition.image_url || null,
         location: currentExhibition.location || null,
         start_date: currentExhibition.start_date || null,
@@ -288,28 +309,31 @@ export function AdminExhibitionsPage() {
   const columns = [
     {
       key: 'title',
-      label: 'Title',
-      render: (row: Exhibition) => (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          {row.image_url ? (
-            <img src={row.image_url} alt="" style={{ width: 36, height: 24, borderRadius: '4px', objectFit: 'cover' }} />
-          ) : (
-            <div style={{ width: 36, height: 24, borderRadius: '4px', background: 'var(--color-surface2)' }} />
-          )}
-          <div>
-            <div style={{ fontWeight: 600 }}>{row.title}</div>
-            {row.description && (
-              <div style={{ fontSize: '0.8rem', color: 'var(--color-muted)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {row.description}
-              </div>
+      label: 'Event',
+      render: (row: Exhibition) => {
+        const meta = parseEventDescription(row.description);
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            {row.image_url ? (
+              <img src={row.image_url} alt="" style={{ width: 44, height: 28, borderRadius: '4px', objectFit: 'cover' }} />
+            ) : (
+              <div style={{ width: 44, height: 28, borderRadius: '4px', background: 'var(--color-surface2)' }} />
             )}
+            <div>
+              <div style={{ fontWeight: 600 }}>{row.title}</div>
+              {meta.description && (
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-muted)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {meta.description}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       key: 'location',
-      label: 'Location',
+      label: 'Venue',
       render: (row: Exhibition) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
           <MapPin size={14} className="text-muted" />
@@ -319,13 +343,36 @@ export function AdminExhibitionsPage() {
     },
     {
       key: 'dates',
-      label: 'Duration',
+      label: 'Dates',
       render: (row: Exhibition) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem' }}>
           <Calendar size={14} className="text-muted" />
           {row.start_date || '?'} to {row.end_date || '?'}
         </span>
       ),
+    },
+    {
+      key: 'pricing',
+      label: 'Price & Offers',
+      render: (row: Exhibition) => {
+        const meta = parseEventDescription(row.description);
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', alignItems: 'flex-start' }}>
+            {meta.price ? (
+              <span className="badge badge-success" style={{ fontSize: '0.72rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                <Ticket size={11} /> {meta.price}
+              </span>
+            ) : (
+              <span style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>Free / None</span>
+            )}
+            {meta.offers && (
+              <span className="badge badge-warning" style={{ fontSize: '0.68rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                <Sparkles size={11} /> {meta.offers}
+              </span>
+            )}
+          </div>
+        );
+      },
     },
     {
       key: 'status',
@@ -360,14 +407,14 @@ export function AdminExhibitionsPage() {
           <button
             className="btn btn-ghost btn-sm btn-icon"
             onClick={() => handleOpenEdit(row)}
-            title="Edit exhibition, coordinates, and schedule"
+            title="Edit event, venue, prices, and flyer"
           >
             <Edit2 size={14} />
           </button>
           <button
             className="btn btn-danger btn-sm btn-icon"
             onClick={() => handleOpenDelete(row)}
-            title="Delete exhibition"
+            title="Delete event"
           >
             <Trash2 size={14} />
           </button>
@@ -380,12 +427,12 @@ export function AdminExhibitionsPage() {
     <main className="admin-page">
       <header className="admin-page-header">
         <div>
-          <h1>Exhibitions</h1>
-          <p>Create and coordinate exhibition events</p>
+          <h1>Events</h1>
+          <p>Create and manage events, venues, ticket prices, and promotional offers</p>
         </div>
         <button className="btn btn-primary" onClick={handleOpenAdd}>
           <Plus size={16} />
-          Add Exhibition
+          Add Event
         </button>
       </header>
 
@@ -396,7 +443,7 @@ export function AdminExhibitionsPage() {
             <Search size={16} className="search-icon" />
             <input
               type="text"
-              placeholder="Search by title or location..."
+              placeholder="Search by title or venue..."
               className="search-input"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -408,16 +455,16 @@ export function AdminExhibitionsPage() {
           columns={columns}
           rows={filteredExhibitions}
           loading={loading}
-          emptyMessage="No exhibitions configured."
+          emptyMessage="No events configured."
         />
       </section>
 
       {/* Add / Edit Form Modal */}
       {isFormModalOpen && currentExhibition && (
         <AdminModal
-          title={currentExhibition.id ? 'Edit Exhibition' : 'Add Exhibition'}
+          title={currentExhibition.id ? 'Edit Event' : 'Add Event'}
           onClose={() => setIsFormModalOpen(false)}
-          maxWidth={600}
+          maxWidth={640}
         >
           {/* Sub-tabs if editing an existing exhibition */}
           {currentExhibition.id && (
@@ -427,7 +474,7 @@ export function AdminExhibitionsPage() {
                 className={`btn btn-sm ${activeModalTab === 'details' ? 'btn-primary' : 'btn-ghost'}`}
                 onClick={() => setActiveModalTab('details')}
               >
-                Exhibition Details
+                Event Details
               </button>
               <button
                 type="button"
@@ -448,7 +495,7 @@ export function AdminExhibitionsPage() {
               )}
 
               <div className="form-group">
-                <label className="form-label" htmlFor="ex-title">Title *</label>
+                <label className="form-label" htmlFor="ex-title">Event Title *</label>
                 <input
                   id="ex-title"
                   type="text"
@@ -456,21 +503,23 @@ export function AdminExhibitionsPage() {
                   required
                   value={currentExhibition.title || ''}
                   onChange={(e) => setCurrentExhibition({ ...currentExhibition, title: e.target.value })}
-                  placeholder="Exhibition title"
+                  placeholder="e.g. Annual Invex Tech & Robotics Fair 2026"
                 />
               </div>
 
               <div className="form-group">
-                <label className="form-label" htmlFor="ex-desc">Description</label>
+                <label className="form-label" htmlFor="ex-desc">Event Description</label>
                 <textarea
                   id="ex-desc"
                   className="form-textarea"
+                  rows={3}
                   value={currentExhibition.description || ''}
                   onChange={(e) => setCurrentExhibition({ ...currentExhibition, description: e.target.value })}
-                  placeholder="Short description of the event..."
+                  placeholder="Overview of the event, themes, and key attractions..."
                 />
               </div>
 
+              {/* Dates & Venue */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div className="form-group">
                   <label className="form-label" htmlFor="ex-start">Start Date</label>
@@ -494,19 +543,53 @@ export function AdminExhibitionsPage() {
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '1rem' }}>
+              <div className="form-group">
+                <label className="form-label" htmlFor="ex-location">Venue / Location *</label>
+                <input
+                  id="ex-location"
+                  type="text"
+                  className="form-input"
+                  value={currentExhibition.location || ''}
+                  onChange={(e) => setCurrentExhibition({ ...currentExhibition, location: e.target.value })}
+                  placeholder="e.g. Main Auditorium & Exhibition Ground, Block 1"
+                />
+              </div>
+
+              {/* Price & Special Offers */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div className="form-group">
-                  <label className="form-label" htmlFor="ex-location">Location / Hall</label>
+                  <label className="form-label" htmlFor="ex-price" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <Ticket size={13} color="#22c55e" />
+                    <span>Price / Ticket Fee</span>
+                  </label>
                   <input
-                    id="ex-location"
+                    id="ex-price"
                     type="text"
                     className="form-input"
-                    value={currentExhibition.location || ''}
-                    onChange={(e) => setCurrentExhibition({ ...currentExhibition, location: e.target.value })}
-                    placeholder="e.g. Hall A, Stage B"
+                    value={formPrice}
+                    onChange={(e) => setFormPrice(e.target.value)}
+                    placeholder="e.g. Free Entry, LKR 500, $10"
                   />
                 </div>
 
+                <div className="form-group">
+                  <label className="form-label" htmlFor="ex-offers" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <Sparkles size={13} color="#f59e0b" />
+                    <span>Special Offers &amp; Discounts</span>
+                  </label>
+                  <input
+                    id="ex-offers"
+                    type="text"
+                    className="form-input"
+                    value={formOffers}
+                    onChange={(e) => setFormOffers(e.target.value)}
+                    placeholder="e.g. 20% Off for Students, Buy 1 Get 1"
+                  />
+                </div>
+              </div>
+
+              {/* Coordinates (optional) */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div className="form-group">
                   <label className="form-label" htmlFor="ex-lat">Latitude</label>
                   <input
@@ -516,7 +599,7 @@ export function AdminExhibitionsPage() {
                     className="form-input"
                     value={currentExhibition.latitude || ''}
                     onChange={(e) => setCurrentExhibition({ ...currentExhibition, latitude: Number(e.target.value) })}
-                    placeholder="e.g. 6.9271"
+                    placeholder="e.g. 6.535472"
                   />
                 </div>
 
@@ -529,14 +612,14 @@ export function AdminExhibitionsPage() {
                     className="form-input"
                     value={currentExhibition.longitude || ''}
                     onChange={(e) => setCurrentExhibition({ ...currentExhibition, longitude: Number(e.target.value) })}
-                    placeholder="e.g. 79.8612"
+                    placeholder="e.g. 80.401000"
                   />
                 </div>
               </div>
 
               {/* Exhibition Banner File upload & manual URL fallback */}
               <div className="form-group">
-                <label className="form-label">Exhibition Banner / Flyer</label>
+                <label className="form-label">Event Banner / Full-Width Flyer</label>
                 <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                   {currentExhibition.image_url ? (
                     <img

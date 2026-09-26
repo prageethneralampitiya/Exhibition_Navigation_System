@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { logAnalyticsEvent } from '../lib/analytics';
 import {
@@ -14,17 +14,27 @@ import {
   ChevronRight,
   Gift,
   Navigation,
+  Building2,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import { supabase, type Store as StoreType, type StoreImage, type Promotion } from '../lib/supabase';
+import { getStoreBlock, type ExhibitionBlock } from '../utils/blocks';
+
+const LOCAL_STORAGE_SELECTED_STALLS = 'exhibition_selected_stalls_v1';
 
 export function StoreDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [store, setStore] = useState<StoreType | null>(null);
+  const [siblingStalls, setSiblingStalls] = useState<StoreType[]>([]);
   const [images, setImages] = useState<StoreImage[]>([]);
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+
+  // Marked to visit state
+  const [isMarkedToVisit, setIsMarkedToVisit] = useState(false);
 
   useLayoutEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
@@ -35,11 +45,39 @@ export function StoreDetailPage() {
   useEffect(() => {
     if (id) {
       loadStoreDetails(id);
+      checkMarkedStatus(id);
     }
   }, [id]);
 
+  const checkMarkedStatus = (storeId: string) => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_SELECTED_STALLS);
+      const list: string[] = saved ? JSON.parse(saved) : [];
+      setIsMarkedToVisit(list.includes(storeId));
+    } catch {
+      setIsMarkedToVisit(false);
+    }
+  };
+
+  const toggleMarkToVisit = () => {
+    if (!store) return;
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_SELECTED_STALLS);
+      let list: string[] = saved ? JSON.parse(saved) : [];
+      if (list.includes(store.id)) {
+        list = list.filter((i) => i !== store.id);
+        setIsMarkedToVisit(false);
+      } else {
+        list.push(store.id);
+        setIsMarkedToVisit(true);
+      }
+      localStorage.setItem(LOCAL_STORAGE_SELECTED_STALLS, JSON.stringify(list));
+    } catch (e) {
+      console.warn('Could not update visit selection:', e);
+    }
+  };
+
   // Auto slideshow effect: advances the gallery image every 4 seconds.
-  // The timer resets whenever the image index changes (manually or automatically).
   useEffect(() => {
     if (images.length <= 1) return;
 
@@ -54,7 +92,7 @@ export function StoreDetailPage() {
     try {
       setLoading(true);
 
-      // Fetch store
+      // Fetch store from Supabase
       const { data: storeData, error: storeError } = await supabase
         .from('stores')
         .select(`
@@ -65,10 +103,26 @@ export function StoreDetailPage() {
         .eq('id', storeId)
         .single();
 
-      if (storeError) throw storeError;
+      if (storeError || !storeData) {
+        setStore(null);
+        return;
+      }
+
       setStore(storeData);
-      if (storeData) {
-        logAnalyticsEvent('store_view', storeData.id, storeData.name);
+      logAnalyticsEvent('store_view', storeData.id, storeData.name);
+
+      // Fetch sibling stalls in the same block/building
+      const { data: allActiveStores } = await supabase
+        .from('stores')
+        .select('*, categories:category_id (id, name, color)')
+        .eq('is_active', true);
+
+      if (allActiveStores) {
+        const currentBlock = getStoreBlock(storeData);
+        const siblings = allActiveStores
+          .filter((s) => s.id !== storeData.id && getStoreBlock(s).id === currentBlock.id)
+          .slice(0, 6);
+        setSiblingStalls(siblings);
       }
 
       // Fetch images & promotions in parallel
@@ -88,6 +142,7 @@ export function StoreDetailPage() {
       setPromotions(promosRes.data || []);
     } catch (err) {
       console.error('Error fetching store details:', err);
+      setStore(null);
     } finally {
       setLoading(false);
     }
@@ -105,6 +160,10 @@ export function StoreDetailPage() {
     }
   };
 
+  const blockInfo: ExhibitionBlock = useMemo(() => {
+    return getStoreBlock(store);
+  }, [store]);
+
   if (loading) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -116,9 +175,9 @@ export function StoreDetailPage() {
   if (!store) {
     return (
       <div className="profile-page" style={{ textAlign: 'center', padding: '4rem 1rem' }}>
-        <h1 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Store Not Found</h1>
+        <h1 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Stall Not Found</h1>
         <p style={{ color: 'var(--color-muted)', margin: '1rem 0' }}>
-          The requested store profile does not exist or has been disabled.
+          The requested stall profile does not exist or has been disabled.
         </p>
         <Link to="/stores" className="btn btn-primary">
           Back to Directory
@@ -128,7 +187,7 @@ export function StoreDetailPage() {
   }
 
   return (
-    <div className="profile-page" style={{ maxWidth: 700 }}>
+    <div className="profile-page" style={{ maxWidth: 740 }}>
       {/* Back button */}
       <Link
         to="/stores"
@@ -143,11 +202,92 @@ export function StoreDetailPage() {
         }}
       >
         <ArrowLeft size={16} />
-        Back to Directory
+        Back to Stall Directory
       </Link>
 
+      {/* ── Building Block Banner ─────────────────────────── */}
+      <section
+        className="glass"
+        style={{
+          padding: '1.1rem 1.4rem',
+          marginBottom: '1.25rem',
+          borderRadius: '16px',
+          border: isMarkedToVisit ? `1.5px solid ${blockInfo.color}` : '1px solid var(--color-border)',
+          background: `linear-gradient(135deg, ${blockInfo.color}15 0%, rgba(255,255,255,0.02) 100%)`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '0.75rem',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: '10px',
+              background: `${blockInfo.color}25`,
+              border: `1.5px solid ${blockInfo.color}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: blockInfo.color,
+              fontWeight: 800,
+              fontSize: '1rem',
+              flexShrink: 0,
+            }}
+          >
+            B{blockInfo.number}
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: blockInfo.color, fontWeight: 700 }}>
+                Campus Location
+              </span>
+              {isMarkedToVisit && (
+                <span style={{ fontSize: '0.7rem', color: '#fff', background: blockInfo.color, padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 700 }}>
+                  ✓ Marked to Visit
+                </span>
+              )}
+            </div>
+            <h2 style={{ fontSize: '1.05rem', fontWeight: 800, margin: '0.15rem 0 0 0', color: 'var(--color-text)' }}>
+              {blockInfo.fullName}
+            </h2>
+            <p style={{ fontSize: '0.78rem', color: 'var(--color-muted)', margin: '0.15rem 0 0 0' }}>
+              {blockInfo.description}
+            </p>
+          </div>
+        </div>
+
+        {/* Mark visit toggle */}
+        <button
+          className={isMarkedToVisit ? 'btn btn-primary btn-sm' : 'btn btn-ghost btn-sm'}
+          onClick={toggleMarkToVisit}
+          style={{
+            fontSize: '0.82rem',
+            padding: '0.45rem 0.9rem',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.45rem',
+          }}
+        >
+          {isMarkedToVisit ? (
+            <>
+              <CheckSquare size={16} />
+              <span>Marked for Tour</span>
+            </>
+          ) : (
+            <>
+              <Square size={16} />
+              <span>Mark {blockInfo.name} to Visit</span>
+            </>
+          )}
+        </button>
+      </section>
+
       {/* Main Profile Info Card */}
-      <section className="glass" style={{ padding: '1.75rem', marginBottom: '1.5rem' }}>
+      <section className="glass" style={{ padding: '1.75rem', marginBottom: '1.5rem', borderRadius: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', marginBottom: '1.25rem' }}>
           {store.logo_url ? (
             <img
@@ -161,20 +301,33 @@ export function StoreDetailPage() {
                 width: 72,
                 height: 72,
                 borderRadius: '12px',
-                background: 'var(--color-surface2)',
+                background: `${blockInfo.color}18`,
+                border: `1px solid ${blockInfo.color}40`,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0,
               }}
             >
-              <Store size={32} color="var(--color-muted)" />
+              <Store size={32} color={blockInfo.color} />
             </div>
           )}
 
           <div>
             <h1 style={{ fontSize: '1.5rem', fontWeight: 800, lineHeight: 1.2 }}>{store.name}</h1>
             <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+              <span
+                className="badge"
+                style={{
+                  background: `${blockInfo.color}22`,
+                  color: blockInfo.color,
+                  borderColor: `${blockInfo.color}50`,
+                  fontWeight: 700,
+                }}
+              >
+                <Building2 size={11} style={{ marginRight: 3 }} />
+                {blockInfo.name}
+              </span>
               {store.categories && (
                 <span
                   className="badge"
@@ -199,8 +352,8 @@ export function StoreDetailPage() {
           {store.description || 'No description available for this exhibitor yet.'}
         </p>
 
-        {/* Operating Hours card */}
-        <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: '8px', padding: '0.75rem 1rem', display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
+        {/* Operating Hours & Location card */}
+        <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: '10px', padding: '0.85rem 1.1rem', display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
             <Clock size={16} color="var(--color-accent)" />
             <div>
@@ -209,20 +362,18 @@ export function StoreDetailPage() {
               {store.closing_time ? store.closing_time.substring(0, 5) : '18:00'}
             </div>
           </div>
-          {store.exhibitions && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
-              <MapPin size={16} color="var(--color-primary-h)" />
-              <div>
-                <span style={{ fontWeight: 600 }}>Exhibition:</span> {store.exhibitions.title}
-              </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+            <MapPin size={16} color={blockInfo.color} />
+            <div>
+              <span style={{ fontWeight: 600 }}>Location:</span> {blockInfo.fullName}
             </div>
-          )}
+          </div>
         </div>
       </section>
 
       {/* Image Gallery Section */}
       {images.length > 0 && (
-        <section className="glass" style={{ padding: '1.25rem', marginBottom: '1.5rem', position: 'relative' }}>
+        <section className="glass" style={{ padding: '1.25rem', marginBottom: '1.5rem', position: 'relative', borderRadius: '16px' }}>
           <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem' }}>Exhibitor Gallery</h2>
           <div style={{ position: 'relative', borderRadius: '8px', overflow: 'hidden', height: '240px', background: 'var(--color-bg)' }}>
             <img
@@ -272,7 +423,7 @@ export function StoreDetailPage() {
 
       {/* Active Promotions / Flyers */}
       {promotions.length > 0 && (
-        <section className="glass" style={{ padding: '1.25rem', marginBottom: '1.5rem' }}>
+        <section className="glass" style={{ padding: '1.25rem', marginBottom: '1.5rem', borderRadius: '16px' }}>
           <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Gift size={18} color="var(--color-warning)" />
             Active Offers & Promotions
@@ -331,11 +482,55 @@ export function StoreDetailPage() {
         </section>
       )}
 
+      {/* ── Other Stalls in this Block ────────────────────── */}
+      {siblingStalls.length > 0 && (
+        <section className="glass" style={{ padding: '1.4rem', marginBottom: '1.5rem', borderRadius: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
+            <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <Building2 size={16} color={blockInfo.color} />
+              Other Stalls in {blockInfo.name}
+            </h2>
+            <Link to="/stores" style={{ fontSize: '0.78rem', color: blockInfo.color, textDecoration: 'none', fontWeight: 600 }}>
+              View all in directory →
+            </Link>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.65rem' }}>
+            {siblingStalls.map((sib) => (
+              <Link
+                key={sib.id}
+                to={`/stores/${sib.id}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.6rem',
+                  padding: '0.6rem 0.8rem',
+                  borderRadius: '10px',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  textDecoration: 'none',
+                  color: 'inherit',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <Store size={16} color={blockInfo.color} style={{ flexShrink: 0 }} />
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {sib.name}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--color-muted)' }}>
+                    {sib.categories?.name || 'Exhibition Stall'}
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Contact Details Card */}
-      <section className="glass" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
+      <section className="glass" style={{ padding: '1.5rem', marginBottom: '1.5rem', borderRadius: '16px' }}>
         <h2 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: '1rem' }}>Contact Exhibitor</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-          {/* Phone */}
           <div className="info-row" style={{ padding: '0.65rem 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--color-muted)', fontSize: '0.875rem' }}>
               <Phone size={15} />
@@ -350,7 +545,6 @@ export function StoreDetailPage() {
             )}
           </div>
 
-          {/* Email */}
           <div className="info-row" style={{ padding: '0.65rem 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--color-muted)', fontSize: '0.875rem' }}>
               <Mail size={15} />
@@ -365,7 +559,6 @@ export function StoreDetailPage() {
             )}
           </div>
 
-          {/* Website */}
           <div className="info-row" style={{ padding: '0.65rem 0' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--color-muted)', fontSize: '0.875rem' }}>
               <Globe size={15} />
@@ -387,7 +580,7 @@ export function StoreDetailPage() {
         </div>
       </section>
 
-      {/* Navigation directions action */}
+      {/* Navigation directions action: Navigates to the Block on Map */}
       <button
         className="btn btn-primary"
         onClick={() => navigate(`/map?to=${store.id}`)}
@@ -398,11 +591,14 @@ export function StoreDetailPage() {
           gap: '0.5rem',
           width: '100%',
           marginTop: '1.5rem',
-          padding: '0.85rem',
+          padding: '0.95rem',
+          fontSize: '0.95rem',
+          fontWeight: 800,
+          boxShadow: `0 6px 22px ${blockInfo.color}40`,
         }}
       >
         <Navigation size={18} />
-        Navigate to Store
+        Navigate to {blockInfo.name} ({store.name.split('—')[0].trim()})
       </button>
     </div>
   );

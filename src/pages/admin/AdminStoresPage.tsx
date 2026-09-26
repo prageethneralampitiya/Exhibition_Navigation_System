@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import {
   Plus,
   Edit2,
@@ -11,6 +11,7 @@ import {
   Gift,
   QrCode,
   Upload,
+  Building2,
 } from 'lucide-react';
 import {
   supabase,
@@ -29,6 +30,7 @@ import { FormMapPicker } from '../../components/admin/FormMapPicker';
 import { QrCodeModal } from '../../components/admin/QrCodeModal';
 import { KmlImportModal } from '../../components/admin/KmlImportModal';
 import { type QrCalibrateTarget } from '../../utils/qrCodeGenerator';
+import { extractBlocksFromNodes, matchStoreToBlock, parseBlockAndFloor, formatBlockAndFloor, getBlockFloorOptions, type BlockEntity } from '../../utils/blocks';
 
 export function AdminStoresPage() {
   const { user, profile } = useAuth();
@@ -40,6 +42,11 @@ export function AdminStoresPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('');
+
+  // Dynamic exhibition building blocks from navigation nodes (KML / blocks panel)
+  const realBlocks: BlockEntity[] = useMemo(() => {
+    return extractBlocksFromNodes(existingNodes);
+  }, [existingNodes]);
 
   // Multi-selection state
   const [selectedStoreIds, setSelectedStoreIds] = useState<Set<string>>(new Set());
@@ -189,17 +196,18 @@ export function AdminStoresPage() {
   };
 
   const handleOpenAdd = () => {
+    const defaultBlock = realBlocks[0];
     setCurrentStore({
       name: '',
       description: '',
       logo_url: '',
       category_id: categories[0]?.id || '',
       exhibition_id: exhibitions[0]?.id || '',
-      floor: '1',
+      floor: defaultBlock ? `${defaultBlock.name} · Floor 1` : 'Floor 1',
       opening_time: '09:00:00',
       closing_time: '18:00:00',
-      latitude: 6.535472,
-      longitude: 80.401000,
+      latitude: defaultBlock?.latitude ?? 6.535472,
+      longitude: defaultBlock?.longitude ?? 80.401000,
       phone: '',
       email: '',
       website: '',
@@ -553,8 +561,27 @@ export function AdminStoresPage() {
           )}
           <div>
             <div style={{ fontWeight: 600 }}>{row.name}</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
-              Floor: {row.floor || '1'}
+            <div style={{ fontSize: '0.75rem', color: 'var(--color-muted)', display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.1rem' }}>
+              <span>Floor: {row.floor || '1'}</span>
+              {(() => {
+                const blk = matchStoreToBlock(row, realBlocks);
+                if (!blk) return null;
+                return (
+                  <span
+                    style={{
+                      fontSize: '0.68rem',
+                      fontWeight: 700,
+                      color: blk.color,
+                      background: `${blk.color}18`,
+                      border: `1px solid ${blk.color}40`,
+                      padding: '0.05rem 0.35rem',
+                      borderRadius: '4px',
+                    }}
+                  >
+                    {blk.name}
+                  </span>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -878,19 +905,132 @@ export function AdminStoresPage() {
                 </div>
               )}
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
-                <div className="form-group">
-                  <label className="form-label" htmlFor="store-floor">Floor / Level</label>
-                  <input
-                    id="store-floor"
-                    type="text"
-                    className="form-input"
-                    value={currentStore.floor || ''}
-                    onChange={(e) => setCurrentStore({ ...currentStore, floor: e.target.value })}
-                    placeholder="e.g. Ground, 1, 2"
-                  />
-                </div>
+              {/* ── Building Block & Floor Assignment ────────────────── */}
+              {currentStore && (
+                <div
+                  className="form-group"
+                  style={{
+                    background: 'rgba(6, 182, 212, 0.06)',
+                    border: '1px solid rgba(6, 182, 212, 0.3)',
+                    borderRadius: '12px',
+                    padding: '1rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.35rem' }}>
+                    <Building2 size={16} color="var(--color-accent)" />
+                    <label className="form-label" style={{ color: 'var(--color-accent)', fontWeight: 800, margin: 0, fontSize: '0.9rem' }}>
+                      Building Block & Floor Assignment
+                    </label>
+                  </div>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--color-muted)', margin: '0 0 0.85rem 0', lineHeight: 1.4 }}>
+                    Select which exhibition building block this stall belongs to and which floor it is on. 
+                    <strong> On the map, only the building blocks are marked</strong>, while in the stall directory, visitors see all stalls grouped under their respective blocks.
+                  </p>
 
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '0.85rem' }}>
+                    {/* Block selector */}
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label" style={{ fontSize: '0.78rem' }}>
+                        Exhibition Building / Block
+                      </label>
+                      <select
+                        className="form-select"
+                        value={(() => {
+                          const blk = matchStoreToBlock(currentStore, realBlocks);
+                          return blk ? blk.id : '';
+                        })()}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const selectedBlk = realBlocks.find((b) => b.id === val);
+                          if (selectedBlk) {
+                            const blkFloors = selectedBlk.floors && selectedBlk.floors.length > 0
+                              ? selectedBlk.floors
+                              : getBlockFloorOptions(selectedBlk);
+                            const parsed = parseBlockAndFloor(currentStore.floor);
+                            const nextFloor = blkFloors.includes(parsed.floorLevel)
+                              ? parsed.floorLevel
+                              : blkFloors[0] || 'Ground Floor';
+
+                            setCurrentStore({
+                              ...currentStore,
+                              floor: formatBlockAndFloor(selectedBlk.name, nextFloor),
+                              latitude: selectedBlk.latitude,
+                              longitude: selectedBlk.longitude,
+                            });
+                          } else {
+                            const parsed = parseBlockAndFloor(currentStore.floor);
+                            setCurrentStore({
+                              ...currentStore,
+                              floor: parsed.floorLevel || 'Ground Floor',
+                            });
+                          }
+                        }}
+                        style={{ fontWeight: 600 }}
+                      >
+                        <option value="">{realBlocks.length === 0 ? 'No Blocks Added Yet (Add in Blocks Tab or KML)' : 'Select a Building Block...'}</option>
+                        {realBlocks.map((blk) => (
+                          <option key={blk.id} value={blk.id}>
+                            {blk.name} ({blk.floors?.length || 1} Floors)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Floor selector (Dynamic based on selected block) */}
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label" style={{ fontSize: '0.78rem' }}>
+                        Floor / Level
+                      </label>
+                      {(() => {
+                        const matchedBlk = matchStoreToBlock(currentStore, realBlocks);
+                        const availableFloors = matchedBlk
+                          ? (matchedBlk.floors && matchedBlk.floors.length > 0 ? matchedBlk.floors : getBlockFloorOptions(matchedBlk))
+                          : ['Ground Floor', '1st Floor', '2nd Floor', '3rd Floor'];
+                        const currentParsed = parseBlockAndFloor(currentStore.floor);
+                        const currentFloorLevel = currentParsed.floorLevel || availableFloors[0] || 'Ground Floor';
+
+                        return (
+                          <select
+                            className="form-select"
+                            value={currentFloorLevel}
+                            onChange={(e) => {
+                              const blkName = matchedBlk ? matchedBlk.name : currentParsed.blockName;
+                              setCurrentStore({
+                                ...currentStore,
+                                floor: formatBlockAndFloor(blkName, e.target.value),
+                              });
+                            }}
+                            style={{ fontWeight: 600 }}
+                          >
+                            {availableFloors.map((fl) => (
+                              <option key={fl} value={fl}>
+                                {fl}
+                              </option>
+                            ))}
+                            {!availableFloors.includes(currentFloorLevel) && currentFloorLevel && (
+                              <option value={currentFloorLevel}>
+                                {currentFloorLevel} (Custom)
+                              </option>
+                            )}
+                          </select>
+                        );
+                      })()}
+                    </div>
+                  </div>
+
+                  {currentStore.latitude ? (
+                    <div style={{ fontSize: '0.74rem', color: 'var(--color-muted)', marginTop: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <Check size={14} color="#22c55e" />
+                      <span>
+                        Map Coordinates: <strong>{currentStore.latitude.toFixed(6)}, {currentStore.longitude?.toFixed(6)}</strong> (Aligned to Building Block)
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
+              {/* Operating Hours */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div className="form-group">
                   <label className="form-label" htmlFor="store-open">Opening Time</label>
                   <input

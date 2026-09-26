@@ -19,6 +19,7 @@ import {
   Maximize2,
   Coffee,
   PhoneCall,
+  Building2,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -30,7 +31,8 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { to: '/dashboard',     icon: <LayoutDashboard size={18} />, label: 'Dashboard' },
-  { to: '/exhibitions',   icon: <CalendarDays size={18} />,    label: 'Exhibitions' },
+  { to: '/events',        icon: <CalendarDays size={18} />,    label: 'Event' },
+  { to: '/blocks',        icon: <Building2 size={18} />,       label: 'Blocks' },
   { to: '/stores',        icon: <Store size={18} />,           label: 'Stores' },
   { to: '/facilities',    icon: <Coffee size={18} />,          label: 'Facilities' },
   { to: '/categories',    icon: <Tag size={18} />,             label: 'Categories' },

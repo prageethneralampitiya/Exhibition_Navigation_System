@@ -10,6 +10,7 @@ const AdminLayout = lazy(() => import('./components/admin/AdminLayout').then(m =
 
 const AdminDashboardPage = lazy(() => import('./pages/admin/AdminDashboardPage').then(m => ({ default: m.AdminDashboardPage })));
 const AdminExhibitionsPage = lazy(() => import('./pages/admin/AdminExhibitionsPage').then(m => ({ default: m.AdminExhibitionsPage })));
+const AdminBlocksPage = lazy(() => import('./pages/admin/AdminBlocksPage').then(m => ({ default: m.AdminBlocksPage })));
 const AdminStoresPage = lazy(() => import('./pages/admin/AdminStoresPage').then(m => ({ default: m.AdminStoresPage })));
 const AdminFacilitiesPage = lazy(() => import('./pages/admin/AdminFacilitiesPage').then(m => ({ default: m.AdminFacilitiesPage })));
 const AdminCategoriesPage = lazy(() => import('./pages/admin/AdminCategoriesPage').then(m => ({ default: m.AdminCategoriesPage })));
@@ -57,7 +58,9 @@ function AdminApp() {
                   <AdminLayout>
                     <Routes>
                       <Route path="dashboard" element={<AdminDashboardPage />} />
+                      <Route path="events" element={<AdminExhibitionsPage />} />
                       <Route path="exhibitions" element={<AdminExhibitionsPage />} />
+                      <Route path="blocks" element={<AdminBlocksPage />} />
                       <Route path="stores" element={<AdminStoresPage />} />
                       <Route path="facilities" element={<AdminFacilitiesPage />} />
                       <Route path="categories" element={<AdminCategoriesPage />} />

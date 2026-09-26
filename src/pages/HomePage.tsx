@@ -1,16 +1,11 @@
 import { useEffect, useState, useRef, useCallback, useMemo, memo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  MapPin,
   Navigation,
   User,
   Store,
   LogOut,
-  CalendarDays,
   ArrowRight,
-  Star,
-  Sparkles,
-  Clock,
   TrendingUp,
   ChevronRight,
   Shield,
@@ -20,8 +15,12 @@ import {
   PhoneCall,
   Video,
   Megaphone,
+  Flame,
+  Building2,
+  CalendarDays,
 } from 'lucide-react';
-import { supabase, type Exhibition, type Store as StoreType } from '../lib/supabase';
+import { supabase, type Exhibition, type Store as StoreType, type NavigationNode } from '../lib/supabase';
+import { extractBlocksFromNodes, matchStoreToBlock, parseBlockAndFloor, type BlockEntity } from '../utils/blocks';
 import { useAuth } from '../contexts/AuthContext';
 import { GPSPermissionBanner } from '../components/GPSPermissionBanner';
 import { useLiveBroadcast } from '../contexts/LiveBroadcastContext';
@@ -29,6 +28,7 @@ import invexLogo from '../pics/logo.png';
 import { SiteFooter } from '../components/SiteFooter';
 import { EmergencyContactsModal } from '../components/EmergencyContactsModal';
 import { VideoLivesModal } from '../components/VideoLivesModal';
+import { EventBannerCarousel } from '../components/EventBannerCarousel';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ⏱️ TIMING CONFIGURATION: INTRO SPLASH & HOME FADE-IN DELAY
@@ -42,74 +42,6 @@ import { VideoLivesModal } from '../components/VideoLivesModal';
 //    • 0    = Instant (fade-in immediately without waiting for intro)
 // ═══════════════════════════════════════════════════════════════════════════════
 export const HOME_INTRO_FADE_DELAY_MS = 3900;
-
-// ── Customizable Placeholder Exhibition Slots ───────────────────────
-// You can edit titles, locations, dates, or accent colors anytime.
-// Once you add real exhibitions in Admin, they will seamlessly appear alongside these!
-interface PlaceholderExhibition {
-  id: string;
-  title: string;
-  location: string;
-  start_date: string;
-  end_date: string;
-  is_featured: boolean;
-  tag: string;
-  accentColor: string;
-  isPlaceholder: true;
-}
-
-interface RealExhibitionItem extends Exhibition {
-  isPlaceholder: false;
-}
-
-type CarouselExhibitionItem = PlaceholderExhibition | RealExhibitionItem;
-
-const placeholderExhibitions: PlaceholderExhibition[] = [
-  {
-    id: 'placeholder-ai-summit',
-    title: 'AI & Robotics Summit',
-    location: 'Hall B · Tech Arena',
-    start_date: '2026-07-17',
-    end_date: '2026-07-18',
-    is_featured: true,
-    tag: 'Upcoming',
-    accentColor: '#8b5cf6',
-    isPlaceholder: true,
-  },
-  {
-    id: 'placeholder-green-tech',
-    title: 'Green Tech & Clean Energy',
-    location: 'Hall C · Eco Pavilion',
-    start_date: '2026-07-19',
-    end_date: '2026-07-20',
-    is_featured: false,
-    tag: 'Slot Ready',
-    accentColor: '#10b981',
-    isPlaceholder: true,
-  },
-  {
-    id: 'placeholder-cyber-expo',
-    title: 'Cyber Security & Cloud Summit',
-    location: 'Innovation Wing · Level 2',
-    start_date: '2026-07-21',
-    end_date: '2026-07-22',
-    is_featured: false,
-    tag: 'Upcoming',
-    accentColor: '#38bdf8',
-    isPlaceholder: true,
-  },
-  {
-    id: 'placeholder-mobility-ev',
-    title: 'NextGen Mobility & EV Expo',
-    location: 'Hall D · Main Stage',
-    start_date: '2026-07-23',
-    end_date: '2026-07-24',
-    is_featured: true,
-    tag: 'Slot Ready',
-    accentColor: '#f59e0b',
-    isPlaceholder: true,
-  },
-];
 
 function useCarouselScroller(speed = 0.65, repeatCount = 6) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -752,27 +684,88 @@ export function HomePage() {
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [exhibitions, setExhibitions] = useState<Exhibition[]>([]);
   const [stores, setStores] = useState<StoreType[]>([]);
+  const [nodes, setNodes] = useState<NavigationNode[]>([]);
+  const [analyticsEvents, setAnalyticsEvents] = useState<{ target_id: string | null; target_name: string | null; event_type: string }[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Modals for new buttons
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
   const [isVideoLivesModalOpen, setIsVideoLivesModalOpen] = useState(false);
 
-  // Memoized lists and dynamic repeat sets for buttery seamless infinite looping
-  const baseExhibitions = useMemo<CarouselExhibitionItem[]>(() => [
-    ...exhibitions.map((ex): RealExhibitionItem => ({ ...ex, isPlaceholder: false })),
-    ...placeholderExhibitions,
-  ], [exhibitions]);
+  // Real building blocks extracted dynamically from navigation nodes
+  const realBlocks: BlockEntity[] = useMemo(() => {
+    return extractBlocksFromNodes(nodes);
+  }, [nodes]);
 
-  const featuredCopies = useMemo(() => {
-    const count = baseExhibitions.length;
+  // Block & Floor location resolver for any stall
+  const getStoreLocation = useCallback((st: StoreType) => {
+    const matched = matchStoreToBlock(st, realBlocks);
+    const parsed = parseBlockAndFloor(st.floor);
+    const blockName = matched ? matched.name : (parsed.blockName || 'Campus Block');
+    const floorLevel = parsed.floorLevel || 'Floor 1';
+    const blockColor = matched ? matched.color : '#06b6d4';
+    return { blockName, floorLevel, blockColor };
+  }, [realBlocks]);
+
+  // Extract stall number from name (e.g. "Stall 64" -> "64") or use sequential fallback
+  const getStallNumber = useCallback((st: StoreType, fallbackIndex: number) => {
+    if (!st.name) return String(fallbackIndex);
+    const numMatch = st.name.match(/(?:stall|booth|store|#|\b)\s*#?\s*(\d+)/i);
+    if (numMatch && numMatch[1]) {
+      return numMatch[1];
+    }
+    return String(fallbackIndex);
+  }, []);
+
+  // Popular stalls ranked by views & navigation interactions
+  interface PopularStallItem extends StoreType {
+    rank: number;
+    popularityScore: number;
+  }
+
+  const popularStalls = useMemo<PopularStallItem[]>(() => {
+    if (stores.length === 0) return [];
+
+    const eventCounts = new Map<string, number>();
+    analyticsEvents.forEach((ev: any) => {
+      if (ev.target_id) {
+        eventCounts.set(ev.target_id, (eventCounts.get(ev.target_id) || 0) + 1);
+      }
+      if (ev.target_name) {
+        const key = ev.target_name.toLowerCase().trim();
+        eventCounts.set(key, (eventCounts.get(key) || 0) + 1);
+      }
+    });
+
+    const scored = stores.map((s, idx) => {
+      const idCount = eventCounts.get(s.id) || 0;
+      const nameCount = eventCounts.get(s.name.toLowerCase().trim()) || 0;
+      const totalScore = idCount + nameCount;
+      return { store: s, score: totalScore, originalIndex: idx };
+    });
+
+    // Sort descending by score. On ties, retain stable index order
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.originalIndex - b.originalIndex;
+    });
+
+    return scored.map((item, index) => ({
+      ...item.store,
+      rank: index + 1,
+      popularityScore: item.score,
+    }));
+  }, [stores, analyticsEvents]);
+
+  const popularCopies = useMemo(() => {
+    const count = popularStalls.length;
     if (count === 0) return 6;
     return Math.max(6, Math.ceil(24 / count));
-  }, [baseExhibitions.length]);
+  }, [popularStalls.length]);
 
-  const featuredDisplayList = useMemo(() => {
-    return Array.from({ length: featuredCopies }).flatMap(() => baseExhibitions);
-  }, [baseExhibitions, featuredCopies]);
+  const popularDisplayList = useMemo(() => {
+    return popularStalls.length > 0 ? Array.from({ length: popularCopies }).flatMap(() => popularStalls) : [];
+  }, [popularStalls, popularCopies]);
 
   const storeCopies = useMemo(() => {
     const count = stores.length;
@@ -785,7 +778,7 @@ export function HomePage() {
   }, [stores, storeCopies]);
 
   // Interactive auto-scrolling & manually scrollable carousels with smooth momentum
-  const featuredCarousel = useCarouselScroller(0.65, featuredCopies);
+  const popularCarousel = useCarouselScroller(0.65, popularCopies);
   const storesCarousel = useCarouselScroller(0.65, storeCopies);
 
   useEffect(() => {
@@ -807,13 +800,13 @@ export function HomePage() {
   const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true);
-      const [exhibitionsRes, storesRes] = await Promise.all([
+      const [exhibitionsRes, storesRes, nodesRes, eventsRes] = await Promise.all([
         supabase
           .from('exhibitions')
           .select('*')
           .eq('is_active', true)
           .order('is_featured', { ascending: false })
-          .limit(4),
+          .order('start_date', { ascending: true }),
         supabase
           .from('stores')
           .select(`
@@ -822,11 +815,26 @@ export function HomePage() {
             exhibitions:exhibition_id (id, title)
           `)
           .eq('is_active', true)
-          .limit(6),
+          .order('name'),
+        supabase
+          .from('navigation_nodes')
+          .select('*'),
+        (async () => {
+          try {
+            const res = await supabase
+              .from('analytics_events')
+              .select('target_id, target_name, event_type');
+            return res.data || [];
+          } catch {
+            return [];
+          }
+        })(),
       ]);
 
       setExhibitions(exhibitionsRes.data || []);
       setStores(storesRes.data || []);
+      setNodes(nodesRes.data || []);
+      setAnalyticsEvents(eventsRes || []);
     } catch (err) {
       console.error('Error loading homepage dashboard resources:', err);
     } finally {
@@ -1173,6 +1181,28 @@ export function HomePage() {
                 </span>
               </div>
             </button>
+
+            {/* 5. Event option */}
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById('events-banner-section');
+                if (el) {
+                  el.scrollIntoView({ behavior: 'smooth' });
+                }
+              }}
+              className="home-box-link link-events"
+              id="nav-events"
+              title="Featured Campus Events, Venues & Offers"
+            >
+              <div className="home-box-link-icon icon-events">
+                <CalendarDays size={22} strokeWidth={2.2} />
+              </div>
+              <div className="home-box-link-text">
+                <span className="home-box-link-title">Event</span>
+                <span className="home-box-link-desc">Venues &amp; Offers</span>
+              </div>
+            </button>
           </div>
 
           {/* User Profile / Admin controls (Search, Bell, Broadcast, and Sign In buttons hidden) */}
@@ -1209,11 +1239,14 @@ export function HomePage() {
           <div className="home-stat-divider" />
           <div className="home-stat-chip">
             <Store size={14} />
-            <span>{loading ? '—' : stores.length} Exhibitors</span>
+            <span>{loading ? '—' : stores.length} Stalls</span>
           </div>
           <div className="home-stat-divider" />
           <LiveVisitorBadge />
         </div>
+
+        {/* ── Full Screen Size Width Banners for Events (Venues, Prices & Offers) ── */}
+        <EventBannerCarousel events={exhibitions} loading={loading} />
 
         {/* ── Transition Bridge to Lower Discovery Section ─────── */}
         <div className="home-section-transition scroll-reveal">
@@ -1223,130 +1256,132 @@ export function HomePage() {
         {/* ── Main Content Grid ───────────────────────────────── */}
         <div className="home-content-grid">
 
-          {/* ── Featured Exhibitions ─────────────────────────── */}
+          {/* ── Popular Stalls (Most Viewed & Top-Navigated with Medals) ── */}
           <section className="home-content-block home-content-block-purple scroll-reveal">
             <div className="home-content-block-glow" />
             <div className="home-section-header">
               <div className="home-section-title-wrap">
                 <div className="home-section-icon home-section-icon-purple">
-                  <CalendarDays size={18} color="#fff" />
+                  <Flame size={18} color="#fff" />
                 </div>
                 <div>
-                  <h2 className="home-section-title">Featured Exhibitions</h2>
-                  <p className="home-section-sub">Ongoing events &amp; summits near you</p>
+                  <h2 className="home-section-title">Popular Stalls</h2>
+                  <p className="home-section-sub">Most viewed &amp; top-navigated stalls on campus</p>
                 </div>
               </div>
-              <Link to="/exhibitions" className="home-view-all-link" id="home-view-all-exhibitions">
+              <Link to="/stores" className="home-view-all-link" id="home-view-all-popular">
                 View All <ChevronRight size={14} />
               </Link>
             </div>
 
             {loading ? (
-              <div className="home-exhibitions-grid">
+              <div className="home-stores-grid">
                 {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="glass skeleton home-ex-skeleton" />
+                  <div key={i} className="glass skeleton home-store-skeleton" />
                 ))}
+              </div>
+            ) : popularStalls.length === 0 ? (
+              <div className="home-empty-state">
+                <Store size={32} style={{ opacity: 0.35 }} />
+                <p>No stalls available yet.</p>
               </div>
             ) : (
               <div
-                ref={featuredCarousel.ref}
-                className="home-ex-carousel-viewport"
-                {...featuredCarousel.handlers}
+                ref={popularCarousel.ref}
+                className="home-stores-carousel-viewport"
+                {...popularCarousel.handlers}
               >
-                <div className="home-ex-carousel-track">
-                  {featuredDisplayList.map((item, index) =>
-                    item.isPlaceholder ? (
-                      /* Customizable Placeholder Card */
-                      <div
-                        key={`ph-${item.id}-${index}`}
-                        className="home-ex-card home-ex-card-placeholder"
-                        title="Customizable Exhibition Slot — Change or add details anytime"
+                <div className="home-stores-carousel-track">
+                  {popularDisplayList.map((st, index) => {
+                    const loc = getStoreLocation(st);
+                    const stallNum = getStallNumber(st, ((index % popularStalls.length) + 1));
+                    const rank = st.rank;
+
+                    return (
+                      <Link
+                        key={`pop-${st.id}-${index}`}
+                        to={`/stores/${st.id}`}
+                        className="home-store-carousel-card"
+                        id={`home-popular-card-${st.id}-${index}`}
+                        style={{
+                          '--store-cat-color': st.categories?.color || loc.blockColor,
+                        } as React.CSSProperties}
                       >
-                        <div
-                          className="home-ex-thumb home-ex-thumb-placeholder-banner"
-                          style={{
-                            background: `radial-gradient(circle at 50% 30%, ${item.accentColor}30 0%, rgba(13, 17, 30, 0.92) 100%)`,
-                          }}
-                        >
-                          <div className="home-ex-thumb-placeholder-icon" style={{ color: item.accentColor }}>
-                            <Sparkles size={24} />
+                        {/* 1st, 2nd, 3rd Place Medal Badge in Left Top Corner */}
+                        {rank === 1 && (
+                          <div className="stall-medal-badge stall-medal-gold" title="1st Place: Most Popular Stall">
+                            🥇 #1
                           </div>
+                        )}
+                        {rank === 2 && (
+                          <div className="stall-medal-badge stall-medal-silver" title="2nd Place: Top Navigated Stall">
+                            🥈 #2
+                          </div>
+                        )}
+                        {rank === 3 && (
+                          <div className="stall-medal-badge stall-medal-bronze" title="3rd Place: Highly Visited Stall">
+                            🥉 #3
+                          </div>
+                        )}
+                        {rank > 3 && (
+                          <div className="stall-medal-badge stall-medal-other" title={`Rank ${rank}`}>
+                            #{rank}
+                          </div>
+                        )}
+
+                        {/* Top-right Flame indicator */}
+                        <div className="stall-popular-badge">
+                          <Flame size={12} color="#f59e0b" />
+                        </div>
+
+                        {/* Store Logo */}
+                        <div className="home-store-carousel-logo" style={{ marginTop: '0.35rem' }}>
+                          {st.logo_url ? (
+                            <img src={st.logo_url} alt={st.name} loading="lazy" decoding="async" />
+                          ) : (
+                            <Store size={22} color={st.categories?.color || loc.blockColor} />
+                          )}
+                        </div>
+
+                        {/* Stall Number Tag */}
+                        <span className="stall-number-tag">
+                          Stall #{stallNum}
+                        </span>
+
+                        {/* Stall Name */}
+                        <h3 className="home-store-carousel-name" title={st.name}>{st.name}</h3>
+
+                        {/* Stall Block and Floor */}
+                        <div className="stall-location-chip" style={{ color: loc.blockColor }}>
+                          <Building2 size={11} style={{ flexShrink: 0 }} />
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{loc.blockName}</span>
+                          <span style={{ opacity: 0.5 }}>·</span>
+                          <span style={{ flexShrink: 0 }}>{loc.floorLevel}</span>
+                        </div>
+
+                        {/* Category Chip */}
+                        {st.categories && (
                           <span
-                            className="home-ex-featured-badge home-ex-placeholder-badge"
+                            className="home-store-cat-chip"
                             style={{
-                              borderColor: `${item.accentColor}40`,
-                              color: '#fff',
+                              background: `${st.categories.color}20`,
+                              color: st.categories.color || 'var(--color-primary-h)',
+                              borderColor: `${st.categories.color}40`,
+                              fontSize: '0.68rem',
                             }}
                           >
-                            <Clock size={9} /> {item.tag}
+                            {st.categories.name}
                           </span>
-                        </div>
-
-                        <div className="home-ex-details">
-                          <h3 className="home-ex-title">{item.title}</h3>
-                          <span className="home-ex-location">
-                            <MapPin size={11} />
-                            {item.location}
-                          </span>
-                          <span className="home-ex-dates">
-                            <Clock size={11} />
-                            {item.start_date} – {item.end_date}
-                          </span>
-                        </div>
-
-                        <div className="home-ex-arrow">
-                          <ChevronRight size={14} />
-                        </div>
-                      </div>
-                    ) : (
-                      /* Real Exhibition Card */
-                      <Link
-                        key={`real-${item.id}-${index}`}
-                        to={`/exhibitions/${item.id}`}
-                        className="home-ex-card"
-                        id={`home-ex-card-${item.id}-${index}`}
-                      >
-                        <div className="home-ex-thumb">
-                          {item.image_url ? (
-                            <img src={item.image_url} alt={item.title} className="home-ex-thumb-img" loading="lazy" decoding="async" />
-                          ) : (
-                            <div className="home-ex-thumb-placeholder">
-                              <CalendarDays size={24} color="rgba(255,255,255,0.4)" />
-                            </div>
-                          )}
-                          {item.is_featured && (
-                            <span className="home-ex-featured-badge">
-                              <Star size={9} fill="currentColor" /> Featured
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="home-ex-details">
-                          <h3 className="home-ex-title">{item.title}</h3>
-                          <span className="home-ex-location">
-                            <MapPin size={11} />
-                            {item.location || 'Exhibition Area'}
-                          </span>
-                          {(item.start_date || item.end_date) && (
-                            <span className="home-ex-dates">
-                              <Clock size={11} />
-                              {item.start_date || '?'} – {item.end_date || '?'}
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="home-ex-arrow">
-                          <ChevronRight size={14} />
-                        </div>
+                        )}
                       </Link>
-                    )
-                  )}
+                    );
+                  })}
                 </div>
               </div>
             )}
           </section>
 
-          {/* ── Participant Exhibitors (Stores) ──────────────── */}
+          {/* ── Stalls (All Stalls with Stall Number, Block & Floor) ── */}
           <section className="home-content-block home-content-block-cyan scroll-reveal">
             <div className="home-content-block-glow" />
             <div className="home-section-header">
@@ -1355,8 +1390,8 @@ export function HomePage() {
                   <Store size={18} color="#fff" />
                 </div>
                 <div>
-                  <h2 className="home-section-title">Participant Exhibitors</h2>
-                  <p className="home-section-sub">Browse booths, stalls &amp; brand partners</p>
+                  <h2 className="home-section-title">Stalls</h2>
+                  <p className="home-section-sub">Browse all stalls with blocks &amp; floor locations</p>
                 </div>
               </div>
               <Link to="/stores" className="home-view-all-link" id="home-view-all-stores">
@@ -1373,7 +1408,7 @@ export function HomePage() {
             ) : stores.length === 0 ? (
               <div className="home-empty-state">
                 <Store size={32} style={{ opacity: 0.35 }} />
-                <p>No active exhibitors found.</p>
+                <p>No active stalls found.</p>
               </div>
             ) : (
               <div
@@ -1382,64 +1417,62 @@ export function HomePage() {
                 {...storesCarousel.handlers}
               >
                 <div className="home-stores-carousel-track">
-                  {storesDisplayList.map((st, index) => (
-                    <Link
-                      key={`st-${st.id}-${index}`}
-                      to={`/stores/${st.id}`}
-                      className="home-store-carousel-card"
-                      id={`home-store-card-${st.id}-${index}`}
-                      style={{
-                        '--store-cat-color': st.categories?.color || 'var(--color-primary)',
-                      } as React.CSSProperties}
-                    >
-                      {/* Store Logo */}
-                      <div className="home-store-carousel-logo">
-                        {st.logo_url ? (
-                          <img src={st.logo_url} alt={st.name} loading="lazy" decoding="async" />
-                        ) : (
-                          <Store size={24} color={st.categories?.color || 'var(--color-primary)'} />
-                        )}
-                      </div>
+                  {storesDisplayList.map((st, index) => {
+                    const loc = getStoreLocation(st);
+                    const stallNum = getStallNumber(st, ((index % stores.length) + 1));
 
-                      {/* Store Name */}
-                      <h3 className="home-store-carousel-name">{st.name}</h3>
-
-                      {/* Meta location */}
-                      <span className="home-store-carousel-meta">
-                        <MapPin size={11} /> Floor {st.floor || '1'}
-                      </span>
-
-                      {/* Category Chip */}
-                      {st.categories && (
-                        <span
-                          className="home-store-cat-chip"
-                          style={{
-                            marginTop: '0.6rem',
-                            background: `${st.categories.color}20`,
-                            color: st.categories.color || 'var(--color-primary-h)',
-                            borderColor: `${st.categories.color}40`,
-                            fontSize: '0.72rem',
-                          }}
-                        >
-                          {st.categories.name}
-                        </span>
-                      )}
-
-                      {/* Promotion Sparkle */}
-                      {(st.phone || st.website) && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            top: 10,
-                            right: 10,
-                            color: 'var(--color-warning)',
-                          }}
-                        >
-                          <Sparkles size={13} />
+                    return (
+                      <Link
+                        key={`st-${st.id}-${index}`}
+                        to={`/stores/${st.id}`}
+                        className="home-store-carousel-card"
+                        id={`home-store-card-${st.id}-${index}`}
+                        style={{
+                          '--store-cat-color': st.categories?.color || loc.blockColor,
+                        } as React.CSSProperties}
+                      >
+                        {/* Store Logo */}
+                        <div className="home-store-carousel-logo">
+                          {st.logo_url ? (
+                            <img src={st.logo_url} alt={st.name} loading="lazy" decoding="async" />
+                          ) : (
+                            <Store size={22} color={st.categories?.color || loc.blockColor} />
+                          )}
                         </div>
-                      )}
-                    </Link>
-                  ))}
+
+                        {/* Stall Number Tag */}
+                        <span className="stall-number-tag">
+                          Stall #{stallNum}
+                        </span>
+
+                        {/* Stall Name */}
+                        <h3 className="home-store-carousel-name" title={st.name}>{st.name}</h3>
+
+                        {/* Stall Block and Floor */}
+                        <div className="stall-location-chip" style={{ color: loc.blockColor }}>
+                          <Building2 size={11} style={{ flexShrink: 0 }} />
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{loc.blockName}</span>
+                          <span style={{ opacity: 0.5 }}>·</span>
+                          <span style={{ flexShrink: 0 }}>{loc.floorLevel}</span>
+                        </div>
+
+                        {/* Category Chip */}
+                        {st.categories && (
+                          <span
+                            className="home-store-cat-chip"
+                            style={{
+                              background: `${st.categories.color}20`,
+                              color: st.categories.color || 'var(--color-primary-h)',
+                              borderColor: `${st.categories.color}40`,
+                              fontSize: '0.68rem',
+                            }}
+                          >
+                            {st.categories.name}
+                          </span>
+                        )}
+                      </Link>
+                    );
+                  })}
                 </div>
               </div>
             )}
