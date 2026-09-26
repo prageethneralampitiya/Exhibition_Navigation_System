@@ -46,7 +46,11 @@ export function ExhibitionDirectoryPage() {
   }, []);
 
   useEffect(() => {
+    document.body.classList.add('fixed-bg-tab');
     fetchExhibitions();
+    return () => {
+      document.body.classList.remove('fixed-bg-tab');
+    };
   }, []);
 
   async function fetchExhibitions() {

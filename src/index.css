@@ -4952,6 +4952,312 @@ button.home-box-link {
   }
 }
 
+/* ── Fixed Still Background for Exhibitions & Events and Exhibitor Directory Tabs ── */
+body.fixed-bg-tab,
+body:has(.ex-dir-enhanced),
+body:has(.store-dir-enhanced) {
+  background-attachment: fixed !important;
+}
+
+body.fixed-bg-tab .site-upper-background,
+body:has(.ex-dir-enhanced) .site-upper-background,
+body:has(.store-dir-enhanced) .site-upper-background {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  height: 100vh !important;
+  min-height: 100vh !important;
+  background-size: cover !important;
+  background-position: center top !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+  transform: translateZ(0);
+}
+
+/* ── Screen-Fitted Proportional Blocks for Exhibitor Directory & Exhibitions/Events (≤ 640px) ── */
+@media (max-width: 640px) {
+  /* Page container spacing */
+  .profile-page.ex-dir-enhanced,
+  .profile-page.store-dir-enhanced {
+    padding: 0.75rem 0.85rem 3.5rem !important;
+  }
+
+  /* Back navigation link */
+  .dir-back-link {
+    margin-bottom: 0.65rem !important;
+    font-size: 0.75rem !important;
+    gap: 0.35rem !important;
+  }
+
+  /* Header compact sizing */
+  .dir-page-header {
+    padding: 0.2rem 0 0.65rem !important;
+    margin-bottom: 0.65rem !important;
+  }
+
+  .dir-header-main {
+    gap: 0.6rem !important;
+  }
+
+  .dir-header-icon {
+    width: 38px !important;
+    height: 38px !important;
+    border-radius: 10px !important;
+  }
+
+  .dir-header-icon svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
+
+  .dir-page-title {
+    font-size: 1.25rem !important;
+    letter-spacing: -0.01em !important;
+    line-height: 1.2 !important;
+  }
+
+  .dir-page-desc {
+    font-size: 0.75rem !important;
+    line-height: 1.35 !important;
+    margin-top: 0.15rem !important;
+  }
+
+  .dir-count-badge {
+    font-size: 0.68rem !important;
+    padding: 0.2rem 0.55rem !important;
+  }
+
+  /* Search & Filter Panel: clean, sleek and compact */
+  .dir-filter-panel {
+    padding: 0.75rem 0.85rem !important;
+    margin-bottom: 0.75rem !important;
+    gap: 0.55rem !important;
+    border-radius: 1rem !important;
+  }
+
+  .dir-search-wrap .search-input {
+    padding: 0.5rem 0.75rem 0.5rem 2.2rem !important;
+    font-size: 0.82rem !important;
+    border-radius: 10px !important;
+  }
+
+  .dir-search-wrap .search-icon {
+    left: 0.75rem !important;
+    width: 15px !important;
+    height: 15px !important;
+  }
+
+  .dir-view-btn {
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 8px !important;
+  }
+
+  /* Exhibitor Directory: Category & Floor dropdowns side-by-side */
+  .dir-selects-row {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 0.5rem !important;
+    margin-top: 0.15rem !important;
+  }
+
+  .dir-selects-row .form-group {
+    flex: 1 1 calc(50% - 0.25rem) !important;
+    margin-bottom: 0 !important;
+    min-width: 0 !important;
+  }
+
+  .dir-selects-row .form-label {
+    font-size: 0.68rem !important;
+    margin-bottom: 0.2rem !important;
+    white-space: nowrap !important;
+  }
+
+  .dir-selects-row .form-select {
+    padding: 0.42rem 0.6rem !important;
+    font-size: 0.78rem !important;
+    border-radius: 9px !important;
+    height: auto !important;
+  }
+
+  /* Status Filter Tabs (Exhibitions & Events) */
+  .ex-status-tabs {
+    gap: 0.35rem !important;
+    flex-wrap: wrap !important;
+  }
+
+  .ex-status-tab {
+    padding: 0.28rem 0.65rem !important;
+    font-size: 0.72rem !important;
+    border-radius: 999px !important;
+  }
+
+  .ex-tab-count {
+    font-size: 0.65rem !important;
+    padding: 0.04rem 0.35rem !important;
+    margin-left: 0.25rem !important;
+  }
+
+  /* Category Quick Filter Chips (Exhibitor Directory) */
+  .dir-chips-row {
+    gap: 0.35rem !important;
+    margin-bottom: 0.75rem !important;
+    padding-bottom: 0.25rem !important;
+  }
+
+  .dir-cat-chip {
+    padding: 0.26rem 0.65rem !important;
+    font-size: 0.72rem !important;
+    border-radius: 999px !important;
+  }
+
+  /* ── Exhibition Cards: Sleek, Proportionate Mobile Blocks ── */
+  .ex-dir-list {
+    gap: 0.65rem !important;
+  }
+
+  .ex-dir-card {
+    border-radius: 0.95rem !important;
+    min-height: unset !important;
+    contain-intrinsic-size: 0 92px !important;
+  }
+
+  .ex-card-thumb {
+    width: 90px !important;
+    min-width: 90px !important;
+    max-width: 90px !important;
+  }
+
+  .ex-card-status-pill {
+    bottom: 5px !important;
+    left: 5px !important;
+    font-size: 0.58rem !important;
+    padding: 0.12rem 0.4rem !important;
+    border-radius: 6px !important;
+  }
+
+  .ex-card-content {
+    padding: 0.65rem 0.8rem !important;
+    gap: 0.2rem !important;
+    justify-content: center !important;
+  }
+
+  .ex-card-title-row {
+    margin-bottom: 0.15rem !important;
+    gap: 0.35rem !important;
+  }
+
+  .ex-card-title {
+    font-size: 0.92rem !important;
+    font-weight: 700 !important;
+    line-height: 1.25 !important;
+  }
+
+  .ex-card-desc {
+    font-size: 0.74rem !important;
+    margin: 0 0 0.35rem !important;
+    line-height: 1.35 !important;
+    -webkit-line-clamp: 2 !important;
+  }
+
+  .ex-card-meta {
+    gap: 0.45rem !important;
+  }
+
+  .ex-meta-chip {
+    font-size: 0.68rem !important;
+    gap: 0.25rem !important;
+  }
+
+  .ex-featured-badge {
+    font-size: 0.58rem !important;
+    padding: 0.1rem 0.4rem !important;
+  }
+
+  .ex-card-arrow {
+    padding: 0 0.65rem !important;
+    opacity: 0.45 !important;
+    transform: none !important;
+  }
+
+  /* ── Store List Cards: Sleek, Compact Mobile Blocks ── */
+  .store-list-card {
+    padding: 0.65rem 0.85rem !important;
+    gap: 0.75rem !important;
+    border-radius: 0.95rem !important;
+    margin-bottom: 0.65rem !important;
+    min-height: unset !important;
+    contain-intrinsic-size: 0 75px !important;
+  }
+
+  .store-list-logo,
+  .store-list-logo-ph {
+    width: 42px !important;
+    height: 42px !important;
+    border-radius: 10px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .store-list-name {
+    font-size: 0.95rem !important;
+    font-weight: 700 !important;
+  }
+
+  .store-list-badge {
+    font-size: 0.6rem !important;
+    padding: 0.12rem 0.45rem !important;
+  }
+
+  .store-list-desc {
+    font-size: 0.74rem !important;
+    margin: 0.15rem 0 0.35rem !important;
+    line-height: 1.35 !important;
+  }
+
+  .store-list-meta {
+    gap: 0.45rem !important;
+  }
+
+  .store-meta-chip {
+    font-size: 0.68rem !important;
+    gap: 0.25rem !important;
+  }
+
+  .store-open-badge {
+    font-size: 0.62rem !important;
+    padding: 0.12rem 0.45rem !important;
+  }
+
+  .store-list-arrow {
+    opacity: 0.45 !important;
+    transform: none !important;
+    padding-left: 0.2rem !important;
+  }
+
+  /* Store Grid View on Mobile */
+  .dir-stores-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 0.65rem !important;
+  }
+
+  .store-grid-card {
+    padding: 0.75rem 0.65rem !important;
+    border-radius: 0.85rem !important;
+  }
+
+  .store-grid-logo {
+    width: 42px !important;
+    height: 42px !important;
+    border-radius: 10px !important;
+  }
+
+  .store-grid-name {
+    font-size: 0.85rem !important;
+    font-weight: 700 !important;
+  }
+}
+
 
 
 

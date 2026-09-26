@@ -24,7 +24,11 @@ export function StoreDirectoryPage() {
   }, []);
 
   useEffect(() => {
+    document.body.classList.add('fixed-bg-tab');
     loadData();
+    return () => {
+      document.body.classList.remove('fixed-bg-tab');
+    };
   }, []);
 
   async function loadData() {
