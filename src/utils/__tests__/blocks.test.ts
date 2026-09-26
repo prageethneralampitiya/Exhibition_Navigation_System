@@ -13,9 +13,14 @@ import { type NavigationNode, type Store } from '../../lib/supabase';
 
 describe('blocks.ts - Dynamic Building Blocks Utility', () => {
   describe('generateFloorList & getBlockFloorOptions', () => {
-    it('generates ground floor + 3 upper floors when count is 3 with ground floor', () => {
+    it('generates 1 floor (only ground floor) when count is 1 with ground floor', () => {
+      const floors = generateFloorList(1, true);
+      expect(floors).toEqual(['Ground Floor']);
+    });
+
+    it('generates ground floor + 2 upper floors when count is 3 with ground floor', () => {
       const floors = generateFloorList(3, true);
-      expect(floors).toEqual(['Ground Floor', '1st Floor', '2nd Floor', '3rd Floor']);
+      expect(floors).toEqual(['Ground Floor', '1st Floor', '2nd Floor']);
     });
 
     it('generates upper floors only when includeGround is false', () => {
@@ -28,17 +33,20 @@ describe('blocks.ts - Dynamic Building Blocks Utility', () => {
       expect(floors).toEqual(['Ground Floor', '1st Floor', '2nd Floor', 'Rooftop']);
     });
 
-    it('generates floors from numeric string like "3" or "3 floors"', () => {
+    it('generates floors from numeric string like "1", "3" or "4 floors"', () => {
+      const floors0 = getBlockFloorOptions({ floor: '1' });
+      expect(floors0).toEqual(['Ground Floor']);
+
       const floors1 = getBlockFloorOptions({ floor: '3' });
-      expect(floors1).toEqual(['Ground Floor', '1st Floor', '2nd Floor', '3rd Floor']);
+      expect(floors1).toEqual(['Ground Floor', '1st Floor', '2nd Floor']);
 
       const floors2 = getBlockFloorOptions({ floor: '4 floors' });
-      expect(floors2).toEqual(['Ground Floor', '1st Floor', '2nd Floor', '3rd Floor', '4th Floor']);
+      expect(floors2).toEqual(['Ground Floor', '1st Floor', '2nd Floor', '3rd Floor']);
     });
 
-    it('provides sensible defaults when floor is null or empty', () => {
-      expect(getBlockFloorOptions(null)).toEqual(['Ground Floor', '1st Floor']);
-      expect(getBlockFloorOptions({ floor: '' })).toEqual(['Ground Floor', '1st Floor']);
+    it('provides sensible 1-floor default (Ground Floor) when floor is null or empty', () => {
+      expect(getBlockFloorOptions(null)).toEqual(['Ground Floor']);
+      expect(getBlockFloorOptions({ floor: '' })).toEqual(['Ground Floor']);
     });
   });
   const mockNodes: NavigationNode[] = [

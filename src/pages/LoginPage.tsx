@@ -4,7 +4,7 @@ import { MapPin, Mail, Lock, Eye, EyeOff, LogIn, UserX, User } from 'lucide-reac
 import { useAuth } from '../contexts/AuthContext';
 
 export function LoginPage() {
-  const { signIn, signInAnonymously, user, loading } = useAuth();
+  const { signIn, signInAnonymously, user, profile, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/';
@@ -18,24 +18,34 @@ export function LoginPage() {
   const [anonLoading, setAnonLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // If the user is already authenticated (including as a guest), redirect away
+  // If the user is already authenticated with a real (non-anonymous) account, redirect away
   useEffect(() => {
-    if (!loading && user) {
-      navigate(from === '/login' ? '/' : (from || '/'), { replace: true });
+    if (!loading && user && !user.is_anonymous) {
+      if (isAdmin) {
+        if (profile?.role === 'admin') {
+          navigate('/dashboard', { replace: true });
+        } else if (profile?.role === 'store_admin') {
+          navigate('/stores', { replace: true });
+        }
+      } else {
+        navigate(from === '/login' ? '/' : (from || '/'), { replace: true });
+      }
     }
-  }, [user, loading, navigate, from]);
+  }, [user, profile, loading, navigate, from, isAdmin]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
     setLoginLoading(true);
     try {
-      let loginIdentifier = username;
-      if (!username.includes('@')) {
-        if (username === 'cipherx.mora') {
+      let loginIdentifier = username.trim();
+      if (!loginIdentifier.includes('@')) {
+        if (loginIdentifier.toLowerCase() === 'admin') {
+          loginIdentifier = 'admin@exnav.local';
+        } else if (loginIdentifier === 'cipherx.mora') {
           loginIdentifier = 'cipherx.mora@gmail.com';
         } else {
-          loginIdentifier = `${username}@exnav.local`;
+          loginIdentifier = `${loginIdentifier}@exnav.local`;
         }
       }
 
@@ -44,8 +54,9 @@ export function LoginPage() {
       // Redirect based on role
       if (role === 'admin') {
         navigate('/dashboard', { replace: true });
+      } else if (role === 'store_admin') {
+        navigate(isAdmin ? '/stores' : (from === '/login' ? '/' : (from || '/')), { replace: true });
       } else {
-        // store_admin and visitors both go to the homepage
         navigate(from === '/login' ? '/' : (from || '/'), { replace: true });
       }
     } catch (err: unknown) {

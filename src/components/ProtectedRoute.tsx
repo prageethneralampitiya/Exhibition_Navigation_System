@@ -20,19 +20,22 @@ export function ProtectedRoute({ children, adminOnly = false }: ProtectedRoutePr
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
+          background: 'var(--color-bg, #0b0f1a)',
         }}
       >
-        <div className="spinner" style={{ width: 36, height: 36 }} />
+        <div className="spinner" style={{ width: 36, height: 36, borderTopColor: 'var(--color-primary, #06b6d4)' }} />
       </div>
     );
   }
 
-  if (!user) {
+  // If no session or if user is an anonymous visitor (from the public site)
+  if (!user || user.is_anonymous) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
+  // If this route is restricted to admins/store_admins
   if (adminOnly && profile?.role !== 'admin' && profile?.role !== 'store_admin') {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   return <>{children}</>;

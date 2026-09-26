@@ -86,6 +86,7 @@ export interface GeneratedGraph {
     totalDistanceMeters: number;
     storesConnectedCount: number;
     bridgesCreatedCount: number;
+    blocksCreatedCount?: number;
     stallsCreatedCount?: number;
     facilitiesCreatedCount?: number;
   };
@@ -195,39 +196,18 @@ export function inferKmlPointClassification(name: string = '', desc: string = ''
     return {
       nodeType: 'poi',
       isStore: false,
-      isFacility: true,
-      presetCategoryName: 'Food & Dining',
+      isFacility: false,
+      presetCategoryName: 'Building Blocks',
     };
   }
 
-  // Amenities / Information / Services / Water
-  if (
-    combined.includes('info') ||
-    combined.includes('help') ||
-    combined.includes('reception') ||
-    combined.includes('water') ||
-    combined.includes('drinking') ||
-    combined.includes('atm') ||
-    combined.includes('parking') ||
-    combined.includes('lost') ||
-    combined.includes('stage') ||
-    combined.includes('auditorium') ||
-    combined.includes('poi')
-  ) {
-    return {
-      nodeType: 'poi',
-      isStore: false,
-      isFacility: true,
-      presetCategoryName: 'Facilities',
-    };
-  }
-
-  // Default for non-entrance points: Exhibition Stall / Store / Booth
+  // All other points (Blocks, Buildings, Halls, Pavilions, Booth locations, POIs) are Building Blocks!
+  // Per requirement: Point placemarks in KML represent Blocks, stores are NEVER auto-created.
   return {
-    nodeType: 'store',
-    isStore: true,
+    nodeType: 'poi',
+    isStore: false,
     isFacility: false,
-    presetCategoryName: 'Exhibition Stalls',
+    presetCategoryName: 'Building Blocks',
   };
 }
 
@@ -541,59 +521,35 @@ export function convertKmlToGraph(
     return null;
   }
 
-  const createStallsInStores = options.createStallsInStores ?? true;
-  const createFacilitiesInStores = options.createFacilitiesInStores ?? true;
   const storesToCreate: KmlStoreToCreate[] = [];
-  let stallsCreatedCount = 0;
-  let facilitiesCreatedCount = 0;
+  let blocksCreatedCount = 0;
   const standaloneNodes: ActiveNode[] = [];
 
-  // 1. Process Standalone Points (Entrances, POIs, Stalls) first
+  // 1. Process Standalone Points (Entrances & Building Blocks)
+  // Per requirement: Point placemarks in KML represent Building Blocks (or Entrances), NEVER auto-created stores!
   for (const pt of data.points) {
     const classification = inferKmlPointClassification(pt.name, pt.description);
-    const shouldCreateStoreRecord =
-      (classification.isStore && createStallsInStores) ||
-      (classification.isFacility && createFacilitiesInStores);
+    const isEntrance = classification.nodeType === 'entrance';
+    const finalNodeType: NodeType = isEntrance ? 'entrance' : 'poi';
 
-    let storeId: string | null = null;
-    if (shouldCreateStoreRecord) {
-      storeId = crypto.randomUUID();
-      storesToCreate.push({
-        id: storeId,
-        name: pt.name || (classification.isFacility ? 'Venue Facility' : `Stall ${stallsCreatedCount + 1}`),
-        description: pt.description || (classification.isFacility ? 'Facility imported from KML' : 'Exhibition stall imported from KML'),
-        latitude: Math.round(pt.coordinate.lat * 1e7) / 1e7,
-        longitude: Math.round(pt.coordinate.lng * 1e7) / 1e7,
-        floor: floor || '1',
-        is_active: true,
-        categoryType: classification.isFacility ? 'facility' : 'store',
-        presetCategoryName: classification.presetCategoryName,
-      });
-
-      if (classification.isFacility) {
-        facilitiesCreatedCount++;
-      } else {
-        stallsCreatedCount++;
-      }
+    if (!isEntrance) {
+      blocksCreatedCount++;
     }
 
     const existing = findCloseNode(pt.coordinate.lat, pt.coordinate.lng);
     if (existing) {
       nodesReused++;
-      if (storeId && !existing.store_id) {
-        existing.store_id = storeId;
-        existing.type = classification.nodeType;
-      }
+      existing.type = finalNodeType;
       standaloneNodes.push(existing);
     } else {
       const newNode: ActiveNode = {
         id: crypto.randomUUID(),
-        label: pt.name || `${prefix}-${classification.nodeType.toUpperCase()}-${nodeCounter++}`,
+        label: pt.name || (isEntrance ? `${prefix}-ENTRANCE-${nodeCounter++}` : `Block ${blocksCreatedCount}`),
         latitude: Math.round(pt.coordinate.lat * 1e7) / 1e7,
         longitude: Math.round(pt.coordinate.lng * 1e7) / 1e7,
-        floor: floor || null,
-        type: classification.nodeType,
-        store_id: storeId,
+        floor: isEntrance ? (floor || null) : (options.floor || 'Ground Floor'),
+        type: finalNodeType,
+        store_id: null,
       };
       activeNodes.push(newNode);
       standaloneNodes.push(newNode);
@@ -959,8 +915,9 @@ export function convertKmlToGraph(
       totalDistanceMeters: Math.round(totalDistanceMeters * 10) / 10,
       storesConnectedCount,
       bridgesCreatedCount,
-      stallsCreatedCount,
-      facilitiesCreatedCount,
+      blocksCreatedCount,
+      stallsCreatedCount: 0,
+      facilitiesCreatedCount: 0,
     },
   };
 }

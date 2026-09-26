@@ -371,69 +371,49 @@ describe('kmlParser.ts - Google Earth KML Engine', () => {
       };
 
       const graph = convertKmlToGraph(mockDataWithPoints, {
-        createStallsInStores: true,
-        createFacilitiesInStores: true,
         storeConnectThresholdMeters: 35,
       });
 
-      // Verification of storesToCreate
+      // Verification: storesToCreate is empty (stores/stalls are added manually, not from KML)
       expect(graph.storesToCreate).toBeDefined();
-      expect(graph.storesToCreate?.length).toBe(2);
+      expect(graph.storesToCreate?.length).toBe(0);
 
-      const stallRecord = graph.storesToCreate?.find(s => s.name === 'Stall 42 - Herbal Remedies');
-      expect(stallRecord).toBeDefined();
-      expect(stallRecord?.categoryType).toBe('store');
+      // Stats check: Building blocks counted
+      expect(graph.stats.blocksCreatedCount).toBe(2);
 
-      const facilityRecord = graph.storesToCreate?.find(s => s.name.includes('Restrooms'));
-      expect(facilityRecord).toBeDefined();
-      expect(facilityRecord?.categoryType).toBe('facility');
-      expect(facilityRecord?.presetCategoryName).toBe('Restrooms');
+      // Node check: navigation nodes are Building Blocks (type: 'poi', store_id: null)
+      const block1Node = graph.nodes.find(n => n.label === 'Stall 42 - Herbal Remedies');
+      expect(block1Node).toBeDefined();
+      expect(block1Node?.type).toBe('poi');
+      expect(block1Node?.store_id).toBeNull();
 
-      // Stats check
-      expect(graph.stats.stallsCreatedCount).toBe(1);
-      expect(graph.stats.facilitiesCreatedCount).toBe(1);
+      const block2Node = graph.nodes.find(n => n.label === 'Men & Women Restrooms');
+      expect(block2Node).toBeDefined();
+      expect(block2Node?.type).toBe('poi');
+      expect(block2Node?.store_id).toBeNull();
 
-      // Node check: navigation nodes have linked store_id
-      const stallNode = graph.nodes.find(n => n.store_id === stallRecord?.id);
-      expect(stallNode).toBeDefined();
-      expect(stallNode?.type).toBe('store');
+      // Edge check: both building block nodes are connected to the walkway via perpendicular edges
+      const edge1 = graph.edges.find(e => e.from_node_id === block1Node?.id || e.to_node_id === block1Node?.id);
+      expect(edge1).toBeDefined();
 
-      const facilityNode = graph.nodes.find(n => n.store_id === facilityRecord?.id);
-      expect(facilityNode).toBeDefined();
-      expect(facilityNode?.type).toBe('poi');
-
-      // Edge check: both stall and facility are connected to the walkway via perpendicular edges
-      const stallEdge = graph.edges.find(e => e.from_node_id === stallNode?.id || e.to_node_id === stallNode?.id);
-      expect(stallEdge).toBeDefined();
-
-      const facilityEdge = graph.edges.find(e => e.from_node_id === facilityNode?.id || e.to_node_id === facilityNode?.id);
-      expect(facilityEdge).toBeDefined();
+      const edge2 = graph.edges.find(e => e.from_node_id === block2Node?.id || e.to_node_id === block2Node?.id);
+      expect(edge2).toBeDefined();
     });
   });
 
   describe('inferKmlPointClassification', () => {
-    it('correctly classifies stalls, facilities, restrooms, emergency and entrance points', () => {
-      const stall = inferKmlPointClassification('Stall 15', 'Electronics booth');
-      expect(stall.isStore).toBe(true);
-      expect(stall.isFacility).toBe(false);
-      expect(stall.nodeType).toBe('store');
+    it('correctly classifies blocks and entrance points', () => {
+      const stallPoint = inferKmlPointClassification('Stall 42', 'Herbal booth');
+      expect(stallPoint.isStore).toBe(false);
+      expect(stallPoint.isFacility).toBe(false);
+      expect(stallPoint.nodeType).toBe('poi');
+      expect(stallPoint.presetCategoryName).toBe('Building Blocks');
 
       const restroom = inferKmlPointClassification('Visitor Restroom', 'Clean toilets');
       expect(restroom.isStore).toBe(false);
       expect(restroom.isFacility).toBe(true);
       expect(restroom.presetCategoryName).toBe('Restrooms');
       expect(restroom.nodeType).toBe('poi');
-
-      const canteen = inferKmlPointClassification('School Canteen', 'Snacks and beverages');
-      expect(canteen.isStore).toBe(false);
-      expect(canteen.isFacility).toBe(true);
-      expect(canteen.presetCategoryName).toBe('Food & Dining');
-      expect(canteen.nodeType).toBe('poi');
-
-      const firstAid = inferKmlPointClassification('First Aid Tent', 'Medical doctor on duty');
-      expect(firstAid.isFacility).toBe(true);
-      expect(firstAid.presetCategoryName).toBe('Emergency & First Aid');
-      expect(firstAid.nodeType).toBe('emergency');
 
       const entrance = inferKmlPointClassification('North Main Gate', 'Entrance ticket checkpoint');
       expect(entrance.isStore).toBe(false);

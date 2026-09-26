@@ -51,6 +51,7 @@ export function AdminStoresPage() {
   // Multi-selection state
   const [selectedStoreIds, setSelectedStoreIds] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
   const [isKmlModalOpen, setIsKmlModalOpen] = useState(false);
 
   // Modal states
@@ -309,14 +310,8 @@ export function AdminStoresPage() {
     }
   };
 
-  const handleBulkDeleteStores = async () => {
+  const executeBulkDeleteStores = async () => {
     if (selectedStoreIds.size === 0) return;
-    const count = selectedStoreIds.size;
-    const confirm = window.confirm(
-      `Are you sure you want to delete ${count} selected store(s)? This will also remove any linked map navigation nodes, gallery photos, and promotions.`
-    );
-    if (!confirm) return;
-
     try {
       setIsBulkDeleting(true);
       const storeIds = Array.from(selectedStoreIds);
@@ -343,8 +338,11 @@ export function AdminStoresPage() {
       if (error) throw error;
 
       setSelectedStoreIds(new Set());
-      fetchStores();
+      setIsBulkDeleteModalOpen(false);
+      await fetchStores();
+      await loadDependencies();
     } catch (err: any) {
+      console.error('Failed to delete stores:', err);
       alert('Failed to delete stores: ' + (err?.message || 'Unknown error'));
     } finally {
       setIsBulkDeleting(false);
@@ -742,6 +740,18 @@ export function AdminStoresPage() {
               {filteredStores.length} stores
             </span>
 
+            {filteredStores.length > 0 && (
+              <button
+                type="button"
+                className={`btn btn-sm ${filteredStores.every(s => selectedStoreIds.has(s.id)) ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={handleToggleSelectAllStores}
+                disabled={isBulkDeleting}
+                style={{ fontSize: '0.8rem', fontWeight: 600 }}
+              >
+                {filteredStores.every(s => selectedStoreIds.has(s.id)) ? 'Deselect All' : `Select All (${filteredStores.length})`}
+              </button>
+            )}
+
             {selectedStoreIds.size > 0 && (
               <>
                 <span style={{
@@ -756,20 +766,14 @@ export function AdminStoresPage() {
                   {selectedStoreIds.size} selected
                 </span>
                 <button
+                  type="button"
                   className="btn btn-danger btn-sm"
-                  onClick={handleBulkDeleteStores}
+                  onClick={() => setIsBulkDeleteModalOpen(true)}
                   disabled={isBulkDeleting}
                   style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
                 >
                   <Trash2 size={14} />
                   <span>Delete Selected ({selectedStoreIds.size})</span>
-                </button>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => setSelectedStoreIds(new Set())}
-                  disabled={isBulkDeleting}
-                >
-                  Deselect
                 </button>
               </>
             )}
@@ -1486,6 +1490,45 @@ export function AdminStoresPage() {
               >
                 {submitting ? <span className="spinner" /> : <Trash2 size={16} />}
                 Delete
+              </button>
+            </div>
+          </div>
+        </AdminModal>
+      )}
+
+      {/* Bulk Delete Modal */}
+      {isBulkDeleteModalOpen && (
+        <AdminModal
+          title="Confirm Bulk Delete"
+          onClose={() => setIsBulkDeleteModalOpen(false)}
+          maxWidth={420}
+        >
+          <div style={{ textAlign: 'center' }}>
+            <div className="confirm-icon">
+              <Trash2 size={24} color="var(--color-danger)" />
+            </div>
+            <h3 style={{ marginBottom: '0.5rem', fontWeight: 700 }}>Delete {selectedStoreIds.size} Stores?</h3>
+            <p style={{ color: 'var(--color-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+              Are you sure you want to delete <strong>{selectedStoreIds.size}</strong> selected store(s)? This will also remove any linked map navigation nodes, gallery photos, and promotions.
+            </p>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setIsBulkDeleteModalOpen(false)}
+                disabled={isBulkDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={executeBulkDeleteStores}
+                disabled={isBulkDeleting}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              >
+                {isBulkDeleting ? <span className="spinner" /> : <Trash2 size={16} />}
+                Delete {selectedStoreIds.size} Stores
               </button>
             </div>
           </div>

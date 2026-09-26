@@ -31,31 +31,39 @@ const BLOCK_COLORS = [
 ];
 
 /**
- * Generates an array of floor names based on floor count.
- * e.g., count = 3, hasGround = true => ['Ground Floor', '1st Floor', '2nd Floor', '3rd Floor']
+ * Generates an array of floor names based on total floor count.
+ * e.g., count = 1, includeGround = true => ['Ground Floor'] (1 floor, only ground floor)
+ * e.g., count = 2, includeGround = true => ['Ground Floor', '1st Floor'] (2 floors)
+ * e.g., count = 3, includeGround = true => ['Ground Floor', '1st Floor', '2nd Floor'] (3 floors)
  */
-export function generateFloorList(floorCount: number, includeGround = true): string[] {
+export function generateFloorList(totalFloors: number, includeGround = true): string[] {
+  const count = Math.max(1, totalFloors);
   const list: string[] = [];
+
   if (includeGround) {
     list.push('Ground Floor');
+    // Upper floors (e.g. if total is 3: Ground Floor + 1st + 2nd = 3 floors total)
+    for (let i = 1; i < count; i++) {
+      const suffix = i === 1 ? 'st' : i === 2 ? 'nd' : i === 3 ? 'rd' : 'th';
+      list.push(`${i}${suffix} Floor`);
+    }
+  } else {
+    for (let i = 1; i <= count; i++) {
+      const suffix = i === 1 ? 'st' : i === 2 ? 'nd' : i === 3 ? 'rd' : 'th';
+      list.push(`${i}${suffix} Floor`);
+    }
   }
-  const count = Math.max(1, floorCount);
-  for (let i = 1; i <= count; i++) {
-    const suffix = i === 1 ? 'st' : i === 2 ? 'nd' : i === 3 ? 'rd' : 'th';
-    list.push(`${i}${suffix} Floor`);
-  }
+
   return list;
 }
 
 /**
  * Resolves available floor options for a block or navigation node.
- * If floor string contains comma-separated values, splits them.
- * If floor string contains a number (e.g. "3" or "3 floors"), generates floor list.
- * Otherwise returns default floor list.
+ * Defaults to 1 floor ('Ground Floor') unless multiple floors are specified.
  */
 export function getBlockFloorOptions(block: { floor?: string | null } | null | undefined): string[] {
   if (!block || !block.floor) {
-    return ['Ground Floor', '1st Floor'];
+    return ['Ground Floor'];
   }
 
   const raw = block.floor.trim();
@@ -64,17 +72,21 @@ export function getBlockFloorOptions(block: { floor?: string | null } | null | u
     if (items.length > 0) return items;
   }
 
-  // Check if it's a number or contains "N floors" (e.g. "3", "3 floors")
+  // Check if it's a number or contains "N floors" (e.g. "1", "1 floor", "3 floors")
   const numMatch = raw.match(/\b\d+\b/);
   if (numMatch) {
     const n = parseInt(numMatch[0], 10);
-    if (n >= 1 && n <= 50) {
+    if (n === 1) {
+      return ['Ground Floor'];
+    }
+    if (n > 1 && n <= 50) {
       return generateFloorList(n, true);
     }
   }
 
-  if (raw.toLowerCase().includes('ground')) {
-    return ['Ground Floor', '1st Floor'];
+  const lower = raw.toLowerCase();
+  if (lower === 'g' || lower === 'ground' || lower.includes('ground')) {
+    return ['Ground Floor'];
   }
 
   return [raw];

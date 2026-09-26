@@ -12,6 +12,7 @@ import {
   Satellite,
   Compass,
   Sliders,
+  Building2,
 } from 'lucide-react';
 import { AdminModal } from './AdminModal';
 import { supabase, type NavigationNode, type Store } from '../../lib/supabase';
@@ -56,12 +57,10 @@ export function KmlImportModal({
   const [parsedData, setParsedData] = useState<ParsedKmlData | null>(null);
 
   // Settings
-  const [floor, setFloor] = useState<string>('1');
+  const [floor, setFloor] = useState<string>('Ground Floor');
   const [snapTolerance, setSnapTolerance] = useState<number>(5.0);
   const [isBidirectional, setIsBidirectional] = useState<boolean>(true);
   const [snapToExisting, setSnapToExisting] = useState<boolean>(true);
-  const [createStallsInStores, setCreateStallsInStores] = useState<boolean>(true);
-  const [createFacilitiesInStores, setCreateFacilitiesInStores] = useState<boolean>(true);
   const [importMode, setImportMode] = useState<'append' | 'replace'>('append');
   const [tileMode, setTileMode] = useState<'satellite' | 'street'>('satellite');
 
@@ -99,14 +98,12 @@ export function KmlImportModal({
         existingNodes,
         existingStores,
         autoBridgeGaps: true,
-        createStallsInStores,
-        createFacilitiesInStores,
       });
     } catch (e: any) {
       console.error('Error generating graph from KML:', e);
       return null;
     }
-  }, [parsedData, snapTolerance, floor, isBidirectional, snapToExisting, existingNodes, existingStores, createStallsInStores, createFacilitiesInStores]);
+  }, [parsedData, snapTolerance, floor, isBidirectional, snapToExisting, existingNodes, existingStores]);
 
   // Handle file upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -292,53 +289,7 @@ export function KmlImportModal({
 
       const CHUNK_SIZE = 50;
 
-      // 2a. Batch insert stores & facilities if any were detected in KML
-      if (generatedGraph.storesToCreate && generatedGraph.storesToCreate.length > 0) {
-        // Fetch existing categories to map preset names to IDs
-        const { data: existingCats } = await supabase.from('categories').select('id, name');
-        const catMap = new Map<string, string>();
-        (existingCats || []).forEach((c: { id: string; name: string }) => catMap.set(c.name.toLowerCase(), c.id));
-
-        const storesPayload = [];
-        for (const s of generatedGraph.storesToCreate) {
-          let catId = catMap.get(s.presetCategoryName.toLowerCase());
-          if (!catId) {
-            // Auto-create category if missing
-            const { data: newCat } = await supabase
-              .from('categories')
-              .insert({
-                name: s.presetCategoryName,
-                color: s.categoryType === 'facility' ? '#3b82f6' : '#a855f7',
-                icon: s.categoryType === 'facility' ? 'MapPin' : 'Tag',
-              })
-              .select('id')
-              .single();
-            if (newCat) {
-              catId = newCat.id;
-              catMap.set(s.presetCategoryName.toLowerCase(), newCat.id);
-            }
-          }
-
-          storesPayload.push({
-            id: s.id,
-            name: s.name,
-            description: s.description,
-            floor: s.floor || '1',
-            latitude: s.latitude,
-            longitude: s.longitude,
-            category_id: catId || null,
-            is_active: true,
-          });
-        }
-
-        for (let i = 0; i < storesPayload.length; i += CHUNK_SIZE) {
-          const chunk = storesPayload.slice(i, i + CHUNK_SIZE);
-          const { error: storeErr } = await supabase.from('stores').insert(chunk);
-          if (storeErr) throw storeErr;
-        }
-      }
-
-      // 2b. Batch insert nodes (chunk size 50)
+      // 1. Batch insert nodes (Building Blocks & Path junctions, chunk size 50)
       const nodesToInsert = generatedGraph.nodes;
 
       for (let i = 0; i < nodesToInsert.length; i += CHUNK_SIZE) {
@@ -347,7 +298,7 @@ export function KmlImportModal({
         if (nodesErr) throw nodesErr;
       }
 
-      // 3. Batch insert edges (chunk size 50)
+      // 2. Batch insert edges (Walkway connections, chunk size 50)
       const edgesToInsert = generatedGraph.edges;
       for (let i = 0; i < edgesToInsert.length; i += CHUNK_SIZE) {
         const chunk = edgesToInsert.slice(i, i + CHUNK_SIZE);
@@ -355,11 +306,10 @@ export function KmlImportModal({
         if (edgesErr) throw edgesErr;
       }
 
-      const stallsCount = generatedGraph.stats.stallsCreatedCount || 0;
-      const facilitiesCount = generatedGraph.stats.facilitiesCreatedCount || 0;
-      let msg = `Successfully imported ${nodesToInsert.length} nodes and ${edgesToInsert.length} edges`;
-      if (stallsCount > 0 || facilitiesCount > 0) {
-        msg += ` (${stallsCount} stalls, ${facilitiesCount} facilities added to directory)`;
+      const blocksCount = generatedGraph.stats.blocksCreatedCount || 0;
+      let msg = `Successfully imported ${nodesToInsert.length} nodes and ${edgesToInsert.length} path edges`;
+      if (blocksCount > 0) {
+        msg += ` (${blocksCount} Building Blocks created and added to Blocks panel)`;
       }
       msg += '!';
       setStatusSuccess(msg);
@@ -510,11 +460,10 @@ export function KmlImportModal({
                 value={floor}
                 onChange={(e) => setFloor(e.target.value)}
               >
-                <option value="1">Floor 1 (Ground)</option>
-                <option value="2">Floor 2</option>
-                <option value="3">Floor 3</option>
-                <option value="G">Ground</option>
-                <option value="B">Basement</option>
+                <option value="Ground Floor">Ground Floor (1 Floor - Default)</option>
+                <option value="Ground Floor, 1st Floor">2 Floors (Ground + 1st)</option>
+                <option value="Ground Floor, 1st Floor, 2nd Floor">3 Floors (Ground + 1st + 2nd)</option>
+                <option value="Ground Floor, 1st Floor, 2nd Floor, 3rd Floor">4 Floors</option>
               </select>
             </div>
 
@@ -568,22 +517,10 @@ export function KmlImportModal({
                 />
                 <span>Snap to existing DB nodes</span>
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', cursor: 'pointer' }} title="Create store directory records for stall points">
-                <input
-                  type="checkbox"
-                  checked={createStallsInStores}
-                  onChange={(e) => setCreateStallsInStores(e.target.checked)}
-                />
-                <span>Add Stalls to Stores Directory</span>
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', cursor: 'pointer' }} title="Create facility records (in stores table) for washrooms, canteens, etc.">
-                <input
-                  type="checkbox"
-                  checked={createFacilitiesInStores}
-                  onChange={(e) => setCreateFacilitiesInStores(e.target.checked)}
-                />
-                <span>Add Facilities to Directory (Stores Table)</span>
-              </label>
+              <div style={{ fontSize: '0.78rem', color: '#22d3ee', display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.2rem', padding: '0.35rem 0.55rem', background: 'rgba(6, 182, 212, 0.1)', borderRadius: '6px', border: '1px solid rgba(6, 182, 212, 0.25)' }}>
+                <Building2 size={14} style={{ flexShrink: 0 }} />
+                <span>KML Placemarks are imported as Building Blocks. Stalls are added manually in Stores.</span>
+              </div>
             </div>
           </div>
         )}
@@ -605,6 +542,23 @@ export function KmlImportModal({
             >
               <Route size={13} /> {generatedGraph.stats.pathsCount} Paths
             </span>
+            {generatedGraph.stats.blocksCreatedCount != null && generatedGraph.stats.blocksCreatedCount > 0 && (
+              <span
+                style={{
+                  fontSize: '0.75rem',
+                  padding: '0.2rem 0.5rem',
+                  borderRadius: '4px',
+                  background: 'rgba(6, 182, 212, 0.15)',
+                  color: '#22d3ee',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.3rem',
+                  fontWeight: 700,
+                }}
+              >
+                <Building2 size={13} /> {generatedGraph.stats.blocksCreatedCount} Building Blocks
+              </span>
+            )}
             <span
               style={{
                 fontSize: '0.75rem',
@@ -617,7 +571,7 @@ export function KmlImportModal({
                 gap: '0.3rem',
               }}
             >
-              <MapPin size={13} /> {generatedGraph.stats.nodesCreated} New Nodes
+              <MapPin size={13} /> {generatedGraph.stats.nodesCreated} Nodes
             </span>
             {generatedGraph.stats.nodesReused > 0 && (
               <span
@@ -633,40 +587,6 @@ export function KmlImportModal({
                 }}
               >
                 <Sliders size={13} /> {generatedGraph.stats.nodesReused} Snapped / Merged
-              </span>
-            )}
-            {(generatedGraph.stats.stallsCreatedCount || 0) > 0 && (
-              <span
-                style={{
-                  fontSize: '0.75rem',
-                  padding: '0.2rem 0.5rem',
-                  borderRadius: '4px',
-                  background: 'rgba(168, 85, 247, 0.15)',
-                  color: '#c084fc',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.3rem',
-                  fontWeight: 600,
-                }}
-              >
-                🎪 {generatedGraph.stats.stallsCreatedCount} Stalls in Stores
-              </span>
-            )}
-            {(generatedGraph.stats.facilitiesCreatedCount || 0) > 0 && (
-              <span
-                style={{
-                  fontSize: '0.75rem',
-                  padding: '0.2rem 0.5rem',
-                  borderRadius: '4px',
-                  background: 'rgba(59, 130, 246, 0.15)',
-                  color: '#60a5fa',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.3rem',
-                  fontWeight: 600,
-                }}
-              >
-                📍 {generatedGraph.stats.facilitiesCreatedCount} Facilities in Stores
               </span>
             )}
             <span

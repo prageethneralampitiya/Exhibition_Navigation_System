@@ -54,6 +54,8 @@ export function AdminNodesPage() {
   const [selectedGroupedEdgeIds, setSelectedGroupedEdgeIds] = useState<Set<string>>(new Set());
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isBulkDeleteNodesModalOpen, setIsBulkDeleteNodesModalOpen] = useState(false);
+  const [isBulkDeleteEdgesModalOpen, setIsBulkDeleteEdgesModalOpen] = useState(false);
 
   // QR Code State
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
@@ -708,14 +710,8 @@ export function AdminNodesPage() {
     }
   };
 
-  const handleBulkDeleteEdges = async () => {
+  const executeBulkDeleteEdges = async () => {
     if (selectedGroupedEdgeIds.size === 0) return;
-    const count = selectedGroupedEdgeIds.size;
-    const confirmed = window.confirm(
-      `Are you sure you want to delete ${count} selected path connection(s)? Any disconnected path waypoints will also be cleaned up automatically.`
-    );
-    if (!confirmed) return;
-
     try {
       setIsBulkDeleting(true);
       const allEdgeIds: string[] = [];
@@ -739,8 +735,10 @@ export function AdminNodesPage() {
 
       await cleanOrphanedPathNodes();
       setSelectedGroupedEdgeIds(new Set());
+      setIsBulkDeleteEdgesModalOpen(false);
       loadAllData();
     } catch (err: any) {
+      console.error('Failed to delete selected connections:', err);
       alert('Failed to delete selected connections: ' + (err?.message || 'Unknown error'));
     } finally {
       setIsBulkDeleting(false);
@@ -789,14 +787,8 @@ export function AdminNodesPage() {
     }
   };
 
-  const handleBulkDeleteNodes = async () => {
+  const executeBulkDeleteNodes = async () => {
     if (selectedNodeIds.size === 0) return;
-    const count = selectedNodeIds.size;
-    const confirmed = window.confirm(
-      `Are you sure you want to delete ${count} selected node(s)? Associated path connections will also be removed.`
-    );
-    if (!confirmed) return;
-
     try {
       setIsBulkDeleting(true);
       const ids = Array.from(selectedNodeIds);
@@ -817,8 +809,10 @@ export function AdminNodesPage() {
 
       await cleanOrphanedPathNodes();
       setSelectedNodeIds(new Set());
+      setIsBulkDeleteNodesModalOpen(false);
       loadAllData();
     } catch (err: any) {
+      console.error('Failed to delete selected nodes:', err);
       alert('Failed to delete selected nodes: ' + (err?.message || 'Unknown error'));
     } finally {
       setIsBulkDeleting(false);
@@ -1236,6 +1230,16 @@ export function AdminNodesPage() {
                 {nodes.length} nodes ({nodes.filter(n => n.type === 'path').length} pathways)
               </span>
 
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={handleToggleSelectAllNodes}
+                style={{ fontSize: '0.8rem' }}
+                title="Select or deselect all nodes in the current list"
+              >
+                {filteredNodes.length > 0 && selectedNodeIds.size === filteredNodes.length ? 'Deselect All' : `Select All (${filteredNodes.length})`}
+              </button>
+
               {selectedNodeIds.size > 0 && (
                 <>
                   <span style={{
@@ -1251,7 +1255,7 @@ export function AdminNodesPage() {
                   </span>
                   <button
                     className="btn btn-danger btn-sm"
-                    onClick={handleBulkDeleteNodes}
+                    onClick={() => setIsBulkDeleteNodesModalOpen(true)}
                     disabled={isBulkDeleting}
                     style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
                   >
@@ -1307,6 +1311,16 @@ export function AdminNodesPage() {
             </div>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={handleToggleSelectAllEdges}
+                style={{ fontSize: '0.8rem' }}
+                title="Select or deselect all connections in the current list"
+              >
+                {groupedEdges.length > 0 && selectedGroupedEdgeIds.size === groupedEdges.length ? 'Deselect All' : `Select All (${groupedEdges.length})`}
+              </button>
+
               {selectedGroupedEdgeIds.size > 0 && (
                 <>
                   <span style={{
@@ -1322,7 +1336,7 @@ export function AdminNodesPage() {
                   </span>
                   <button
                     className="btn btn-danger btn-sm"
-                    onClick={handleBulkDeleteEdges}
+                    onClick={() => setIsBulkDeleteEdgesModalOpen(true)}
                     disabled={isBulkDeleting}
                     style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
                   >
@@ -1933,6 +1947,80 @@ export function AdminNodesPage() {
         existingStores={stores}
         onSuccess={loadAllData}
       />
+
+      {/* Bulk Delete Nodes Confirmation Modal */}
+      {isBulkDeleteNodesModalOpen && (
+        <AdminModal
+          title={`Delete ${selectedNodeIds.size} Selected Nodes`}
+          onClose={() => setIsBulkDeleteNodesModalOpen(false)}
+          footer={
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', width: '100%' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setIsBulkDeleteNodesModalOpen(false)}
+                disabled={isBulkDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={executeBulkDeleteNodes}
+                disabled={isBulkDeleting}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              >
+                <Trash2 size={14} />
+                {isBulkDeleting ? 'Deleting...' : `Delete ${selectedNodeIds.size} Nodes`}
+              </button>
+            </div>
+          }
+        >
+          <p style={{ margin: '0 0 0.75rem 0' }}>
+            Are you sure you want to delete <strong>{selectedNodeIds.size}</strong> selected navigation node{selectedNodeIds.size === 1 ? '' : 's'}?
+          </p>
+          <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-muted)' }}>
+            This will permanently remove the selected nodes and all associated walkway path connections (edges). Any dangling paths will be automatically cleaned. This action cannot be undone.
+          </p>
+        </AdminModal>
+      )}
+
+      {/* Bulk Delete Edges Confirmation Modal */}
+      {isBulkDeleteEdgesModalOpen && (
+        <AdminModal
+          title={`Delete ${selectedGroupedEdgeIds.size} Selected Connections`}
+          onClose={() => setIsBulkDeleteEdgesModalOpen(false)}
+          footer={
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', width: '100%' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setIsBulkDeleteEdgesModalOpen(false)}
+                disabled={isBulkDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={executeBulkDeleteEdges}
+                disabled={isBulkDeleting}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              >
+                <Trash2 size={14} />
+                {isBulkDeleting ? 'Deleting...' : `Delete ${selectedGroupedEdgeIds.size} Connections`}
+              </button>
+            </div>
+          }
+        >
+          <p style={{ margin: '0 0 0.75rem 0' }}>
+            Are you sure you want to delete <strong>{selectedGroupedEdgeIds.size}</strong> selected path connection{selectedGroupedEdgeIds.size === 1 ? '' : 's'}?
+          </p>
+          <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-muted)' }}>
+            This will sever the path connection between the selected nodes. Any intermediate walkway nodes without other connections will be cleaned.
+          </p>
+        </AdminModal>
+      )}
 
       {/* QR Code Calibration Placard Modal */}
       <QrCodeModal

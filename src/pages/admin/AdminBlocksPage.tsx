@@ -22,6 +22,9 @@ export function AdminBlocksPage() {
   const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedBlockIds, setSelectedBlockIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState<boolean>(false);
+  const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState<boolean>(false);
 
   // Modals state
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
@@ -30,10 +33,10 @@ export function AdminBlocksPage() {
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
   const [qrTarget, setQrTarget] = useState<QrCalibrateTarget | null>(null);
 
-  // Floor setup inside block modal
-  const [floorCount, setFloorCount] = useState<number>(3);
+  // Floor setup inside block modal (defaults to 1 floor: Ground Floor)
+  const [floorCount, setFloorCount] = useState<number>(1);
   const [includeGround, setIncludeGround] = useState<boolean>(true);
-  const [blockFloors, setBlockFloors] = useState<string[]>(['Ground Floor', '1st Floor', '2nd Floor', '3rd Floor']);
+  const [blockFloors, setBlockFloors] = useState<string[]>(['Ground Floor']);
   const [newFloorInput, setNewFloorInput] = useState('');
 
   const [currentBlock, setCurrentBlock] = useState<Partial<NavigationNode> | null>(null);
@@ -101,8 +104,8 @@ export function AdminBlocksPage() {
   }, [blocks, query]);
 
   const handleOpenAdd = () => {
-    const defaultFloors = generateFloorList(3, true);
-    setFloorCount(3);
+    const defaultFloors = generateFloorList(1, true);
+    setFloorCount(1);
     setIncludeGround(true);
     setBlockFloors(defaultFloors);
     setNewFloorInput('');
@@ -122,9 +125,8 @@ export function AdminBlocksPage() {
     const originalNode = allNodes.find((n) => n.id === block.id);
     const resolvedFloors = getBlockFloorOptions(originalNode || block);
     const hasGround = resolvedFloors.some((f) => f.toLowerCase().includes('ground'));
-    const upperCount = resolvedFloors.filter((f) => !f.toLowerCase().includes('ground')).length;
 
-    setFloorCount(upperCount > 0 ? upperCount : 1);
+    setFloorCount(resolvedFloors.length);
     setIncludeGround(hasGround);
     setBlockFloors(resolvedFloors);
     setNewFloorInput('');
@@ -229,15 +231,71 @@ export function AdminBlocksPage() {
     }
   };
 
+  const handleToggleSelectBlock = (id: string) => {
+    setSelectedBlockIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleSelectAll = () => {
+    if (filteredBlocks.length === 0) return;
+    const allSelected = filteredBlocks.every((b) => selectedBlockIds.has(b.id));
+    if (allSelected) {
+      setSelectedBlockIds(new Set());
+    } else {
+      setSelectedBlockIds(new Set(filteredBlocks.map((b) => b.id)));
+    }
+  };
+
+  const executeBulkDeleteBlocks = async () => {
+    if (selectedBlockIds.size === 0) return;
+    try {
+      setIsBulkDeleting(true);
+      const ids = Array.from(selectedBlockIds);
+
+      // Clean up connected walkway edges first
+      await supabase.from('navigation_edges').delete().in('from_node_id', ids);
+      await supabase.from('navigation_edges').delete().in('to_node_id', ids);
+
+      // Delete the nodes
+      const { error } = await supabase.from('navigation_nodes').delete().in('id', ids);
+      if (error) throw error;
+
+      setSelectedBlockIds(new Set());
+      setIsBulkDeleteModalOpen(false);
+      await loadAllData();
+    } catch (err: any) {
+      console.error('Error deleting selected blocks:', err);
+      alert(`Error deleting selected blocks: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
   const handleDeleteConfirm = async () => {
     if (!currentBlock?.id) return;
     try {
       setSubmitting(true);
+      // Clean up connected walkway edges first
+      await supabase.from('navigation_edges').delete().or(`from_node_id.eq.${currentBlock.id},to_node_id.eq.${currentBlock.id}`);
+
       const { error } = await supabase
         .from('navigation_nodes')
         .delete()
         .eq('id', currentBlock.id);
       if (error) throw error;
+
+      setSelectedBlockIds((prev) => {
+        const next = new Set(prev);
+        next.delete(currentBlock.id!);
+        return next;
+      });
 
       setIsDeleteModalOpen(false);
       await loadAllData();
@@ -249,6 +307,34 @@ export function AdminBlocksPage() {
   };
 
   const columns: Column<BlockEntity>[] = [
+    {
+      key: 'select',
+      width: '46px',
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <input
+            type="checkbox"
+            checked={filteredBlocks.length > 0 && filteredBlocks.every((b) => selectedBlockIds.has(b.id))}
+            onChange={handleToggleSelectAll}
+            style={{ cursor: 'pointer', width: 17, height: 17, accentColor: 'var(--color-primary)' }}
+            title="Select all blocks"
+            aria-label="Select all blocks"
+          />
+        </div>
+      ),
+      render: (row: BlockEntity) => (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <input
+            type="checkbox"
+            checked={selectedBlockIds.has(row.id)}
+            onChange={() => handleToggleSelectBlock(row.id)}
+            style={{ cursor: 'pointer', width: 17, height: 17, accentColor: 'var(--color-primary)' }}
+            title={`Select ${row.name}`}
+            aria-label={`Select ${row.name}`}
+          />
+        </div>
+      ),
+    },
     {
       key: 'name',
       label: 'Building Block',
@@ -278,7 +364,7 @@ export function AdminBlocksPage() {
               <span style={{ fontWeight: 700, color: '#22d3ee' }}>
                 {row.floors && row.floors.length > 0 ? `${row.floors.length} Floors:` : 'Levels:'}
               </span>
-              {(row.floors || ['Ground Floor', '1st Floor']).map((fl) => (
+              {(row.floors || ['Ground Floor']).map((fl) => (
                 <span
                   key={fl}
                   style={{
@@ -417,9 +503,9 @@ export function AdminBlocksPage() {
         </span>
       </div>
 
-      {/* Filter / Search Bar */}
-      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', alignItems: 'center' }}>
-        <div className="search-wrap" style={{ flex: 1 }}>
+      {/* Filter / Search Bar & Bulk Selection Actions */}
+      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="search-wrap" style={{ flex: 1, minWidth: 260 }}>
           <Search size={16} className="search-icon" />
           <input
             type="text"
@@ -428,6 +514,43 @@ export function AdminBlocksPage() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
+        </div>
+
+        {/* Selection & Bulk Actions */}
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button
+            type="button"
+            className={`btn btn-sm ${filteredBlocks.length > 0 && filteredBlocks.every((b) => selectedBlockIds.has(b.id)) ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={handleToggleSelectAll}
+            disabled={filteredBlocks.length === 0}
+            style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontWeight: 600, fontSize: '0.8rem' }}
+          >
+            {filteredBlocks.length > 0 && filteredBlocks.every((b) => selectedBlockIds.has(b.id))
+              ? 'Deselect All'
+              : `Select All (${filteredBlocks.length})`}
+          </button>
+
+          {selectedBlockIds.size > 0 && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => setIsBulkDeleteModalOpen(true)}
+              disabled={isBulkDeleting}
+              style={{
+                background: 'rgba(239, 68, 68, 0.15)',
+                color: '#ef4444',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                fontWeight: 700,
+                fontSize: '0.8rem',
+              }}
+            >
+              <Trash2 size={14} />
+              {isBulkDeleting ? 'Deleting...' : `Delete Selected (${selectedBlockIds.size})`}
+            </button>
+          )}
         </div>
       </div>
 
@@ -720,6 +843,43 @@ export function AdminBlocksPage() {
           <p style={{ margin: 0 }}>
             Are you sure you want to delete <strong>{currentBlock.label}</strong>?
             Any stalls linked to this block will lose their building association.
+          </p>
+        </AdminModal>
+      )}
+
+      {/* Bulk Delete Confirmation Modal */}
+      {isBulkDeleteModalOpen && (
+        <AdminModal
+          title={`Delete ${selectedBlockIds.size} Selected Blocks`}
+          onClose={() => setIsBulkDeleteModalOpen(false)}
+          footer={
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', width: '100%' }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setIsBulkDeleteModalOpen(false)}
+                disabled={isBulkDeleting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={executeBulkDeleteBlocks}
+                disabled={isBulkDeleting}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              >
+                <Trash2 size={14} />
+                {isBulkDeleting ? 'Deleting...' : `Delete ${selectedBlockIds.size} Blocks`}
+              </button>
+            </div>
+          }
+        >
+          <p style={{ margin: '0 0 0.75rem 0' }}>
+            Are you sure you want to delete <strong>{selectedBlockIds.size}</strong> selected building block{selectedBlockIds.size === 1 ? '' : 's'}?
+          </p>
+          <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-muted)' }}>
+            This will remove the selected blocks and any walkway navigation connections linked to them. This action cannot be undone.
           </p>
         </AdminModal>
       )}
