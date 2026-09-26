@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { type Store, type NavigationNode, type NavigationEdge } from '../lib/supabase';
+import { extractBlocksFromNodes, matchStoreToBlock, type BlockEntity } from '../utils/blocks';
 
 // ── Satellite / Street tile sources ──────────────────────────────────────────
 const TILE_SOURCES = {
@@ -257,7 +258,7 @@ export function MapView({
     }
   }, [map, latitude, longitude, zoom, route.length]);
 
-  // 4. Render Store Markers — pinned at exact real coordinates, zoom-responsive size
+  // 4. Render Block Markers — one marker per building block, derived from navigation nodes
   useEffect(() => {
     const markersLayer = markersLayerRef.current;
     if (!map || !markersLayer) return;
@@ -266,103 +267,99 @@ export function MapView({
 
     const zoomLevel = map.getZoom();
 
-    const activeStores = stores.filter((s) => s.latitude !== null && s.longitude !== null);
-
     // ── School landmark: always visible at every zoom level ──────────────────
-    // Rendered before the scale guard so the venue pin stays on screen even
-    // when zoomed far out, giving users a reference point to navigate toward.
-    const schoolStores = activeStores.filter(
-      (s) =>
-        s.id === 'kalawana-national-school-landmark' ||
-        s.name.toLowerCase().includes('kalawana') ||
-        s.name.toLowerCase().includes('school')
-    );
-
-    // If no school store in active list, provide default Kalawana National School landmark
     const fallbackSchoolStore = {
       id: 'kalawana-national-school-landmark',
       name: 'Kalawana National School',
-      description: 'Kalawana National School (Central College) · GCP2+5C6, Kalawana',
       latitude: 6.53585,
       longitude: 80.4009,
-      floor_level: 1,
-      is_active: true,
-      categories: {
-        id: 'school-cat',
-        name: 'Education / School',
-        color: '#a855f7',
-      },
     };
 
-    const effectiveSchoolStores = schoolStores.length > 0 ? schoolStores : [fallbackSchoolStore as any];
-    const regularStores = activeStores.filter(
-      (s) =>
-        s.id !== 'kalawana-national-school-landmark' &&
-        !s.name.toLowerCase().includes('kalawana') &&
-        !s.name.toLowerCase().includes('school')
-    );
+    const schoolPinSize = 30;
+    const schoolPinRadius = Math.round(schoolPinSize / 2);
+    const schoolIcon = L.divIcon({
+      className: 'custom-map-pin-wrapper',
+      html: `
+        <div style="position:relative;display:flex;align-items:center;justify-content:center;width:${schoolPinSize}px;height:${schoolPinSize}px;">
+          <div style="position:absolute;width:${schoolPinSize + 16}px;height:${schoolPinSize + 16}px;border-radius:50%;background:#a855f7;opacity:0.4;animation:map-pin-pulse 1.8s infinite ease-in-out;"></div>
+          <div style="width:${schoolPinSize}px;height:${schoolPinSize}px;border-radius:50%;background:#a855f7;border:2px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;font-size:14px;z-index:10;">🏫</div>
+        </div>
+        <style>@keyframes map-pin-pulse{0%{transform:scale(0.6);opacity:0.7}100%{transform:scale(1.6);opacity:0}}</style>
+      `,
+      iconSize: [schoolPinSize, schoolPinSize],
+      iconAnchor: [schoolPinRadius, schoolPinRadius],
+    });
+    const schoolMarker = L.marker([fallbackSchoolStore.latitude, fallbackSchoolStore.longitude], { icon: schoolIcon });
+    schoolMarker.bindTooltip('🏫 Kalawana National School', {
+      permanent: false,
+      direction: 'top',
+      offset: [0, -schoolPinRadius],
+      className: 'school-landmark-tooltip',
+    });
+    markersLayer.addLayer(schoolMarker);
 
-    // Helper to detect facility type and assign dedicated emoji and theme color
-    const getFacilityMeta = (name: string = '', categoryName: string = '') => {
-      const combined = `${name} ${categoryName}`.toLowerCase();
-      if (combined.includes('canteen') || combined.includes('cafeteria') || combined.includes('food') || combined.includes('dining')) {
-        return { emoji: '🍽️', color: '#f97316', isFacility: true };
-      }
-      if (combined.includes('men') && (combined.includes('washroom') || combined.includes('toilet') || combined.includes('restroom') || combined.includes('wc'))) {
-        return { emoji: '🚹', color: '#3b82f6', isFacility: true };
-      }
-      if (combined.includes('women') && (combined.includes('washroom') || combined.includes('toilet') || combined.includes('restroom') || combined.includes('wc'))) {
-        return { emoji: '🚺', color: '#ec4899', isFacility: true };
-      }
-      if (combined.includes('accessible') || combined.includes('disabled') || combined.includes('wheelchair')) {
-        return { emoji: '♿', color: '#06b6d4', isFacility: true };
-      }
-      if (combined.includes('washroom') || combined.includes('restroom') || combined.includes('toilet') || combined.includes('wc')) {
-        return { emoji: '🚻', color: '#8b5cf6', isFacility: true };
-      }
-      if (combined.includes('water') || combined.includes('drinking')) {
-        return { emoji: '🚰', color: '#0284c7', isFacility: true };
-      }
-      if (combined.includes('first aid') || combined.includes('medical') || combined.includes('doctor') || combined.includes('clinic')) {
-        return { emoji: '🏥', color: '#ef4444', isFacility: true };
-      }
-      if (combined.includes('info') || combined.includes('help') || combined.includes('inquiry')) {
-        return { emoji: 'ℹ️', color: '#10b981', isFacility: true };
-      }
-      if (combined.includes('entrance') || combined.includes('gate')) {
-        return { emoji: '🚪', color: '#eab308', isFacility: true };
-      }
-      return { emoji: '', color: '', isFacility: false };
-    };
+    // ── Scale guard: hide block chips beyond a wide zoom-out ─────────────────
+    const centerLat = map.getCenter().lat;
+    const metersPerPixel =
+      (40075016.686 * Math.cos((centerLat * Math.PI) / 180)) / Math.pow(2, zoomLevel + 8);
+    const SCALE_HIDE_THRESHOLD = 1.25;
+    if (metersPerPixel > SCALE_HIDE_THRESHOLD) return;
 
-    const addMarker = (store: typeof activeStores[0], pinDiameter: number, showPulse: boolean, pulseSize: number, fontSize: number, badgeSize: number, badgeFontSize: number, borderWidth: number) => {
-      const isSchool = effectiveSchoolStores.some((s) => s.id === store.id);
-      const facilityMeta = getFacilityMeta(store.name, store.categories?.name || '');
-      const catColor = isSchool ? '#a855f7' : (facilityMeta.isFacility ? facilityMeta.color : (store.categories?.color || 'var(--color-primary)'));
-      const isDestination = route.length > 0 && route[route.length - 1].store_id === store.id;
+    // ── Extract blocks from navigation nodes ─────────────────────────────────
+    const blocks: BlockEntity[] = extractBlocksFromNodes(nodes);
+
+    // ── Count stalls per block ────────────────────────────────────────────────
+    const blockStoreCount = new Map<string, number>();
+    blocks.forEach((b) => blockStoreCount.set(b.id, 0));
+
+    stores.forEach((s) => {
+      const matched = matchStoreToBlock(s, blocks);
+      if (matched && blockStoreCount.has(matched.id)) {
+        blockStoreCount.set(matched.id, (blockStoreCount.get(matched.id) || 0) + 1);
+      }
+    });
+
+    // ── Render one block circle marker per block ──────────────────────────────
+    blocks.forEach((block) => {
+      if (!block.latitude || !block.longitude) return;
+
+      const isDestinationBlock =
+        route.length > 0 &&
+        route.some((n) => {
+          const matched = blocks.find(
+            (b) =>
+              Math.abs(n.latitude - b.latitude) < 0.0003 &&
+              Math.abs(n.longitude - b.longitude) < 0.0003
+          );
+          return matched?.id === block.id;
+        });
+
+      const stallCount = blockStoreCount.get(block.id) ?? 0;
+      const color = block.color || '#06b6d4';
+
+      // Zoom-responsive circle size (mirrors old store pin sizing)
+      const BASE_ZOOM = 18;
+      const zoomDelta = zoomLevel - BASE_ZOOM;
+      const rawSize = 24 + zoomDelta * 3;
+      const pinDiameter = Math.max(18, Math.min(32, rawSize));
       const pinRadius = Math.round(pinDiameter / 2);
-      const tourStopIdx = tourStops.findIndex((s) => s.id === store.id);
-      const isTourStop = tourStopIdx !== -1;
-      const isVisited = visitedStallIds.includes(store.id);
+      const pulseSize = pinDiameter + 16;
+      const showPulse = zoomLevel >= 16;
 
-      const customIcon = L.divIcon({
+      // Abbreviate block name to fit in circle
+      const numMatch = block.name.match(/\d+/);
+      const circleLabel = numMatch ? numMatch[0] : block.name.slice(0, 2).toUpperCase();
+
+      const circleIcon = L.divIcon({
         className: 'custom-map-pin-wrapper',
         html: `
           <div style="position:relative;display:flex;align-items:center;justify-content:center;width:${pinDiameter}px;height:${pinDiameter}px;">
-            ${(isDestination || (isTourStop && !isVisited)) && showPulse ? `
-              <div style="position:absolute;width:${pulseSize}px;height:${pulseSize}px;border-radius:50%;background:${catColor};opacity:0.4;animation:map-pin-pulse 1.8s infinite ease-in-out;"></div>
+            ${(isDestinationBlock && showPulse) ? `
+              <div style="position:absolute;width:${pulseSize}px;height:${pulseSize}px;border-radius:50%;background:${color};opacity:0.4;animation:map-pin-pulse 1.8s infinite ease-in-out;"></div>
             ` : ''}
-            <div style="width:${pinDiameter}px;height:${pinDiameter}px;border-radius:50%;background:${isVisited ? '#16a34a' : catColor};border:${borderWidth}px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;color:#fff;font-size:${isSchool || facilityMeta.isFacility ? Math.max(10, fontSize + 2) : fontSize}px;font-weight:800;z-index:10;overflow:hidden;">
-              ${isSchool ? '🏫' : (facilityMeta.isFacility ? facilityMeta.emoji : (store.logo_url
-            ? `<img src="${store.logo_url}" alt="${store.name}" style="width:100%;height:100%;object-fit:cover;display:block;" />`
-            : store.name[0]
-          ))}
+            <div style="width:${pinDiameter}px;height:${pinDiameter}px;border-radius:50%;background:${isDestinationBlock ? color : color};border:2px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;color:#fff;font-size:${Math.max(8, Math.round(pinDiameter * 0.38))}px;font-weight:800;z-index:10;overflow:hidden;">
+              ${circleLabel}
             </div>
-            ${isTourStop && pinDiameter >= 14 ? `
-              <div style="position:absolute;top:${-Math.round(badgeSize * 0.3)}px;right:${-Math.round(badgeSize * 0.3)}px;background:${isVisited ? '#22c55e' : '#22d3ee'};color:${isVisited ? '#fff' : '#0f172a'};font-size:${badgeFontSize}px;font-weight:900;width:${badgeSize}px;height:${badgeSize}px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.45);z-index:20;">
-                ${isVisited ? '✓' : tourStopIdx + 1}
-              </div>
-            ` : ''}
           </div>
           <style>@keyframes map-pin-pulse{0%{transform:scale(0.6);opacity:0.7}100%{transform:scale(1.6);opacity:0}}</style>
         `,
@@ -370,70 +367,28 @@ export function MapView({
         iconAnchor: [pinRadius, pinRadius],
       });
 
-      const marker = L.marker([store.latitude!, store.longitude!], { icon: customIcon });
-      if (isSchool) {
-        marker.bindTooltip('🏫 Kalawana National School', {
-          permanent: false,
-          direction: 'top',
-          offset: [0, -pinRadius],
-          className: 'school-landmark-tooltip',
-        });
-      }
+      const marker = L.marker([block.latitude, block.longitude], { icon: circleIcon });
+      marker.bindTooltip(`🏢 ${block.name}`, {
+        permanent: false,
+        direction: 'top',
+        offset: [0, -pinRadius],
+        className: 'school-landmark-tooltip',
+      });
       marker.bindPopup(`
         <div style="color:#0b0f1a;padding:0.3rem;font-family:sans-serif;min-width:160px;">
-          <h4 style="margin:0 0 0.25rem 0;font-weight:800;font-size:0.95rem;line-height:1.2;">
-            ${facilityMeta.isFacility ? `${facilityMeta.emoji} ` : ''}${store.name}
-          </h4>
+          <h4 style="margin:0 0 0.25rem 0;font-weight:800;font-size:0.95rem;line-height:1.2;">🏢 ${block.name}</h4>
           <p style="margin:0 0 0.5rem 0;font-size:0.75rem;color:#64748b;">
-            ${isSchool ? 'GCP2+5C6, Kalawana · Sri Lanka' : `Floor: ${store.floor || '1'} · ${store.categories?.name || (facilityMeta.isFacility ? 'Facility' : 'Exhibitor')}`}
-            ${store.description && facilityMeta.isFacility ? `<br/><span style="color:#475569;font-size:0.72rem;">${store.description}</span>` : ''}
+            ${stallCount > 0 ? `${stallCount} stall${stallCount !== 1 ? 's' : ''} · ` : ''}Floor ${block.floor || '1'}
           </p>
-          ${isSchool ? `
-            <a href="/map3d" style="display:none;">🏫 Open 3D School Map</a>
-          ` : `
-            <div style="display:flex;flex-direction:column;gap:0.35rem;">
-              <button onclick="window.__onNavigateToStore && window.__onNavigateToStore('${store.id}')" style="display:block;width:100%;background:linear-gradient(135deg,#06b6d4,#3b82f6);color:#fff;padding:0.38rem 0.5rem;border:none;border-radius:6px;font-size:0.75rem;font-weight:700;cursor:pointer;text-align:center;">🧭 Navigate Here</button>
-              ${!facilityMeta.isFacility ? `<a href="/stores/${store.id}" style="display:block;background:rgba(255,255,255,0.08);border:1px solid rgba(0,0,0,0.1);color:#334155;padding:0.3rem;border-radius:6px;font-size:0.72rem;font-weight:600;text-decoration:none;text-align:center;">View Profile</a>` : ''}
-            </div>
-          `}
+          <div style="display:flex;flex-direction:column;gap:0.35rem;">
+            <button onclick="window.__onNavigateToStore && window.__onNavigateToStore('${block.id}')" style="display:block;width:100%;background:linear-gradient(135deg,#06b6d4,#3b82f6);color:#fff;padding:0.38rem 0.5rem;border:none;border-radius:6px;font-size:0.75rem;font-weight:700;cursor:pointer;text-align:center;">🧭 Navigate Here</button>
+            <a href="/stores" style="display:block;background:rgba(255,255,255,0.08);border:1px solid rgba(0,0,0,0.1);color:#334155;padding:0.3rem;border-radius:6px;font-size:0.72rem;font-weight:600;text-decoration:none;text-align:center;">Browse Stalls</a>
+          </div>
         </div>
       `);
       markersLayer.addLayer(marker);
-    };
-
-    // School pin is always a fixed comfortable size regardless of zoom
-    const schoolPinSize = 30;
-    effectiveSchoolStores.forEach((store) =>
-      addMarker(store, schoolPinSize, true, schoolPinSize + 16, 14, 16, 9, 2)
-    );
-
-    // ── Scale guard: hide regular store bubbles beyond ~100 m scale ───────────
-    const centerLat = map.getCenter().lat;
-    const metersPerPixel =
-      (40075016.686 * Math.cos((centerLat * Math.PI) / 180)) / Math.pow(2, zoomLevel + 8);
-    // At zoom 18 (~50m scale bar), metersPerPixel ≈ 0.59.
-    // At zoom 17 (~100m scale bar, the view in the user screenshot), metersPerPixel ≈ 1.19.
-    // Setting threshold to 0.85 hides store bubbles when zooming out to zoom 17 or further,
-    // so only the School landmark stays visible without cluttering the campus view.
-    const SCALE_HIDE_THRESHOLD = 1.25;
-    if (metersPerPixel > SCALE_HIDE_THRESHOLD) return;
-
-    // ── Zoom-responsive sizing for regular store bubbles ──────────────────────
-    const BASE_ZOOM = 18;
-    const zoomDelta = zoomLevel - BASE_ZOOM;
-    const rawSize = 22 + zoomDelta * 3;
-    const pinDiameter = Math.max(10, Math.min(28, rawSize));
-    const fontSize = Math.max(7, Math.min(12, Math.round(pinDiameter * 0.42)));
-    const badgeSize = Math.max(10, Math.round(pinDiameter * 0.55));
-    const badgeFontSize = Math.max(6, Math.round(badgeSize * 0.55));
-    const borderWidth = pinDiameter >= 18 ? 2 : 1.5;
-    const showPulse = zoomLevel >= 16;
-    const pulseSize = pinDiameter + 16;
-
-    regularStores.forEach((store) =>
-      addMarker(store, pinDiameter, showPulse, pulseSize, fontSize, badgeSize, badgeFontSize, borderWidth)
-    );
-  }, [map, currentZoom, stores, route, tourStops, visitedStallIds]);
+    });
+  }, [map, currentZoom, nodes, stores, route]);
 
 
   // 5. Render User Location Marker (with Direction Cone)

@@ -14,6 +14,7 @@ import {
   extractBlocksFromNodes,
   generateFloorList,
   getBlockFloorOptions,
+  matchStoreToBlock,
   type BlockEntity,
 } from '../../utils/blocks';
 
@@ -75,19 +76,9 @@ export function AdminBlocksPage() {
     blocks.forEach((b) => counts.set(b.id, 0));
 
     stores.forEach((st) => {
-      const floorStr = (st.floor || '').toLowerCase();
-      const descStr = `${st.name} ${st.description || ''}`.toLowerCase();
-
-      for (const b of blocks) {
-        const bName = b.name.toLowerCase();
-        const matchesCoord =
-          st.latitude && Math.abs(st.latitude - b.latitude) < 0.0003 &&
-          st.longitude && Math.abs(st.longitude - b.longitude) < 0.0003;
-
-        if (floorStr.includes(bName) || matchesCoord || descStr.includes(bName)) {
-          counts.set(b.id, (counts.get(b.id) || 0) + 1);
-          break;
-        }
+      const matched = matchStoreToBlock(st, blocks);
+      if (matched && counts.has(matched.id)) {
+        counts.set(matched.id, (counts.get(matched.id) || 0) + 1);
       }
     });
 

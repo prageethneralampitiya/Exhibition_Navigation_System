@@ -124,60 +124,13 @@ export function extractBlocksFromNodes(nodes: NavigationNode[]): BlockEntity[] {
   }));
 }
 
-/**
- * Matches any store to its corresponding BlockEntity from the loaded blocks
- */
-export function matchStoreToBlock(
-  store: Partial<Store> | null | undefined,
-  blocks: BlockEntity[]
-): BlockEntity | null {
-  if (!store || blocks.length === 0) return null;
-
-  const floorText = (store.floor || '').toLowerCase().trim();
-  const nameText = (store.name || '').toLowerCase().trim();
-  const descText = (store.description || '').toLowerCase().trim();
-
-  // 1. Direct name / id match in floor string (e.g. "Block 7 · Floor 1")
-  for (const b of blocks) {
-    const bName = b.name.toLowerCase().trim();
-    if (floorText.includes(bName) || floorText.includes(b.id.toLowerCase())) {
-      return b;
-    }
-  }
-
-  // 2. Exact or close coordinate match
-  if (typeof store.latitude === 'number' && typeof store.longitude === 'number' && store.latitude !== 0) {
-    for (const b of blocks) {
-      if (
-        Math.abs(store.latitude - b.latitude) < 0.0003 &&
-        Math.abs(store.longitude - b.longitude) < 0.0003
-      ) {
-        return b;
-      }
-    }
-  }
-
-  // 3. Name or description mentions the block
-  for (const b of blocks) {
-    const bName = b.name.toLowerCase().trim();
-    if (nameText.includes(bName) || descText.includes(bName)) {
-      return b;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Formats a block and floor level for storage in store.floor
- */
-export function formatBlockAndFloor(blockName: string, floorLevel: string): string {
-  const b = blockName.trim();
-  const f = floorLevel.trim();
-  if (b && f) {
-    return `${b} · ${f.startsWith('Floor') || f.startsWith('Ground') ? f : `Floor ${f}`}`;
-  }
-  return b || f || 'Floor 1';
+function normalizeBlockName(name: string): string {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .replace(/\b(block|building|hall|pavilion|arena|wing|complex|stall|stalls)\b/gi, '')
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
 }
 
 /**
@@ -198,12 +151,114 @@ export function parseBlockAndFloor(floorRaw: string | null | undefined): {
     };
   }
 
-  // If no separator, check if it starts with Block or Floor
-  if (raw.toLowerCase().includes('block') || raw.toLowerCase().includes('building')) {
+  // If no separator, check if it starts with Block or Building
+  if (/^(block|building|hall|pavilion|arena|wing)\b/i.test(raw) || raw.toLowerCase().includes('block')) {
     return { blockName: raw, floorLevel: 'Floor 1' };
   }
 
-  return { blockName: '', floorLevel: raw };
+  // If it's a known floor name, e.g. "Ground Floor", "1st Floor", "Level 2"
+  if (/^(ground|basement|\d+(?:st|nd|rd|th)?\s*floor|level\s*\d+)/i.test(raw)) {
+    return { blockName: '', floorLevel: raw };
+  }
+
+  // Otherwise, raw could be a block name/number (e.g. "10", "A", "Block 10")
+  return { blockName: raw, floorLevel: 'Floor 1' };
+}
+
+/**
+ * Matches any store to its corresponding BlockEntity from the loaded blocks.
+ * Uses a robust hierarchy:
+ * 1. Explicit block name parsed from store.floor (e.g. "10 · Ground Floor" -> Block 10)
+ * 2. Direct block_node_id link if provided
+ * 3. Nearest coordinate block (minimum Euclidean distance, within ~25m)
+ * 4. Fallback search in store name or description
+ */
+export function matchStoreToBlock(
+  store: Partial<Store> | null | undefined,
+  blocks: BlockEntity[]
+): BlockEntity | null {
+  if (!store || blocks.length === 0) return null;
+
+  // 1. Explicit block name match from store.floor (100% accurate when admin selects a block)
+  const parsed = parseBlockAndFloor(store.floor);
+  if (parsed.blockName) {
+    const normTarget = normalizeBlockName(parsed.blockName);
+    const matches = blocks.filter((b) => normalizeBlockName(b.name) === normTarget);
+
+    if (matches.length === 1) {
+      return matches[0];
+    }
+
+    if (matches.length > 1) {
+      // Tie-break with direct block_node_id if matching one of the candidates
+      if (store.block_node_id) {
+        const idMatch = matches.find((b) => b.id === store.block_node_id);
+        if (idMatch) return idMatch;
+      }
+      // Tie-break with coordinates if available
+      if (typeof store.latitude === 'number' && typeof store.longitude === 'number' && store.latitude !== 0) {
+        let best = matches[0];
+        let bestDist = Infinity;
+        for (const m of matches) {
+          const d = Math.hypot(store.latitude - m.latitude, store.longitude - m.longitude);
+          if (d < bestDist) {
+            bestDist = d;
+            best = m;
+          }
+        }
+        return best;
+      }
+      return matches[0];
+    }
+  }
+
+  // 2. Direct ID match — if block_node_id matches a known block
+  if (store.block_node_id) {
+    const direct = blocks.find((b) => b.id === store.block_node_id);
+    if (direct) return direct;
+  }
+
+  // 3. Minimum-distance coordinate match (finding the SINGLE closest block within 25m)
+  if (typeof store.latitude === 'number' && typeof store.longitude === 'number' && store.latitude !== 0) {
+    let closest: BlockEntity | null = null;
+    let minDist = Infinity;
+
+    for (const b of blocks) {
+      const dist = Math.hypot(store.latitude - b.latitude, store.longitude - b.longitude);
+      if (dist < minDist) {
+        minDist = dist;
+        closest = b;
+      }
+    }
+
+    // 0.00025 degrees is ~27m at equatorial latitudes
+    if (closest && minDist < 0.00025) {
+      return closest;
+    }
+  }
+
+  // 4. Token search in store name or description
+  const nameDesc = `${store.name || ''} ${store.description || ''}`.toLowerCase();
+  for (const b of blocks) {
+    const bNorm = normalizeBlockName(b.name);
+    if (bNorm && nameDesc.includes(b.name.toLowerCase())) {
+      return b;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Formats a block and floor level for storage in store.floor
+ */
+export function formatBlockAndFloor(blockName: string, floorLevel: string): string {
+  const b = blockName.trim();
+  const f = floorLevel.trim();
+  if (b && f) {
+    return `${b} · ${f.startsWith('Floor') || f.startsWith('Ground') ? f : `Floor ${f}`}`;
+  }
+  return b || f || 'Floor 1';
 }
 
 export interface ExhibitionBlock {

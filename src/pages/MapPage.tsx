@@ -48,6 +48,7 @@ import {
 import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
 import { GPSKalmanFilter } from '../utils/gpsFilter';
+import { extractBlocksFromNodes, type BlockEntity } from '../utils/blocks';
 
 // ─── Facility Detection Helper ────────────────────────────────────────────────
 /**
@@ -215,9 +216,14 @@ function LiveAudioMobileButton() {
       title={isPlaying ? 'Mute live audio guide' : 'Listen to live audio guide'}
       style={{
         position: 'relative',
-        width: 36,
-        height: 36,
+        width: 32,
+        height: 32,
         padding: 0,
+        flexShrink: 0,
+        borderRadius: '6px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         border: isPlaying
           ? '1px solid rgba(239,68,68,0.5)'
           : '1px solid rgba(255,255,255,0.15)',
@@ -225,7 +231,7 @@ function LiveAudioMobileButton() {
         background: isPlaying ? 'rgba(239,68,68,0.12)' : 'transparent',
       }}
     >
-      {isPlaying ? <VolumeX size={16} /> : <Radio size={16} />}
+      {isPlaying ? <VolumeX size={15} /> : <Radio size={15} />}
       {isPlaying && (
         <span
           className="live-dot-pulse"
@@ -354,7 +360,7 @@ export function MapPage() {
   const [guidedTourActive, setGuidedTourActive] = useState(false);
   const [tourStops, setTourStops] = useState<StoreType[]>([]);
   const [currentTourStopIndex, setCurrentTourStopIndex] = useState(0);
-  const [tourSelectedStallIds, setTourSelectedStallIds] = useState<string[]>([]);
+  const [tourSelectedBlockIds, setTourSelectedBlockIds] = useState<string[]>([]);
   const [arrivedStopPrompt, setArrivedStopPrompt] = useState<StoreType | null>(null);
   const lastPromptedStopIdRef = useRef<string | null>(null);
   const [showTourCompletedModal, setShowTourCompletedModal] = useState(false);
@@ -376,10 +382,9 @@ export function MapPage() {
   const [showPitstopModal, setShowPitstopModal] = useState(false);
 
   const handleOpenTourPlanner = () => {
-    const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s));
-    const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS.filter(s => !isFacilityStore(s));
-    // By default, select all available stalls (facilities excluded) to visit on the tour
-    setTourSelectedStallIds(listToUse.map(s => s.id));
+    const blocks = extractBlocksFromNodes(nodes);
+    // By default, select all blocks
+    setTourSelectedBlockIds(blocks.map(b => b.id));
     setShowChecklistPrompt(true);
   };
 
@@ -1108,7 +1113,7 @@ export function MapPage() {
     setGuideSteps(steps);
   };
 
-  const generateGuidedTourRoute = (selectedStoreIdsToTour: string[]) => {
+  const generateGuidedTourRoute = (selectedBlockIdsToTour: string[]) => {
     // 1. Determine starting point coordinates
     let startLatVal = userLat;
     let startLngVal = userLng;
@@ -1139,25 +1144,27 @@ export function MapPage() {
       }
     }
 
-    // 2. Prepare stores with normalized campus coordinates
-    const realStores = stores.filter((s) => s.id !== 'kalawana-national-school-landmark');
-    const availableStalls = realStores.length > 0 ? realStores : DEFAULT_DEMO_STALLS;
+    // 2. Build tour stops from selected blocks (blocks are navigation nodes)
+    const allBlocks: BlockEntity[] = extractBlocksFromNodes(nodes);
+    const targetBlocks = allBlocks.filter(b => selectedBlockIdsToTour.includes(b.id));
 
-    const normalizedStores: StoreType[] = availableStalls.map((store, idx) => {
-      const pos = getCampusStoreLocation(store, idx);
-      return {
-        ...store,
-        latitude: (store.latitude != null && !isNaN(store.latitude)) ? store.latitude : pos.lat,
-        longitude: (store.longitude != null && !isNaN(store.longitude)) ? store.longitude : pos.lng,
-      };
-    });
-
-    const targetStores = normalizedStores.filter((s) => selectedStoreIdsToTour.includes(s.id));
-
-    if (targetStores.length === 0) {
-      alert('Please select at least one stall to visit on your tour!');
+    if (targetBlocks.length === 0) {
+      alert('Please select at least one block to visit on your tour!');
       return;
     }
+
+    // Convert blocks to StoreType-compatible objects for the routing system
+    const targetStores: StoreType[] = targetBlocks.map(b => ({
+      id: b.id,
+      name: b.name,
+      description: `Block · Floor ${b.floor || '1'}`,
+      latitude: b.latitude,
+      longitude: b.longitude,
+      floor: b.floor || '1',
+      is_active: true,
+      logo_url: null,
+      categories: null,
+    } as StoreType));
 
     setLoading(true);
 
@@ -1221,10 +1228,10 @@ export function MapPage() {
       setNavigationActive(true);
       setNavSheetState('normal');
 
-      // Route strictly to Stop 1 (the first/closest store)
+      // Route strictly to Stop 1 (the first/closest block)
       routeToTourStop(startLatVal, startLngVal, orderedTourStops[0], 0, orderedTourStops.length);
     } else {
-      alert('Could not compute routing path. Please check network graph or stall locations.');
+      alert('Could not compute routing path. Please check network graph or block locations.');
     }
   };
 
@@ -2093,15 +2100,16 @@ export function MapPage() {
           WebkitBackdropFilter: 'blur(20px)',
         }}>
           {/* Left: Back + Brand */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', minWidth: 0, flex: '1 1 auto', overflow: 'hidden' }}>
             <Link to="/" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-surface2)', width: 32, height: 32, borderRadius: '6px', color: 'var(--color-text)', flexShrink: 0 }}>
               <ArrowLeft size={16} />
             </Link>
-            <div className="map-brand-text">
-              <h2 style={{ fontSize: '0.9rem', fontWeight: 800, margin: 0, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>
-                Interactive Floor Map
+            <div className="map-brand-text" style={{ minWidth: 0, overflow: 'hidden' }}>
+              <h2 style={{ fontSize: '0.88rem', fontWeight: 800, margin: 0, letterSpacing: '-0.02em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <span className="map-title-full">Interactive Floor Map</span>
+                <span className="map-title-short">Floor Map</span>
               </h2>
-              <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)' }}>
+              <span className="map-brand-subtitle" style={{ fontSize: '0.65rem', color: 'var(--color-muted)' }}>
                 Exhibition Navigation System
               </span>
             </div>
@@ -2215,13 +2223,13 @@ export function MapPage() {
           </div>
 
           {/* Mobile-only: Tour button + boundary toggle + live audio + bell icon inline */}
-          <div className="map-topbar-mobile-icons" style={{ display: 'none', gap: '0.35rem', alignItems: 'center', flexShrink: 0 }}>
+          <div className="map-topbar-mobile-icons" style={{ display: 'none', gap: '0.3rem', alignItems: 'center', flexShrink: 0 }}>
             <button
               onClick={handleOpenTourPlanner}
               className="btn btn-primary btn-sm"
               style={{
-                padding: '0.25rem 0.6rem',
-                fontSize: '0.7rem',
+                padding: '0.25rem 0.5rem',
+                fontSize: '0.72rem',
                 fontWeight: 700,
                 borderRadius: '6px',
                 background: guidedTourActive
@@ -2233,6 +2241,8 @@ export function MapPage() {
                 alignItems: 'center',
                 gap: '0.25rem',
                 boxShadow: '0 2px 6px rgba(99, 102, 241, 0.4)',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
               }}
               title="Start guided tour"
             >
@@ -2244,12 +2254,13 @@ export function MapPage() {
                 onClick={handleToggleBoundaryVisibility}
                 className="btn btn-ghost btn-sm"
                 style={{
-                  padding: '0.25rem 0.5rem',
+                  padding: '0.25rem 0.45rem',
                   fontSize: '0.68rem',
                   fontWeight: 700,
                   borderRadius: '6px',
                   border: `1px solid ${exhibitionSettings.school_boundary_enabled ? '#a855f7' : 'rgba(255,255,255,0.2)'}`,
                   color: exhibitionSettings.school_boundary_enabled ? '#c084fc' : '#94a3b8',
+                  flexShrink: 0,
                 }}
                 title="Toggle boundary on map"
               >
@@ -2260,12 +2271,12 @@ export function MapPage() {
             <button
               onClick={handleOpenAnnouncements}
               className="btn btn-ghost btn-sm btn-icon"
-              style={{ position: 'relative', width: 36, height: 36, padding: 0 }}
+              style={{ position: 'relative', width: 32, height: 32, padding: 0, borderRadius: '6px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               title="Announcements"
             >
               <Bell size={16} />
               {unreadNotifications > 0 && (
-                <span style={{ position: 'absolute', top: '3px', right: '3px', width: '7px', height: '7px', borderRadius: '50%', background: '#ef4444' }} />
+                <span style={{ position: 'absolute', top: '2px', right: '2px', width: '6px', height: '6px', borderRadius: '50%', background: '#ef4444' }} />
               )}
             </button>
           </div>
@@ -2348,10 +2359,19 @@ export function MapPage() {
               lng: exhibitionSettings.premises_center_longitude,
             }}
             boundaryRadius={exhibitionSettings.premises_radius_meters}
-            onSelectStore={(storeId) => {
-              setSelectedDestinationStoreId(storeId);
-              const st = stores.find(s => s.id === storeId);
-              if (st) setStoreSearchQuery(st.name);
+            onSelectStore={(id) => {
+              // Check if the ID is a navigation node (block) first
+              const matchedNode = nodes.find(n => n.id === id);
+              if (matchedNode) {
+                setSelectedDestinationNodeId(id);
+                setSelectedDestinationStoreId('');
+                setStoreSearchQuery(matchedNode.label || '');
+              } else {
+                setSelectedDestinationStoreId(id);
+                setSelectedDestinationNodeId('');
+                const st = stores.find(s => s.id === id);
+                if (st) setStoreSearchQuery(st.name);
+              }
             }}
           />
 
@@ -3691,169 +3711,153 @@ export function MapPage() {
             </div>
           )}
 
-          {showChecklistPrompt && (
-            <AdminModal
-              title="📋 Guided Tour Planner"
-              onClose={() => setShowChecklistPrompt(false)}
-              footer={
-                <div style={{ display: 'flex', gap: '0.6rem', width: '100%', justifyContent: 'flex-end', alignItems: 'center' }}>
-                  <button
-                    className="btn btn-ghost"
-                    style={{ padding: '0.45rem 1rem', fontSize: '0.85rem' }}
-                    onClick={() => setShowChecklistPrompt(false)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="btn btn-primary"
-                    style={{ padding: '0.45rem 1.25rem', fontSize: '0.85rem', fontWeight: 700 }}
-                    disabled={tourSelectedStallIds.length === 0}
-                    onClick={() => {
-                      setShowChecklistPrompt(false);
-                      generateGuidedTourRoute(tourSelectedStallIds);
-                    }}
-                  >
-                    🚀 Start Tour ({tourSelectedStallIds.length} {tourSelectedStallIds.length === 1 ? 'Stall' : 'Stalls'})
-                  </button>
-                </div>
-              }
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: 1, minHeight: 0 }}>
-                <p style={{ fontSize: '0.82rem', color: 'var(--color-muted)', margin: 0, lineHeight: 1.4 }}>
-                  Choose which stalls you want to visit on your tour. By default, <strong>all stalls are selected</strong> for the shortest optimal path.
-                </p>
+          {showChecklistPrompt && (() => {
+            const allBlocks: BlockEntity[] = extractBlocksFromNodes(nodes);
+            const filteredBlocks = allBlocks.filter(b => {
+              if (!checklistSearchQuery.trim()) return true;
+              return b.name.toLowerCase().includes(checklistSearchQuery.toLowerCase());
+            });
+            return (
+              <AdminModal
+                title="📋 Guided Tour Planner"
+                onClose={() => setShowChecklistPrompt(false)}
+                footer={
+                  <div style={{ display: 'flex', gap: '0.6rem', width: '100%', justifyContent: 'flex-end', alignItems: 'center' }}>
+                    <button
+                      className="btn btn-ghost"
+                      style={{ padding: '0.45rem 1rem', fontSize: '0.85rem' }}
+                      onClick={() => setShowChecklistPrompt(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="btn btn-primary"
+                      style={{ padding: '0.45rem 1.25rem', fontSize: '0.85rem', fontWeight: 700 }}
+                      disabled={tourSelectedBlockIds.length === 0}
+                      onClick={() => {
+                        setShowChecklistPrompt(false);
+                        generateGuidedTourRoute(tourSelectedBlockIds);
+                      }}
+                    >
+                      🚀 Start Tour ({tourSelectedBlockIds.length} {tourSelectedBlockIds.length === 1 ? 'Block' : 'Blocks'})
+                    </button>
+                  </div>
+                }
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: 1, minHeight: 0 }}>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--color-muted)', margin: 0, lineHeight: 1.4 }}>
+                    Choose which blocks you want to visit on your tour. By default, <strong>all blocks are selected</strong> for the shortest optimal path.
+                  </p>
 
-                {/* Stats & Quick Actions Toolbar */}
-                <div style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '0.4rem',
-                  padding: '0.45rem 0.65rem',
-                  background: 'rgba(255, 255, 255, 0.03)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: '10px'
-                }}>
-                  <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', fontSize: '0.78rem', fontWeight: 700 }}>
-                    <span style={{ color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.15)', padding: '0.15rem 0.45rem', borderRadius: '6px' }}>
-                      🎯 In Tour: {tourSelectedStallIds.length}/{(stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s)).length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s)) : DEFAULT_DEMO_STALLS.filter(s => !isFacilityStore(s))).length}
-                    </span>
-                    {visitedStallIds.length > 0 && (
-                      <span style={{ color: '#22c55e', background: 'rgba(34, 197, 94, 0.12)', padding: '0.15rem 0.45rem', borderRadius: '6px' }}>
-                        ✓ {visitedStallIds.length} Visited
+                  {/* Stats & Quick Actions Toolbar */}
+                  <div style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '0.4rem',
+                    padding: '0.45rem 0.65rem',
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: '10px'
+                  }}>
+                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', fontSize: '0.78rem', fontWeight: 700 }}>
+                      <span style={{ color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.15)', padding: '0.15rem 0.45rem', borderRadius: '6px' }}>
+                        🎯 In Tour: {tourSelectedBlockIds.length}/{allBlocks.length}
                       </span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: '0.7rem', padding: '0.2rem 0.45rem', color: 'var(--color-accent)', minHeight: 'unset' }}
+                        onClick={() => setTourSelectedBlockIds(allBlocks.map(b => b.id))}
+                      >
+                        Select All
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: '0.7rem', padding: '0.2rem 0.45rem', color: 'var(--color-warning)', minHeight: 'unset' }}
+                        onClick={() => setTourSelectedBlockIds([])}
+                      >
+                        Deselect
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Block Search Filter */}
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="🔍 Search blocks by name..."
+                    value={checklistSearchQuery}
+                    onChange={(e) => setChecklistSearchQuery(e.target.value)}
+                    style={{ fontSize: '0.82rem', padding: '0.4rem 0.65rem' }}
+                  />
+
+                  <div style={{
+                    flex: 1,
+                    minHeight: '160px',
+                    maxHeight: '42vh',
+                    overflowY: 'auto',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: '10px',
+                    padding: '0.4rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.35rem'
+                  }}>
+                    {filteredBlocks.length === 0 && (
+                      <div style={{ textAlign: 'center', color: 'var(--color-muted)', fontSize: '0.82rem', padding: '2rem 0' }}>
+                        🏢 No blocks found{checklistSearchQuery ? ` for "${checklistSearchQuery}"` : '. Add POI nodes in the admin panel.'}
+                      </div>
                     )}
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      style={{ fontSize: '0.7rem', padding: '0.2rem 0.45rem', color: 'var(--color-accent)', minHeight: 'unset' }}
-                      onClick={() => {
-                        const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s));
-                        const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS.filter(s => !isFacilityStore(s));
-                        setTourSelectedStallIds(listToUse.map(s => s.id));
-                      }}
-                    >
-                      Select All
-                    </button>
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      style={{ fontSize: '0.7rem', padding: '0.2rem 0.45rem', color: '#38bdf8', minHeight: 'unset' }}
-                      onClick={() => {
-                        const activeList = stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s));
-                        const listToUse = activeList.length > 0 ? activeList : DEFAULT_DEMO_STALLS.filter(s => !isFacilityStore(s));
-                        setTourSelectedStallIds(listToUse.filter(s => !visitedStallIds.includes(s.id)).map(s => s.id));
-                      }}
-                    >
-                      Unvisited
-                    </button>
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      style={{ fontSize: '0.7rem', padding: '0.2rem 0.45rem', color: 'var(--color-warning)', minHeight: 'unset' }}
-                      onClick={() => setTourSelectedStallIds([])}
-                    >
-                      Deselect
-                    </button>
-                  </div>
-                </div>
-
-                {/* Stall Search Filter */}
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="🔍 Search stalls by name or category..."
-                  value={checklistSearchQuery}
-                  onChange={(e) => setChecklistSearchQuery(e.target.value)}
-                  style={{ fontSize: '0.82rem', padding: '0.4rem 0.65rem' }}
-                />
-
-                <div style={{
-                  flex: 1,
-                  minHeight: '160px',
-                  maxHeight: '42vh',
-                  overflowY: 'auto',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: '10px',
-                  padding: '0.4rem',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.35rem'
-                }}>
-                  {(stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s)).length > 0
-                    ? stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s))
-                    : DEFAULT_DEMO_STALLS.filter(s => !isFacilityStore(s)))
-                    .filter(s => {
-                      if (!checklistSearchQuery.trim()) return true;
-                      const q = checklistSearchQuery.toLowerCase();
-                      const nameMatch = s.name.toLowerCase().includes(q);
-                      const catMatch = s.categories?.name?.toLowerCase().includes(q);
-                      return nameMatch || catMatch;
-                    })
-                    .map((store) => {
-                      const isSelected = tourSelectedStallIds.includes(store.id);
-                      const isVisited = visitedStallIds.includes(store.id);
+                    {filteredBlocks.map((block) => {
+                      const isSelected = tourSelectedBlockIds.includes(block.id);
                       return (
                         <label
-                          key={store.id}
+                          key={block.id}
                           style={{
                             display: 'flex',
                             alignItems: 'center',
                             gap: '0.65rem',
                             padding: '0.55rem 0.75rem',
                             borderRadius: '8px',
-                            background: isSelected ? 'rgba(34, 211, 238, 0.08)' : 'rgba(255, 255, 255, 0.02)',
+                            background: isSelected ? `${block.color}12` : 'rgba(255, 255, 255, 0.02)',
                             cursor: 'pointer',
-                            border: `1px solid ${isSelected ? 'rgba(34, 211, 238, 0.25)' : 'rgba(255, 255, 255, 0.06)'}`,
+                            border: `1px solid ${isSelected ? `${block.color}40` : 'rgba(255, 255, 255, 0.06)'}`,
                             transition: 'all 0.15s ease'
                           }}
                         >
                           <input
                             type="checkbox"
                             checked={isSelected}
-                            style={{ width: 18, height: 18, accentColor: '#22d3ee', cursor: 'pointer', flexShrink: 0 }}
+                            style={{ width: 18, height: 18, accentColor: block.color || '#22d3ee', cursor: 'pointer', flexShrink: 0 }}
                             onChange={() => {
                               if (isSelected) {
-                                setTourSelectedStallIds(tourSelectedStallIds.filter(id => id !== store.id));
+                                setTourSelectedBlockIds(tourSelectedBlockIds.filter(id => id !== block.id));
                               } else {
-                                setTourSelectedStallIds([...tourSelectedStallIds, store.id]);
+                                setTourSelectedBlockIds([...tourSelectedBlockIds, block.id]);
                               }
                             }}
                           />
+                          {/* Color dot */}
+                          <div style={{
+                            width: 26, height: 26, borderRadius: '50%',
+                            background: block.color || '#06b6d4',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '12px', fontWeight: 800, color: '#fff', flexShrink: 0,
+                          }}>
+                            {block.name.match(/\d+/)?.[0] ?? block.name.slice(0, 2).toUpperCase()}
+                          </div>
                           <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.4rem' }}>
                               <span style={{ fontSize: '0.85rem', fontWeight: 700, color: isSelected ? 'var(--color-text)' : 'var(--color-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {store.name}
+                                🏢 {block.name}
                               </span>
                               <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', flexShrink: 0 }}>
-                                {isVisited && (
-                                  <span style={{ fontSize: '0.65rem', color: '#22c55e', fontWeight: 700, background: 'rgba(34, 197, 94, 0.15)', padding: '0.1rem 0.35rem', borderRadius: '4px' }}>
-                                    ✓ Visited
-                                  </span>
-                                )}
                                 {isSelected ? (
-                                  <span style={{ fontSize: '0.65rem', color: '#22d3ee', fontWeight: 700, background: 'rgba(34, 211, 238, 0.15)', padding: '0.1rem 0.35rem', borderRadius: '4px' }}>
+                                  <span style={{ fontSize: '0.65rem', color: block.color || '#22d3ee', fontWeight: 700, background: `${block.color || '#22d3ee'}20`, padding: '0.1rem 0.35rem', borderRadius: '4px' }}>
                                     🎯 In Tour
                                   </span>
                                 ) : (
@@ -3864,17 +3868,17 @@ export function MapPage() {
                               </div>
                             </div>
                             <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.15rem', fontSize: '0.7rem', color: 'var(--color-muted)' }}>
-                              {store.categories?.name && <span>🏷️ {store.categories.name}</span>}
-                              {store.floor && <span>📍 Floor {store.floor}</span>}
+                              <span>📍 Floor {block.floor || '1'}</span>
                             </div>
                           </div>
                         </label>
                       );
                     })}
+                  </div>
                 </div>
-              </div>
-            </AdminModal>
-          )}
+              </AdminModal>
+            );
+          })()}
         </div>
       </div>
     </>

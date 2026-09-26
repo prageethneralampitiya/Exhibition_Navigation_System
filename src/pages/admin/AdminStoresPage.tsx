@@ -198,13 +198,17 @@ export function AdminStoresPage() {
 
   const handleOpenAdd = () => {
     const defaultBlock = realBlocks[0];
+    const defaultFloor = defaultBlock
+      ? (defaultBlock.floors?.[0] || 'Ground Floor')
+      : 'Ground Floor';
     setCurrentStore({
       name: '',
       description: '',
       logo_url: '',
       category_id: categories[0]?.id || '',
       exhibition_id: exhibitions[0]?.id || '',
-      floor: defaultBlock ? `${defaultBlock.name} · Floor 1` : 'Floor 1',
+      floor: defaultBlock ? formatBlockAndFloor(defaultBlock.name, defaultFloor) : 'Ground Floor',
+      block_node_id: defaultBlock?.id || null,
       opening_time: '09:00:00',
       closing_time: '18:00:00',
       latitude: defaultBlock?.latitude ?? 6.535472,
@@ -246,6 +250,9 @@ export function AdminStoresPage() {
       setSubmitting(true);
       setFormError('');
 
+      const matchedBlock = matchStoreToBlock(currentStore, realBlocks);
+      const finalBlockNodeId = currentStore.block_node_id || matchedBlock?.id || null;
+
       const payload = {
         name: currentStore.name,
         description: currentStore.description || null,
@@ -253,6 +260,7 @@ export function AdminStoresPage() {
         category_id: currentStore.category_id || null,
         exhibition_id: currentStore.exhibition_id || null,
         floor: currentStore.floor || null,
+        block_node_id: finalBlockNodeId,
         opening_time: currentStore.opening_time || null,
         closing_time: currentStore.closing_time || null,
         latitude: currentStore.latitude ? Number(currentStore.latitude) : null,
@@ -941,7 +949,7 @@ export function AdminStoresPage() {
                         className="form-select"
                         value={(() => {
                           const blk = matchStoreToBlock(currentStore, realBlocks);
-                          return blk ? blk.id : '';
+                          return blk ? blk.id : (currentStore?.block_node_id || '');
                         })()}
                         onChange={(e) => {
                           const val = e.target.value;
@@ -957,6 +965,7 @@ export function AdminStoresPage() {
 
                             setCurrentStore({
                               ...currentStore,
+                              block_node_id: selectedBlk.id,  // ← direct block link
                               floor: formatBlockAndFloor(selectedBlk.name, nextFloor),
                               latitude: selectedBlk.latitude,
                               longitude: selectedBlk.longitude,
@@ -965,6 +974,7 @@ export function AdminStoresPage() {
                             const parsed = parseBlockAndFloor(currentStore.floor);
                             setCurrentStore({
                               ...currentStore,
+                              block_node_id: null,
                               floor: parsed.floorLevel || 'Ground Floor',
                             });
                           }

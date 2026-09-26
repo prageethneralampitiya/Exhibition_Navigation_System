@@ -82,6 +82,7 @@ export interface Store {
   category_id: string | null;
   exhibition_id: string | null;
   floor: string | null;
+  block_node_id: string | null;  // Direct link to navigation_node (block) this store belongs to
   opening_time: string | null;  // HH:MM:SS
   closing_time: string | null;
   latitude: number | null;
