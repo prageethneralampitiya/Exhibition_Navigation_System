@@ -142,12 +142,34 @@ export function parseBlockAndFloor(floorRaw: string | null | undefined): {
 } {
   if (!floorRaw) return { blockName: '', floorLevel: 'Floor 1' };
   const raw = floorRaw.trim();
-  const parts = raw.split(/[·|\-–—]/);
 
-  if (parts.length > 1) {
+  // If explicit middle-dot separator is present (standard format from formatBlockAndFloor)
+  if (raw.includes('·')) {
+    const idx = raw.lastIndexOf('·');
     return {
-      blockName: parts[0].trim(),
-      floorLevel: parts[1].trim() || 'Floor 1',
+      blockName: raw.slice(0, idx).trim(),
+      floorLevel: raw.slice(idx + 1).trim() || 'Floor 1',
+    };
+  }
+
+  // If vertical pipe or em/en dash is used
+  if (/[|–—]/.test(raw)) {
+    const parts = raw.split(/[|–—]/);
+    if (parts.length > 1) {
+      return {
+        blockName: parts[0].trim(),
+        floorLevel: parts.slice(1).join(' ').trim() || 'Floor 1',
+      };
+    }
+  }
+
+  // If hyphen separator is used: only treat as floor separator if followed by a floor indicator,
+  // preventing hyphens inside block names (e.g. "Block 7 - Tech Arena") from being split incorrectly.
+  const hyphenFloorMatch = raw.match(/^(.*?)\s*-\s*((?:ground|basement|\d+(?:st|nd|rd|th)?\s*floor|floor\s*\w+|level\s*\w+).*)$/i);
+  if (hyphenFloorMatch) {
+    return {
+      blockName: hyphenFloorMatch[1].trim(),
+      floorLevel: hyphenFloorMatch[2].trim() || 'Floor 1',
     };
   }
 
@@ -183,7 +205,16 @@ export function matchStoreToBlock(
   const parsed = parseBlockAndFloor(store.floor);
   if (parsed.blockName) {
     const normTarget = normalizeBlockName(parsed.blockName);
-    const matches = blocks.filter((b) => normalizeBlockName(b.name) === normTarget);
+    const matches = blocks.filter((b) => {
+      const bNorm = normalizeBlockName(b.name);
+      if (!bNorm || !normTarget) return false;
+      if (bNorm === normTarget) return true;
+      // If block numbers match exactly (e.g. "7" in "block 7" vs "7" in "block 7 - tech arena")
+      const targetNum = normTarget.match(/\d+/)?.[0];
+      const bNum = bNorm.match(/\d+/)?.[0];
+      if (targetNum && bNum && targetNum === bNum) return true;
+      return bNorm.includes(normTarget) || normTarget.includes(bNorm);
+    });
 
     if (matches.length === 1) {
       return matches[0];

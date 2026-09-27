@@ -346,6 +346,24 @@ export function MapView({
       const pulseSize = pinDiameter + 16;
       const showPulse = zoomLevel >= 16;
 
+      // Check if block has tour stops
+      const blockTourStops = tourStops.filter((s) => {
+        const matched = matchStoreToBlock(s, blocks);
+        return matched?.id === block.id;
+      });
+      const hasTourStop = blockTourStops.length > 0;
+      const isTourVisited = hasTourStop && blockTourStops.every((s) => visitedStallIds.includes(s.id));
+      const firstUnvisitedStop = blockTourStops.find((s) => !visitedStallIds.includes(s.id));
+      const tourStopIdx = firstUnvisitedStop
+        ? tourStops.findIndex((s) => s.id === firstUnvisitedStop.id)
+        : (hasTourStop ? tourStops.findIndex((s) => s.id === blockTourStops[0].id) : -1);
+
+      const isCurrentTourTarget = hasTourStop && !isTourVisited;
+      const showActivePulse = (isDestinationBlock || (isCurrentTourTarget && showPulse));
+
+      const badgeSize = Math.max(12, Math.round(pinDiameter * 0.55));
+      const badgeFontSize = Math.max(7, Math.round(badgeSize * 0.55));
+
       // Abbreviate block name to fit in circle
       const numMatch = block.name.match(/\d+/);
       const circleLabel = numMatch ? numMatch[0] : block.name.slice(0, 2).toUpperCase();
@@ -354,12 +372,17 @@ export function MapView({
         className: 'custom-map-pin-wrapper',
         html: `
           <div style="position:relative;display:flex;align-items:center;justify-content:center;width:${pinDiameter}px;height:${pinDiameter}px;">
-            ${(isDestinationBlock && showPulse) ? `
+            ${(showActivePulse) ? `
               <div style="position:absolute;width:${pulseSize}px;height:${pulseSize}px;border-radius:50%;background:${color};opacity:0.4;animation:map-pin-pulse 1.8s infinite ease-in-out;"></div>
             ` : ''}
             <div style="width:${pinDiameter}px;height:${pinDiameter}px;border-radius:50%;background:${isDestinationBlock ? color : color};border:2px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;color:#fff;font-size:${Math.max(8, Math.round(pinDiameter * 0.38))}px;font-weight:800;z-index:10;overflow:hidden;">
               ${circleLabel}
             </div>
+            ${hasTourStop && pinDiameter >= 14 ? `
+              <div style="position:absolute;top:${-Math.round(badgeSize * 0.3)}px;right:${-Math.round(badgeSize * 0.3)}px;background:${isTourVisited ? '#22c55e' : '#22d3ee'};color:${isTourVisited ? '#fff' : '#0f172a'};font-size:${badgeFontSize}px;font-weight:900;width:${badgeSize}px;height:${badgeSize}px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.45);z-index:20;">
+                ${isTourVisited ? '✓' : tourStopIdx + 1}
+              </div>
+            ` : ''}
           </div>
           <style>@keyframes map-pin-pulse{0%{transform:scale(0.6);opacity:0.7}100%{transform:scale(1.6);opacity:0}}</style>
         `,
@@ -388,7 +411,7 @@ export function MapView({
       `);
       markersLayer.addLayer(marker);
     });
-  }, [map, currentZoom, nodes, stores, route]);
+  }, [map, currentZoom, nodes, stores, route, tourStops, visitedStallIds]);
 
 
   // 5. Render User Location Marker (with Direction Cone)

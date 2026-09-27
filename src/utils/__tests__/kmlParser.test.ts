@@ -252,6 +252,7 @@ describe('kmlParser.ts - Google Earth KML Engine', () => {
           category_id: null,
           exhibition_id: null,
           floor: '1',
+          block_node_id: null,
           opening_time: null,
           closing_time: null,
           latitude: 6.5355,
