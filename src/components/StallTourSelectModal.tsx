@@ -18,6 +18,7 @@ import {
   parseBlockAndFloor,
   type BlockEntity,
 } from '../utils/blocks';
+import { isFacilityStore } from '../utils/facilities';
 
 export interface StallTourSelectModalProps {
   isOpen: boolean;
@@ -106,17 +107,9 @@ export function StallTourSelectModal({
     return extractBlocksFromNodes(nodes);
   }, [nodes]);
 
-  // Filter out pure venue facilities (washroom, first aid, security) from exhibition tour stall list
+  // Filter out all venue facilities (washroom, canteen, first aid, water, etc.) from exhibition tour stall list
   const validStalls = useMemo(() => {
-    const FACILITY_KEYWORDS = [
-      'washroom', 'restroom', 'toilet', 'wc', 'bathroom',
-      'clinic', 'first aid', 'medical', 'security',
-    ];
-    return stores.filter((st) => {
-      if (st.id === 'kalawana-national-school-landmark') return false;
-      const text = `${st.name} ${st.description || ''}`.toLowerCase();
-      return !FACILITY_KEYWORDS.some((kw) => text.includes(kw));
-    });
+    return stores.filter((st) => !isFacilityStore(st));
   }, [stores]);
 
   // Group stalls under blocks, then subdivide by floor, sorted in ascending order

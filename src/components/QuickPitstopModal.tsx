@@ -1,107 +1,8 @@
 import { useMemo } from 'react';
-import { X, Footprints, ArrowRight } from 'lucide-react';
+import { X, Footprints, ArrowRight, MapPin } from 'lucide-react';
 import { type Store as StoreType } from '../lib/supabase';
 import { getDistance } from '../utils/dijkstra';
-
-export interface FacilityGroup {
-  id: string;
-  categoryTitle: string;
-  emoji: string;
-  keywords: string[];
-  color: string;
-  bgColor: string;
-}
-
-export const FACILITY_GROUPS: FacilityGroup[] = [
-  {
-    id: 'restroom',
-    categoryTitle: 'Restrooms & Washrooms',
-    emoji: '🚻',
-    keywords: ['washroom', 'restroom', 'toilet', 'wc', 'bathroom'],
-    color: '#38bdf8',
-    bgColor: 'rgba(56, 189, 248, 0.12)',
-  },
-  {
-    id: 'canteen',
-    categoryTitle: 'Canteen & Food Court',
-    emoji: '🍽️',
-    keywords: ['canteen', 'cafeteria', 'food court', 'dining', 'refreshment', 'snacks'],
-    color: '#f97316',
-    bgColor: 'rgba(249, 115, 22, 0.12)',
-  },
-  {
-    id: 'water',
-    categoryTitle: 'Drinking Water Station',
-    emoji: '🚰',
-    keywords: ['water', 'drinking water', 'water point'],
-    color: '#06b6d4',
-    bgColor: 'rgba(6, 182, 212, 0.12)',
-  },
-  {
-    id: 'medical',
-    categoryTitle: 'First Aid & Medical',
-    emoji: '🏥',
-    keywords: ['first aid', 'medical', 'clinic', 'doctor'],
-    color: '#ef4444',
-    bgColor: 'rgba(239, 68, 68, 0.12)',
-  },
-  {
-    id: 'emergency',
-    categoryTitle: 'Emergency Exit',
-    emoji: '🚪',
-    keywords: ['emergency exit', 'fire exit', 'exit gate'],
-    color: '#f43f5e',
-    bgColor: 'rgba(244, 63, 94, 0.12)',
-  },
-  {
-    id: 'help',
-    categoryTitle: 'Help Desk / Information',
-    emoji: 'ℹ️',
-    keywords: ['info', 'help desk', 'information', 'reception'],
-    color: '#a855f7',
-    bgColor: 'rgba(168, 85, 247, 0.12)',
-  },
-];
-
-// Fallback demo facilities near Kalawana School campus if none registered yet
-const DEFAULT_DEMO_FACILITIES: StoreType[] = [
-  {
-    id: 'demo-facility-wc-1',
-    name: 'Main Building Washroom (All Gender)',
-    description: 'Ground floor unisex restrooms near the main corridor',
-    latitude: 6.535520,
-    longitude: 80.400850,
-    floor: '1',
-    is_active: true,
-  } as any,
-  {
-    id: 'demo-facility-canteen-1',
-    name: 'Campus Canteen & Refreshment Hub',
-    description: 'Snacks, tea, cold drinks and lunch packs',
-    latitude: 6.535700,
-    longitude: 80.400500,
-    floor: '1',
-    is_active: true,
-  } as any,
-  {
-    id: 'demo-facility-water-1',
-    name: 'Purified Water Refill Station',
-    description: 'Cold filtered drinking water dispenser',
-    latitude: 6.535400,
-    longitude: 80.401100,
-    floor: '1',
-    is_active: true,
-  } as any,
-  {
-    id: 'demo-facility-medical-1',
-    name: 'Red Cross First Aid Post',
-    description: 'Medical staff on duty and emergency kits',
-    latitude: 6.535650,
-    longitude: 80.401300,
-    floor: '1',
-    is_active: true,
-  } as any,
-];
+import { isFacilityStore, getFacilityEmoji, getFacilityColor } from '../utils/facilities';
 
 interface QuickPitstopModalProps {
   isOpen: boolean;
@@ -120,58 +21,31 @@ export function QuickPitstopModal({
   stores,
   onSelectFacility,
 }: QuickPitstopModalProps) {
-  // Combine registered facility stores with fallback demo facilities
-  const allFacilities = useMemo(() => {
-    const registered = stores.filter((s) => {
-      const text = `${s.name} ${s.description || ''} ${(s as any).categories?.name || ''}`.toLowerCase();
-      return FACILITY_GROUPS.some((g) => g.keywords.some((kw) => text.includes(kw)));
-    });
-
-    if (registered.length > 0) return registered;
-    return DEFAULT_DEMO_FACILITIES;
-  }, [stores]);
-
-  // For each facility group, compute the nearest facility and distance
-  const categorizedFacilities = useMemo(() => {
+  // Only facilities registered in database / admin panel (no hardcoded categories or demo fallbacks)
+  const registeredFacilities = useMemo(() => {
     const currentLat = userLat || 6.535472;
     const currentLng = userLng || 80.401000;
 
-    return FACILITY_GROUPS.map((group) => {
-      // Find matching facilities in this group
-      const matches = allFacilities.filter((f) => {
-        const text = `${f.name} ${f.description || ''} ${(f as any).categories?.name || ''}`.toLowerCase();
-        return group.keywords.some((kw) => text.includes(kw));
-      });
+    // Filter only actual facilities
+    const list = stores.filter(isFacilityStore);
 
-      if (matches.length === 0) return null;
-
-      // Find nearest match
-      let nearest: StoreType = matches[0];
-      let minDistance = Infinity;
-
-      matches.forEach((f) => {
-        if (f.latitude && f.longitude) {
-          const d = getDistance(currentLat, currentLng, f.latitude, f.longitude);
-          if (d < minDistance) {
-            minDistance = d;
-            nearest = f;
-          }
-        }
-      });
-
+    // Compute distance and sort by closest
+    const withDistance = list.map((f) => {
+      let distanceMeters = 0;
+      if (f.latitude && f.longitude) {
+        distanceMeters = Math.round(getDistance(currentLat, currentLng, f.latitude, f.longitude));
+      }
+      const walkMinutes = Math.max(1, Math.ceil(distanceMeters / 75)); // ~75m per minute
       return {
-        group,
-        nearest,
-        distanceMeters: Math.round(minDistance),
-        walkMinutes: Math.max(1, Math.ceil(minDistance / 75)), // ~75m per minute walking
+        facility: f,
+        distanceMeters,
+        walkMinutes,
       };
-    }).filter(Boolean) as Array<{
-      group: FacilityGroup;
-      nearest: StoreType;
-      distanceMeters: number;
-      walkMinutes: number;
-    }>;
-  }, [allFacilities, userLat, userLng]);
+    });
+
+    withDistance.sort((a, b) => a.distanceMeters - b.distanceMeters);
+    return withDistance;
+  }, [stores, userLat, userLng]);
 
   if (!isOpen) return null;
 
@@ -221,11 +95,11 @@ export function QuickPitstopModal({
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
               <span style={{ fontSize: '1.25rem' }}>⚡</span>
               <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#f8fafc' }}>
-                Quick Pitstop & Amenities
+                Quick Pitstop &amp; Facilities
               </h3>
             </div>
             <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: 'var(--color-muted)' }}>
-              Need a quick break? We’ll route you there and resume your trip shortestly!
+              Select a facility below to take a quick detour. You can resume your original route anytime!
             </p>
           </div>
 
@@ -248,7 +122,7 @@ export function QuickPitstopModal({
           </button>
         </div>
 
-        {/* Facility Cards List */}
+        {/* Facilities List (Admin-added only) */}
         <div
           style={{
             padding: '1rem',
@@ -256,114 +130,160 @@ export function QuickPitstopModal({
             display: 'flex',
             flexDirection: 'column',
             gap: '0.65rem',
+            maxHeight: '52vh',
           }}
         >
-          {categorizedFacilities.map(({ group, nearest, distanceMeters, walkMinutes }) => (
+          {registeredFacilities.length === 0 ? (
             <div
-              key={group.id}
-              onClick={() => {
-                onSelectFacility(nearest);
-                onClose();
-              }}
               style={{
+                textAlign: 'center',
+                padding: '2.5rem 1.5rem',
+                color: 'var(--color-muted)',
                 display: 'flex',
+                flexDirection: 'column',
                 alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '0.85rem 1rem',
-                borderRadius: '12px',
-                background: 'rgba(255, 255, 255, 0.03)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.07)';
-                e.currentTarget.style.borderColor = group.color;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
-                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                justifyContent: 'center',
+                gap: '0.5rem',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', minWidth: 0 }}>
-                <div
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: '12px',
-                    background: group.bgColor,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '1.4rem',
-                    flexShrink: 0,
-                  }}
-                >
-                  {group.emoji}
-                </div>
-
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <span style={{ fontSize: '0.92rem', fontWeight: 700, color: '#f8fafc' }}>
-                      {group.categoryTitle}
-                    </span>
-                    {nearest.floor && (
-                      <span
-                        style={{
-                          fontSize: '0.65rem',
-                          padding: '0.05rem 0.35rem',
-                          borderRadius: '4px',
-                          background: 'rgba(255, 255, 255, 0.08)',
-                          color: 'var(--color-muted)',
-                        }}
-                      >
-                        Floor {nearest.floor}
-                      </span>
-                    )}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: '0.78rem',
-                      color: 'var(--color-muted)',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      maxWidth: '260px',
-                    }}
-                  >
-                    {nearest.name}
-                  </div>
-                </div>
+              <div
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: '50%',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--color-muted)',
+                }}
+              >
+                <MapPin size={24} />
               </div>
-
-              {/* Distance & Action CTA */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: '0.88rem', fontWeight: 800, color: group.color }}>
-                    {distanceMeters} m
-                  </div>
-                  <div style={{ fontSize: '0.68rem', color: 'var(--color-muted)' }}>
-                    ~{walkMinutes} min
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: '50%',
-                    background: group.bgColor,
-                    color: group.color,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <ArrowRight size={16} />
-                </div>
-              </div>
+              <h4 style={{ margin: '0.25rem 0 0', color: '#f8fafc', fontSize: '0.98rem', fontWeight: 700 }}>
+                No Facilities Added Yet
+              </h4>
+              <p style={{ margin: 0, fontSize: '0.8rem', maxWidth: '340px', lineHeight: 1.5 }}>
+                Facilities (washrooms, canteen, water points, first aid) added in the Admin Panel will be listed here.
+              </p>
             </div>
-          ))}
+          ) : (
+            registeredFacilities.map(({ facility, distanceMeters, walkMinutes }) => {
+              const emoji = getFacilityEmoji(facility);
+              const styling = getFacilityColor(facility);
+
+              return (
+                <div
+                  key={facility.id}
+                  onClick={() => {
+                    onSelectFacility(facility);
+                    onClose();
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '0.85rem 1rem',
+                    borderRadius: '14px',
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.07)';
+                    e.currentTarget.style.borderColor = styling.color;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)';
+                    e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', minWidth: 0 }}>
+                    <div
+                      style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: '12px',
+                        background: styling.bgColor,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '1.4rem',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {emoji}
+                    </div>
+
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <span style={{ fontSize: '0.92rem', fontWeight: 700, color: '#f8fafc' }}>
+                          {facility.name}
+                        </span>
+                        {facility.floor && (
+                          <span
+                            style={{
+                              fontSize: '0.65rem',
+                              padding: '0.05rem 0.35rem',
+                              borderRadius: '4px',
+                              background: 'rgba(255, 255, 255, 0.08)',
+                              color: 'var(--color-muted)',
+                              fontWeight: 600,
+                            }}
+                          >
+                            Floor {facility.floor}
+                          </span>
+                        )}
+                      </div>
+                      {facility.description && (
+                        <div
+                          style={{
+                            fontSize: '0.76rem',
+                            color: 'var(--color-muted)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            maxWidth: '260px',
+                            marginTop: '0.1rem',
+                          }}
+                        >
+                          {facility.description}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Distance & Action CTA */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexShrink: 0 }}>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '0.88rem', fontWeight: 800, color: styling.color }}>
+                        {distanceMeters} m
+                      </div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--color-muted)' }}>
+                        ~{walkMinutes} min
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: '50%',
+                        background: styling.bgColor,
+                        color: styling.color,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <ArrowRight size={16} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
 
         {/* Footer info */}

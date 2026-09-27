@@ -17,10 +17,10 @@ import {
   Megaphone,
   Flame,
   Building2,
-  CalendarDays,
 } from 'lucide-react';
 import { supabase, type Exhibition, type Store as StoreType, type NavigationNode } from '../lib/supabase';
 import { extractBlocksFromNodes, matchStoreToBlock, parseBlockAndFloor, type BlockEntity } from '../utils/blocks';
+import { isFacilityStore } from '../utils/facilities';
 import { useAuth } from '../contexts/AuthContext';
 import { GPSPermissionBanner } from '../components/GPSPermissionBanner';
 import { useLiveBroadcast } from '../contexts/LiveBroadcastContext';
@@ -834,7 +834,8 @@ export function HomePage() {
       ]);
 
       setExhibitions(exhibitionsRes.data || []);
-      setStores(storesRes.data || []);
+      const allStores = (storesRes.data || []) as StoreType[];
+      setStores(allStores.filter((s) => !isFacilityStore(s)));
       setNodes(nodesRes.data || []);
       setAnalyticsEvents(eventsRes || []);
     } catch (err) {
@@ -1186,28 +1187,6 @@ export function HomePage() {
                 <span className="home-box-link-desc">
                   {unreadNotifications > 0 ? `${unreadNotifications} Unread` : 'Live Alerts'}
                 </span>
-              </div>
-            </button>
-
-            {/* 5. Event option */}
-            <button
-              type="button"
-              onClick={() => {
-                const el = document.getElementById('events-banner-section');
-                if (el) {
-                  el.scrollIntoView({ behavior: 'smooth' });
-                }
-              }}
-              className="home-box-link link-events"
-              id="nav-events"
-              title="Featured Campus Events, Venues & Offers"
-            >
-              <div className="home-box-link-icon icon-events">
-                <CalendarDays size={22} strokeWidth={2.2} />
-              </div>
-              <div className="home-box-link-text">
-                <span className="home-box-link-title">Event</span>
-                <span className="home-box-link-desc">Venues &amp; Offers</span>
               </div>
             </button>
           </div>

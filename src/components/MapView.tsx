@@ -3,6 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { type Store, type NavigationNode, type NavigationEdge } from '../lib/supabase';
 import { extractBlocksFromNodes, matchStoreToBlock, type BlockEntity } from '../utils/blocks';
+import { isFacilityStore } from '../utils/facilities';
 
 // ── Satellite / Street tile sources ──────────────────────────────────────────
 const TILE_SOURCES = {
@@ -313,6 +314,7 @@ export function MapView({
     blocks.forEach((b) => blockStoreCount.set(b.id, 0));
 
     stores.forEach((s) => {
+      if (isFacilityStore(s)) return;
       const matched = matchStoreToBlock(s, blocks);
       if (matched && blockStoreCount.has(matched.id)) {
         blockStoreCount.set(matched.id, (blockStoreCount.get(matched.id) || 0) + 1);

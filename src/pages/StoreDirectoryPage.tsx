@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { supabase, type Store as StoreType, type Category, type NavigationNode } from '../lib/supabase';
 import { extractBlocksFromNodes, matchStoreToBlock, type BlockEntity } from '../utils/blocks';
+import { isFacilityStore } from '../utils/facilities';
 
 type ViewMode = 'blocks' | 'list' | 'grid';
 
@@ -81,7 +82,8 @@ export function StoreDirectoryPage() {
         supabase.from('navigation_nodes').select('*'),
       ]);
 
-      setStores(storesRes.data || []);
+      const allStores = (storesRes.data || []) as StoreType[];
+      setStores(allStores.filter((s) => !isFacilityStore(s)));
       setCategories(categoriesRes.data || []);
       setNodes(nodesRes.data || []);
     } catch (err) {

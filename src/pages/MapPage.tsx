@@ -49,26 +49,8 @@ import {
 import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
 import { GPSKalmanFilter } from '../utils/gpsFilter';
+import { isFacilityStore } from '../utils/facilities';
 
-// ─── Facility Detection Helper ────────────────────────────────────────────────
-/**
- * Returns true if a store entry represents a venue facility (washroom, canteen,
- * first aid, etc.) rather than an exhibition stall/booth.
- * Facilities are excluded from the guided tour planner.
- */
-function isFacilityStore(store: StoreType): boolean {
-  const text = `${store.name} ${store.description || ''} ${(store as any).categories?.name || ''}`.toLowerCase();
-  const FACILITY_KEYWORDS = [
-    'washroom', 'restroom', 'toilet', 'wc', 'bathroom',
-    'canteen', 'cafeteria', 'food court',
-    'first aid', 'medical', 'clinic', 'doctor',
-    'water point', 'drinking water',
-    'info desk', 'information desk', 'help desk',
-    'prayer room', 'mosque', 'chapel',
-    'security', 'lost and found',
-  ];
-  return FACILITY_KEYWORDS.some((kw) => text.includes(kw));
-}
 
 const DEFAULT_DEMO_STALLS: StoreType[] = [
   {
@@ -2706,12 +2688,9 @@ export function MapPage() {
               >
                 <AlertTriangle size={13} color="#fbbf24" />
               </div>
-              <div style={{ minWidth: 0, lineHeight: 1.3 }}>
-                <span style={{ fontWeight: 700, color: '#fbbf24' }}>
-                  Low Signal Strength
-                </span>
-                <span style={{ opacity: 0.88, marginLeft: '0.35rem', fontSize: '0.72rem' }}>
-                  (±{Math.round(gpsAccuracy)}m accuracy — position may drift)
+              <div style={{ minWidth: 0, lineHeight: 1 }}>
+                <span style={{ fontWeight: 700, color: '#fbbf24', fontSize: '0.78rem' }}>
+                  Low Accuracy
                 </span>
               </div>
               <button
