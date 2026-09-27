@@ -21,6 +21,7 @@ import {
   FastForward,
   ChevronLeft,
   RotateCcw,
+  DoorOpen,
 } from 'lucide-react';
 import { useLiveBroadcast } from '../contexts/LiveBroadcastContext';
 import { StallTourSelectModal } from '../components/StallTourSelectModal';
@@ -45,6 +46,8 @@ import {
   isEntranceNode,
   isPointNearVenueGraph,
   advanceRouteOnEarlyTurn,
+  getDesignatedExitGate,
+  optimizeStallVisitOrderWithExitGate,
 } from '../utils/dijkstra';
 import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
@@ -304,7 +307,19 @@ export function MapPage() {
   const [showMesh, setShowMesh] = useState(false);
 
   // Settings & Guided Tour states
-  const [exhibitionSettings, setExhibitionSettings] = useState({
+  const [exhibitionSettings, setExhibitionSettings] = useState<{
+    entrance_latitude: number;
+    entrance_longitude: number;
+    entrance_threshold_meters: number;
+    premises_center_latitude: number;
+    premises_center_longitude: number;
+    premises_radius_meters: number;
+    school_boundary_enabled: boolean;
+    exit_gate_node_id?: string | null;
+    exit_latitude?: number | null;
+    exit_longitude?: number | null;
+    exit_gate_label?: string | null;
+  }>({
     entrance_latitude: 6.53586,
     entrance_longitude: 80.40035,
     entrance_threshold_meters: 20.0,
@@ -312,6 +327,10 @@ export function MapPage() {
     premises_center_longitude: 80.401000,
     premises_radius_meters: 150.0,
     school_boundary_enabled: true,
+    exit_gate_node_id: null,
+    exit_latitude: null,
+    exit_longitude: null,
+    exit_gate_label: null,
   });
   const exhibitionSettingsRef = useRef(exhibitionSettings);
   useEffect(() => {
@@ -634,6 +653,10 @@ export function MapPage() {
             school_boundary_enabled: parsed.show_school_boundary !== undefined
               ? parsed.show_school_boundary !== false
               : parsed.school_boundary_enabled !== false,
+            exit_gate_node_id: parsed.exit_gate_node_id ?? null,
+            exit_latitude: parsed.exit_latitude ?? null,
+            exit_longitude: parsed.exit_longitude ?? null,
+            exit_gate_label: parsed.exit_gate_label ?? null,
           });
         } catch (jsonErr) {
           console.warn('Error parsing settings JSON:', jsonErr);
@@ -913,7 +936,11 @@ export function MapPage() {
     const sequencedRouteNodes: NavigationNode[] = [];
     let outdoorSegmentLen = 0;
     let totalDistVal = 0;
-    const steps: string[] = [`📍 Tour Stop ${stopIndex + 1} of ${totalStops}: ${targetStore.name}`];
+    const isExitGate = targetStore.id === 'venue-exit-gate-stop';
+    const actualStallsCount = tourStops.filter((s) => s.id !== 'venue-exit-gate-stop').length || totalStops;
+    const steps: string[] = isExitGate
+      ? [`🚪 Final Step: Proceed to Exit Gate (${targetStore.name})`]
+      : [`📍 Tour Stop ${stopIndex + 1} of ${actualStallsCount}: ${targetStore.name}`];
 
     if (isTargetIsolated) {
       // Standalone store outside any entrance venue: direct OSRM
@@ -947,7 +974,7 @@ export function MapPage() {
         outdoorSegmentLen = 2;
         totalDistVal += getDistance(fromLat, fromLng, targetLat, targetLng);
       }
-      steps.push(`Arrive at Stop ${stopIndex + 1}: ${targetStore.name}`);
+      steps.push(isExitGate ? `Arrive at Exit Gate: ${targetStore.name}` : `Arrive at Stop ${stopIndex + 1}: ${targetStore.name}`);
     } else if (isOutsideVenue) {
       // User is outside the venue of this stop: route via OSRM to the shortest distance entrance gate, then node paths inside
       const osrmResult = await fetchOSRMRoute(
@@ -1035,7 +1062,7 @@ export function MapPage() {
         sequencedRouteNodes.push(storeTargetVirtualNode);
         totalDistVal += getDistance(entranceLat, entranceLng, targetLat, targetLng);
       }
-      steps.push(`Arrive at Stop ${stopIndex + 1}: ${targetStore.name}`);
+      steps.push(isExitGate ? `Arrive at Exit Gate: ${targetStore.name}` : `Arrive at Stop ${stopIndex + 1}: ${targetStore.name}`);
     } else {
       // ── INSIDE VENUE ────────────────────────────────────────────────────────
       // Inside the venue: use venue node paths directly to tour stall
@@ -1082,7 +1109,7 @@ export function MapPage() {
         const dist = getDistance(from.latitude, from.longitude, to.latitude, to.longitude);
         totalDistVal += dist;
         if (to.type === 'store' || to.id.startsWith('store-stop-')) {
-          steps.push(`Arrive at: ${to.label} (${Math.round(dist)}m)`);
+          steps.push(isExitGate ? `Arrive at: ${to.label} (${Math.round(dist)}m)` : `Arrive at: ${to.label} (${Math.round(dist)}m)`);
         } else {
           const h = getHeading(from.latitude, from.longitude, to.latitude, to.longitude);
           steps.push(`Head ${h} towards ${to.label} (${Math.round(dist)}m)`);
@@ -1146,51 +1173,51 @@ export function MapPage() {
 
     setLoading(true);
 
-    // 3. Optimal Nearest-Neighbor TSP shortest path order
-    let currentLat = startLatVal;
-    let currentLng = startLngVal;
+    // 2. Identify designated Exit Gate for this venue
+    const designatedExitGate = getDesignatedExitGate(nodes, exhibitionSettings);
 
-    const remaining = [...preparedStores];
-    const orderedTourStops: StoreType[] = [];
+    // 3. Solve Fixed-Endpoint TSP (Start -> Stalls in optimal sequence -> Exit Gate)
+    // to strictly MINIMIZE the visitor's total walking distance!
+    const tourOptimization = optimizeStallVisitOrderWithExitGate(
+      {
+        id: 'tour-user-start',
+        label: 'Tour Start',
+        latitude: startLatVal,
+        longitude: startLngVal,
+      },
+      designatedExitGate,
+      preparedStores,
+      nodes,
+      edges
+    );
 
-    while (remaining.length > 0) {
-      let bestIndex = 0;
-      let minDistance = Infinity;
+    // 4. Create virtual Exit Gate store representation as final tour destination
+    const exitGateStore: StoreType = {
+      id: 'venue-exit-gate-stop',
+      name: designatedExitGate.label || 'Exit Gate',
+      description: 'Designated Exhibition Exit Gate — Conclude your visit here',
+      floor: designatedExitGate.floor || '1',
+      latitude: designatedExitGate.latitude,
+      longitude: designatedExitGate.longitude,
+      logo_url: null,
+      category_id: null,
+      exhibition_id: null,
+      opening_time: null,
+      closing_time: null,
+      phone: null,
+      email: null,
+      website: null,
+      is_active: true,
+      created_by: null,
+      store_admin_id: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
 
-      for (let i = 0; i < remaining.length; i++) {
-        const store = remaining[i];
-        const p = calculateShortestPathBetweenCoordinates(
-          currentLat,
-          currentLng,
-          store.latitude!,
-          store.longitude!,
-          nodes,
-          edges
-        );
-
-        let d = Infinity;
-        if (p && p.length > 0) {
-          d = 0;
-          for (let j = 0; j < p.length - 1; j++) {
-            d += getDistance(p[j].latitude, p[j].longitude, p[j + 1].latitude, p[j + 1].longitude);
-          }
-          d += getDistance(p[p.length - 1].latitude, p[p.length - 1].longitude, store.latitude!, store.longitude!);
-        } else {
-          d = getDistance(currentLat, currentLng, store.latitude!, store.longitude!) + 1000;
-        }
-
-        if (d < minDistance) {
-          minDistance = d;
-          bestIndex = i;
-        }
-      }
-
-      const nextStore = remaining[bestIndex];
-      remaining.splice(bestIndex, 1);
-      orderedTourStops.push(nextStore);
-      currentLat = nextStore.latitude!;
-      currentLng = nextStore.longitude!;
-    }
+    const orderedTourStops: StoreType[] = [
+      ...tourOptimization.orderedStalls,
+      exitGateStore,
+    ];
 
     setLoading(false);
 
@@ -1227,61 +1254,75 @@ export function MapPage() {
 
     // If guided tour is active
     if (guidedTourActive && tourStops.length > 0) {
-      const currentStop = tourStops[currentTourStopIndex];
-      const isCurrentPlannedStop = currentStop && currentStop.id === storeToMark.id;
+      const actualStalls = tourStops.filter((s) => s.id !== 'venue-exit-gate-stop');
 
-      // Check if all tour stops are now visited
-      const allTourStopsVisited = tourStops.every((s) => updatedVisited.includes(s.id));
-
-      if (allTourStopsVisited) {
+      // 1. If user marks the Exit Gate as visited, the whole tour is finished!
+      if (storeToMark.id === 'venue-exit-gate-stop') {
         setGuidedTourActive(false);
         setCalculatedRoute([]);
         setNavigationActive(false);
         setCompletedTourStats({
-          totalStalls: tourStops.length,
-          totalVisited: updatedVisited.length,
+          totalStalls: actualStalls.length,
+          totalVisited: updatedVisited.filter((id) =>
+            actualStalls.some((s) => s.id === id)
+          ).length,
         });
         setShowTourCompletedModal(true);
         return;
       }
 
-      if (isCurrentPlannedStop) {
-        // Find next unvisited stop index sequentially
-        let nextIndex = currentTourStopIndex + 1;
-        while (nextIndex < tourStops.length && updatedVisited.includes(tourStops[nextIndex].id)) {
-          nextIndex++;
-        }
-        if (nextIndex < tourStops.length) {
-          setCurrentTourStopIndex(nextIndex);
+      // 2. Check if all actual stalls (excluding exit gate) are now visited
+      const allStallsVisited = actualStalls.every((s) => updatedVisited.includes(s.id));
+
+      if (allStallsVisited) {
+        // All stalls have been visited! Transition tour directly to the Exit Gate!
+        const exitGateIndex = tourStops.findIndex((s) => s.id === 'venue-exit-gate-stop');
+        if (exitGateIndex >= 0) {
+          setCurrentTourStopIndex(exitGateIndex);
           const fromLat = userLat !== null ? userLat : (storeToMark.latitude || 6.535472);
           const fromLng = userLng !== null ? userLng : (storeToMark.longitude || 80.401000);
-          routeToTourStop(fromLat, fromLng, tourStops[nextIndex], nextIndex, tourStops.length);
+          routeToTourStop(fromLat, fromLng, tourStops[exitGateIndex], exitGateIndex, tourStops.length);
+          return;
         } else {
-          // Check for any remaining unvisited stop from beginning of tour
-          const remainingIndex = tourStops.findIndex((s) => !updatedVisited.includes(s.id));
-          if (remainingIndex >= 0) {
-            setCurrentTourStopIndex(remainingIndex);
-            const fromLat = userLat !== null ? userLat : (storeToMark.latitude || 6.535472);
-            const fromLng = userLng !== null ? userLng : (storeToMark.longitude || 80.401000);
-            routeToTourStop(fromLat, fromLng, tourStops[remainingIndex], remainingIndex, tourStops.length);
-          } else {
-            setGuidedTourActive(false);
-            setCalculatedRoute([]);
-            setNavigationActive(false);
-            setCompletedTourStats({
-              totalStalls: tourStops.length,
-              totalVisited: updatedVisited.length,
-            });
-            setShowTourCompletedModal(true);
-          }
+          setGuidedTourActive(false);
+          setCalculatedRoute([]);
+          setNavigationActive(false);
+          setCompletedTourStats({
+            totalStalls: actualStalls.length,
+            totalVisited: updatedVisited.filter((id) => actualStalls.some((s) => s.id === id)).length,
+          });
+          setShowTourCompletedModal(true);
+          return;
         }
+      }
+
+      // 3. Otherwise advance to the next unvisited stall sequentially
+      let nextIndex = currentTourStopIndex + 1;
+      while (nextIndex < tourStops.length && updatedVisited.includes(tourStops[nextIndex].id)) {
+        nextIndex++;
+      }
+      if (nextIndex < tourStops.length) {
+        setCurrentTourStopIndex(nextIndex);
+        const fromLat = userLat !== null ? userLat : (storeToMark.latitude || 6.535472);
+        const fromLng = userLng !== null ? userLng : (storeToMark.longitude || 80.401000);
+        routeToTourStop(fromLat, fromLng, tourStops[nextIndex], nextIndex, tourStops.length);
       } else {
-        // User marked a different stall as visited during tour (e.g. visited stall 3 before stall 2)
-        // Keep active tour route directed towards current unvisited tour stop
-        if (currentStop) {
+        // Check for any remaining unvisited stall from beginning of tour
+        const remainingIndex = tourStops.findIndex((s) => !updatedVisited.includes(s.id));
+        if (remainingIndex >= 0) {
+          setCurrentTourStopIndex(remainingIndex);
           const fromLat = userLat !== null ? userLat : (storeToMark.latitude || 6.535472);
           const fromLng = userLng !== null ? userLng : (storeToMark.longitude || 80.401000);
-          routeToTourStop(fromLat, fromLng, currentStop, currentTourStopIndex, tourStops.length);
+          routeToTourStop(fromLat, fromLng, tourStops[remainingIndex], remainingIndex, tourStops.length);
+        } else {
+          setGuidedTourActive(false);
+          setCalculatedRoute([]);
+          setNavigationActive(false);
+          setCompletedTourStats({
+            totalStalls: actualStalls.length,
+            totalVisited: updatedVisited.filter((id) => actualStalls.some((s) => s.id === id)).length,
+          });
+          setShowTourCompletedModal(true);
         }
       }
     } else {
@@ -1302,6 +1343,22 @@ export function MapPage() {
   const handleSkipCurrentStop = () => {
     if (!guidedTourActive || tourStops.length === 0) return;
 
+    const currentStop = tourStops[currentTourStopIndex];
+    const actualStalls = tourStops.filter((s) => s.id !== 'venue-exit-gate-stop');
+
+    if (currentStop?.id === 'venue-exit-gate-stop') {
+      // Skipping exit gate completes the tour
+      setGuidedTourActive(false);
+      setCalculatedRoute([]);
+      setNavigationActive(false);
+      setCompletedTourStats({
+        totalStalls: actualStalls.length,
+        totalVisited: visitedStallIds.filter((id) => actualStalls.some((s) => s.id === id)).length,
+      });
+      setShowTourCompletedModal(true);
+      return;
+    }
+
     const nextIndex = currentTourStopIndex + 1;
     if (nextIndex < tourStops.length) {
       setCurrentTourStopIndex(nextIndex);
@@ -1309,18 +1366,17 @@ export function MapPage() {
       lastPromptedStopIdRef.current = null;
       setArrivedStopPrompt(null);
 
-      const currentStop = tourStops[currentTourStopIndex];
       const fromLat = userLat !== null ? userLat : (currentStop?.latitude || 6.535472);
       const fromLng = userLng !== null ? userLng : (currentStop?.longitude || 80.401000);
       routeToTourStop(fromLat, fromLng, tourStops[nextIndex], nextIndex, tourStops.length);
     } else {
-      // Skipping the final stop completes the tour
+      // Skipping final item completes the tour
       setGuidedTourActive(false);
       setCalculatedRoute([]);
       setNavigationActive(false);
       setCompletedTourStats({
-        totalStalls: tourStops.length,
-        totalVisited: visitedStallIds.filter((id) => tourStops.some((s) => s.id === id)).length,
+        totalStalls: actualStalls.length,
+        totalVisited: visitedStallIds.filter((id) => actualStalls.some((s) => s.id === id)).length,
       });
       setShowTourCompletedModal(true);
     }
@@ -2990,7 +3046,9 @@ export function MapPage() {
                     <div style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       <span style={{ fontWeight: 700, fontSize: '0.86rem', color: '#fff' }}>
                         {guidedTourActive && tourStops.length > 0
-                          ? tourStops[currentTourStopIndex]?.name || 'Next Stall'
+                          ? (tourStops[currentTourStopIndex]?.id === 'venue-exit-gate-stop'
+                              ? `🚪 Exit Gate: ${tourStops[currentTourStopIndex]?.name}`
+                              : tourStops[currentTourStopIndex]?.name || 'Next Stall')
                           : selectedDestinationStoreId
                             ? (stores.find(s => s.id === selectedDestinationStoreId)?.name || 'Exhibitor')
                             : (nodes.find(n => n.id === selectedDestinationNodeId)?.label || 'Destination')}
@@ -3013,15 +3071,17 @@ export function MapPage() {
                           style={{
                             fontSize: '0.72rem',
                             padding: '0.22rem 0.6rem',
-                            background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                            background: tourStops[currentTourStopIndex]?.id === 'venue-exit-gate-stop'
+                              ? 'linear-gradient(135deg, #f59e0b, #d97706)'
+                              : 'linear-gradient(135deg, #22c55e, #16a34a)',
                             border: 'none',
                             fontWeight: 700,
                             borderRadius: '6px',
                           }}
                         >
-                          {currentTourStopIndex + 1 < tourStops.length ? 'Next ✓' : 'Finish 🎉'}
+                          {tourStops[currentTourStopIndex]?.id === 'venue-exit-gate-stop' ? 'Exit 🎉' : (currentTourStopIndex + 1 < tourStops.length ? 'Next ✓' : 'Finish 🎉')}
                         </button>
-                        {currentTourStopIndex + 1 < tourStops.length && (
+                        {currentTourStopIndex + 1 < tourStops.length && tourStops[currentTourStopIndex]?.id !== 'venue-exit-gate-stop' && (
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={(e) => {
@@ -3059,17 +3119,33 @@ export function MapPage() {
                         <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center', minWidth: 0, flex: 1 }}>
                           <div style={{
                             width: 38, height: 38,
-                            background: 'linear-gradient(135deg, #a855f7, #6366f1)',
+                            background: tourStops[currentTourStopIndex]?.id === 'venue-exit-gate-stop'
+                              ? 'linear-gradient(135deg, #f59e0b, #d97706)'
+                              : 'linear-gradient(135deg, #a855f7, #6366f1)',
                             borderRadius: '50%',
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
                             color: '#fff', flexShrink: 0,
-                            boxShadow: '0 4px 12px rgba(168, 85, 247, 0.4)'
+                            boxShadow: tourStops[currentTourStopIndex]?.id === 'venue-exit-gate-stop'
+                              ? '0 4px 12px rgba(245, 158, 11, 0.4)'
+                              : '0 4px 12px rgba(168, 85, 247, 0.4)'
                           }}>
-                            <Compass size={20} />
+                            {tourStops[currentTourStopIndex]?.id === 'venue-exit-gate-stop' ? (
+                              <DoorOpen size={20} />
+                            ) : (
+                              <Compass size={20} />
+                            )}
                           </div>
                           <div style={{ minWidth: 0, flex: 1 }}>
-                            <div style={{ fontSize: '0.65rem', fontWeight: 800, color: '#22d3ee', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                              🎪 GUIDED TOUR · STOP {currentTourStopIndex + 1} OF {tourStops.length}
+                            <div style={{
+                              fontSize: '0.65rem',
+                              fontWeight: 800,
+                              color: tourStops[currentTourStopIndex]?.id === 'venue-exit-gate-stop' ? '#fbbf24' : '#22d3ee',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.05em'
+                            }}>
+                              {tourStops[currentTourStopIndex]?.id === 'venue-exit-gate-stop'
+                                ? '🚪 FINAL DESTINATION · EXIT GATE'
+                                : `🎪 GUIDED TOUR · STOP ${currentTourStopIndex + 1} OF ${tourStops.filter(s => s.id !== 'venue-exit-gate-stop').length} (STALLS)`}
                             </div>
                             <h3 style={{ fontSize: '0.98rem', fontWeight: 800, margin: '0.05rem 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {tourStops[currentTourStopIndex]?.name || 'Next Stall'}
@@ -3116,7 +3192,9 @@ export function MapPage() {
                             flex: '1 1 120px',
                             fontSize: '0.82rem',
                             padding: '0.45rem 0.8rem',
-                            background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                            background: tourStops[currentTourStopIndex]?.id === 'venue-exit-gate-stop'
+                              ? 'linear-gradient(135deg, #f59e0b, #d97706)'
+                              : 'linear-gradient(135deg, #22c55e, #16a34a)',
                             border: 'none',
                             fontWeight: 700,
                             display: 'flex',
@@ -3124,16 +3202,27 @@ export function MapPage() {
                             justifyContent: 'center',
                             gap: '0.35rem',
                             borderRadius: '10px',
-                            boxShadow: '0 2px 8px rgba(34, 197, 94, 0.35)',
+                            boxShadow: tourStops[currentTourStopIndex]?.id === 'venue-exit-gate-stop'
+                              ? '0 2px 8px rgba(245, 158, 11, 0.35)'
+                              : '0 2px 8px rgba(34, 197, 94, 0.35)',
                           }}
-                          title="Mark stall as visited and route to next stall"
+                          title={tourStops[currentTourStopIndex]?.id === 'venue-exit-gate-stop' ? 'Complete tour and exit exhibition' : 'Mark stall as visited and route to next stall'}
                         >
-                          <Check size={15} />
-                          <span>{currentTourStopIndex + 1 < tourStops.length ? 'Next Stall ✓' : 'Finish Tour 🎉'}</span>
+                          {tourStops[currentTourStopIndex]?.id === 'venue-exit-gate-stop' ? (
+                            <>
+                              <DoorOpen size={15} />
+                              <span>Exit Exhibition 🎉</span>
+                            </>
+                          ) : (
+                            <>
+                              <Check size={15} />
+                              <span>{currentTourStopIndex + 1 < tourStops.length ? (tourStops[currentTourStopIndex + 1]?.id === 'venue-exit-gate-stop' ? 'Done → Proceed to Exit 🚪' : 'Next Stall ✓') : 'Finish Tour 🎉'}</span>
+                            </>
+                          )}
                         </button>
 
                         {/* Skip Store Button */}
-                        {currentTourStopIndex + 1 < tourStops.length && (
+                        {currentTourStopIndex + 1 < tourStops.length && tourStops[currentTourStopIndex]?.id !== 'venue-exit-gate-stop' && (
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={handleSkipCurrentStop}
@@ -3558,29 +3647,33 @@ export function MapPage() {
                     width: 38,
                     height: 38,
                     borderRadius: '50%',
-                    background: 'rgba(34, 211, 238, 0.18)',
+                    background: arrivedStopPrompt.id === 'venue-exit-gate-stop'
+                      ? 'rgba(245, 158, 11, 0.2)'
+                      : 'rgba(34, 211, 238, 0.18)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#22d3ee',
+                    color: arrivedStopPrompt.id === 'venue-exit-gate-stop' ? '#fbbf24' : '#22d3ee',
                     flexShrink: 0,
                   }}
                 >
-                  <Store size={20} />
+                  {arrivedStopPrompt.id === 'venue-exit-gate-stop' ? <DoorOpen size={20} /> : <Store size={20} />}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <span
                     style={{
                       fontSize: '0.68rem',
                       fontWeight: 800,
-                      color: '#22d3ee',
+                      color: arrivedStopPrompt.id === 'venue-exit-gate-stop' ? '#fbbf24' : '#22d3ee',
                       textTransform: 'uppercase',
                       letterSpacing: '0.05em',
                     }}
                   >
-                    {guidedTourActive && tourStops.length > 0 && tourStops[currentTourStopIndex]?.id === arrivedStopPrompt.id
-                      ? `🎯 Arrived at Stop ${currentTourStopIndex + 1} of ${tourStops.length}`
-                      : '📍 Near Exhibition Stall'}
+                    {arrivedStopPrompt.id === 'venue-exit-gate-stop'
+                      ? '🚪 Arrived at Exit Gate'
+                      : guidedTourActive && tourStops.length > 0 && tourStops[currentTourStopIndex]?.id === arrivedStopPrompt.id
+                        ? `🎯 Arrived at Stop ${currentTourStopIndex + 1} of ${tourStops.filter(s => s.id !== 'venue-exit-gate-stop').length}`
+                        : '📍 Near Exhibition Stall'}
                   </span>
                   <h4
                     style={{
@@ -3599,8 +3692,10 @@ export function MapPage() {
               </div>
 
               <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--color-muted)', lineHeight: 1.45 }}>
-                {guidedTourActive && tourStops.length > 0 && tourStops[currentTourStopIndex]?.id === arrivedStopPrompt.id ? (
-                  <>Have you finished visiting <strong>{arrivedStopPrompt.name}</strong>? Mark as visited to see the route to the next store!</>
+                {arrivedStopPrompt.id === 'venue-exit-gate-stop' ? (
+                  <>You have reached the designated <strong>{arrivedStopPrompt.name}</strong>! Ready to complete your tour and exit?</>
+                ) : guidedTourActive && tourStops.length > 0 && tourStops[currentTourStopIndex]?.id === arrivedStopPrompt.id ? (
+                  <>Have you finished visiting <strong>{arrivedStopPrompt.name}</strong>? Mark as visited to see the route to the next stop!</>
                 ) : (
                   <>Visiting <strong>{arrivedStopPrompt.name}</strong>? Mark as visited to track your exhibition progress!</>
                 )}
@@ -3612,32 +3707,47 @@ export function MapPage() {
                   style={{ flex: 1, fontSize: '0.78rem' }}
                   onClick={() => setArrivedStopPrompt(null)}
                 >
-                  {guidedTourActive && tourStops.length > 0 && tourStops[currentTourStopIndex]?.id === arrivedStopPrompt.id
-                    ? 'Still Visiting'
-                    : 'Not Now'}
+                  {arrivedStopPrompt.id === 'venue-exit-gate-stop'
+                    ? 'Stay on Map'
+                    : guidedTourActive && tourStops.length > 0 && tourStops[currentTourStopIndex]?.id === arrivedStopPrompt.id
+                      ? 'Still Visiting'
+                      : 'Not Now'}
                 </button>
                 <button
                   className="btn btn-primary btn-sm"
                   style={{
                     flex: 1.4,
                     fontSize: '0.78rem',
-                    background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                    background: arrivedStopPrompt.id === 'venue-exit-gate-stop'
+                      ? 'linear-gradient(135deg, #f59e0b, #d97706)'
+                      : 'linear-gradient(135deg, #22c55e, #16a34a)',
                     border: 'none',
                     fontWeight: 700,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: '0.35rem',
-                    boxShadow: '0 2px 8px rgba(34, 197, 94, 0.35)',
+                    boxShadow: arrivedStopPrompt.id === 'venue-exit-gate-stop'
+                      ? '0 2px 8px rgba(245, 158, 11, 0.35)'
+                      : '0 2px 8px rgba(34, 197, 94, 0.35)',
                   }}
                   onClick={() => {
                     handleMarkStopVisited(arrivedStopPrompt);
                   }}
                 >
-                  <Check size={14} />
-                  {guidedTourActive && tourStops.length > 0 && tourStops[currentTourStopIndex]?.id === arrivedStopPrompt.id
-                    ? (currentTourStopIndex + 1 < tourStops.length ? 'Visited → Next Stop' : 'Finish Tour 🎉')
-                    : 'Mark as Visited ✓'}
+                  {arrivedStopPrompt.id === 'venue-exit-gate-stop' ? (
+                    <>
+                      <DoorOpen size={14} />
+                      <span>Exit & Finish 🎉</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check size={14} />
+                      {guidedTourActive && tourStops.length > 0 && tourStops[currentTourStopIndex]?.id === arrivedStopPrompt.id
+                        ? (currentTourStopIndex + 1 < tourStops.length ? 'Visited → Next Stop' : 'Finish Tour 🎉')
+                        : 'Mark as Visited ✓'}
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -3998,22 +4108,31 @@ export function MapPage() {
                   {(guidedTourActive && tourStops.length > 0 ? tourStops : stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s))).map((stall, idx) => {
                     const isVisited = visitedStallIds.includes(stall.id);
                     const isCurrent = guidedTourActive && idx === currentTourStopIndex;
+                    const isExitGate = stall.id === 'venue-exit-gate-stop';
 
                     return (
                       <div
                         key={stall.id}
                         style={{
-                          background: isCurrent
-                            ? 'rgba(34, 211, 238, 0.08)'
-                            : isVisited
-                              ? 'rgba(34, 197, 94, 0.06)'
-                              : 'rgba(255, 255, 255, 0.03)',
-                          border: `1px solid ${
-                            isCurrent
-                              ? 'rgba(34, 211, 238, 0.45)'
+                          background: isExitGate
+                            ? isCurrent
+                              ? 'rgba(168, 85, 247, 0.14)'
+                              : 'rgba(168, 85, 247, 0.06)'
+                            : isCurrent
+                              ? 'rgba(34, 211, 238, 0.08)'
                               : isVisited
-                                ? 'rgba(34, 197, 94, 0.3)'
-                                : 'rgba(255, 255, 255, 0.08)'
+                                ? 'rgba(34, 197, 94, 0.06)'
+                                : 'rgba(255, 255, 255, 0.03)',
+                          border: `1px solid ${
+                            isExitGate
+                              ? isCurrent
+                                ? 'rgba(168, 85, 247, 0.55)'
+                                : 'rgba(168, 85, 247, 0.25)'
+                              : isCurrent
+                                ? 'rgba(34, 211, 238, 0.45)'
+                                : isVisited
+                                  ? 'rgba(34, 197, 94, 0.3)'
+                                  : 'rgba(255, 255, 255, 0.08)'
                           }`,
                           borderRadius: '14px',
                           padding: '0.75rem 0.85rem',
@@ -4032,28 +4151,30 @@ export function MapPage() {
                                 width: 28,
                                 height: 28,
                                 borderRadius: '8px',
-                                background: isVisited
-                                  ? 'rgba(34, 197, 94, 0.2)'
-                                  : isCurrent
-                                    ? 'rgba(34, 211, 238, 0.2)'
-                                    : 'rgba(255, 255, 255, 0.06)',
+                                background: isExitGate
+                                  ? 'rgba(168, 85, 247, 0.2)'
+                                  : isVisited
+                                    ? 'rgba(34, 197, 94, 0.2)'
+                                    : isCurrent
+                                      ? 'rgba(34, 211, 238, 0.2)'
+                                      : 'rgba(255, 255, 255, 0.06)',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                color: isVisited ? '#22c55e' : isCurrent ? '#22d3ee' : 'var(--color-muted)',
+                                color: isExitGate ? '#c084fc' : isVisited ? '#22c55e' : isCurrent ? '#22d3ee' : 'var(--color-muted)',
                                 fontWeight: 800,
-                                fontSize: '0.75rem',
+                                fontSize: isExitGate ? '0.9rem' : '0.75rem',
                                 flexShrink: 0,
                               }}
                             >
-                              {isVisited ? '✓' : idx + 1}
+                              {isExitGate ? '🚪' : isVisited ? '✓' : idx + 1}
                             </div>
                             <div style={{ minWidth: 0, flex: 1 }}>
-                              <div style={{ fontWeight: 700, fontSize: '0.88rem', color: isVisited ? '#e2e8f0' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              <div style={{ fontWeight: 700, fontSize: '0.88rem', color: isExitGate ? '#e9d5ff' : isVisited ? '#e2e8f0' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {stall.name}
                               </div>
-                              <div style={{ fontSize: '0.7rem', color: 'var(--color-muted)' }}>
-                                {stall.floor ? `🏢 ${stall.floor}` : 'Exhibition Hall'}
+                              <div style={{ fontSize: '0.7rem', color: isExitGate ? '#c084fc' : 'var(--color-muted)' }}>
+                                {isExitGate ? 'Final Venue Exit • Tour End' : stall.floor ? `🏢 ${stall.floor}` : 'Exhibition Hall'}
                               </div>
                             </div>
                           </div>
@@ -4075,33 +4196,34 @@ export function MapPage() {
                                   gap: '0.25rem',
                                 }}
                               >
-                                ✓ Visited
+                                {isExitGate ? '✓ Tour Completed' : '✓ Visited'}
                               </span>
                             ) : isCurrent ? (
                               <span
                                 style={{
                                   fontSize: '0.68rem',
                                   fontWeight: 700,
-                                  color: '#22d3ee',
-                                  background: 'rgba(34, 211, 238, 0.15)',
-                                  border: '1px solid rgba(34, 211, 238, 0.35)',
+                                  color: isExitGate ? '#c084fc' : '#22d3ee',
+                                  background: isExitGate ? 'rgba(168, 85, 247, 0.15)' : 'rgba(34, 211, 238, 0.15)',
+                                  border: `1px solid ${isExitGate ? 'rgba(168, 85, 247, 0.35)' : 'rgba(34, 211, 238, 0.35)'}`,
                                   padding: '0.15rem 0.5rem',
                                   borderRadius: '6px',
                                 }}
                               >
-                                📍 Active Stop
+                                {isExitGate ? '🚪 Exiting Venue' : '📍 Active Stop'}
                               </span>
                             ) : (
                               <span
                                 style={{
                                   fontSize: '0.68rem',
-                                  color: 'var(--color-muted)',
-                                  background: 'rgba(255, 255, 255, 0.05)',
+                                  color: isExitGate ? '#c084fc' : 'var(--color-muted)',
+                                  background: isExitGate ? 'rgba(168, 85, 247, 0.1)' : 'rgba(255, 255, 255, 0.05)',
+                                  border: isExitGate ? '1px solid rgba(168, 85, 247, 0.25)' : 'none',
                                   padding: '0.15rem 0.45rem',
                                   borderRadius: '6px',
                                 }}
                               >
-                                Upcoming
+                                {isExitGate ? '🚪 Exit Gate' : 'Upcoming'}
                               </span>
                             )}
                           </div>
@@ -4132,7 +4254,7 @@ export function MapPage() {
                                   justifyContent: 'center',
                                   gap: '0.3rem',
                                 }}
-                                title="Revisit this stall (routes here now and marks unvisited)"
+                                title="Revisit this stop (routes here now and marks unvisited)"
                               >
                                 <RotateCcw size={13} />
                                 <span>Revisit</span>
@@ -4184,8 +4306,12 @@ export function MapPage() {
                                   flex: 1,
                                   fontSize: '0.74rem',
                                   padding: '0.35rem 0.6rem',
-                                  background: isCurrent ? 'linear-gradient(135deg, #06b6d4, #3b82f6)' : 'rgba(255, 255, 255, 0.06)',
-                                  border: isCurrent ? 'none' : '1px solid rgba(255, 255, 255, 0.15)',
+                                  background: isExitGate
+                                    ? 'linear-gradient(135deg, #a855f7, #6366f1)'
+                                    : isCurrent
+                                      ? 'linear-gradient(135deg, #06b6d4, #3b82f6)'
+                                      : 'rgba(255, 255, 255, 0.06)',
+                                  border: isExitGate || isCurrent ? 'none' : '1px solid rgba(255, 255, 255, 0.15)',
                                   color: '#fff',
                                   fontWeight: 600,
                                   borderRadius: '8px',
@@ -4196,7 +4322,7 @@ export function MapPage() {
                                 }}
                               >
                                 <Navigation size={13} />
-                                <span>{isCurrent ? 'Navigating Here' : 'Navigate Here'}</span>
+                                <span>{isExitGate ? (isCurrent ? 'Navigating to Exit' : 'Exit Venue Now') : isCurrent ? 'Navigating Here' : 'Navigate Here'}</span>
                               </button>
 
                               {/* Mark Visited Button */}
@@ -4207,7 +4333,9 @@ export function MapPage() {
                                   flex: 1,
                                   fontSize: '0.74rem',
                                   padding: '0.35rem 0.6rem',
-                                  background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                                  background: isExitGate
+                                    ? 'linear-gradient(135deg, #10b981, #059669)'
+                                    : 'linear-gradient(135deg, #22c55e, #16a34a)',
                                   border: 'none',
                                   color: '#fff',
                                   fontWeight: 700,
@@ -4219,7 +4347,7 @@ export function MapPage() {
                                 }}
                               >
                                 <Check size={13} />
-                                <span>Mark Visited</span>
+                                <span>{isExitGate ? 'Finish Tour & Exit' : 'Mark Visited'}</span>
                               </button>
                             </>
                           )}

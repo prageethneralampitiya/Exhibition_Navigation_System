@@ -414,7 +414,7 @@ export function StallTourSelectModal({
                   lineHeight: 1.4,
                 }}
               >
-                Select the stalls you wish to visit under each block and floor level.
+                Select the stalls you wish to visit. Route optimizes for minimum walking distance and guides you to the Exit Gate.
               </p>
             </div>
           </div>
@@ -436,6 +436,25 @@ export function StallTourSelectModal({
           >
             <X size={18} />
           </button>
+        </div>
+
+        {/* ── Shortest Path & Single Exit Information Badge ───── */}
+        <div
+          style={{
+            padding: '0.45rem 1.5rem',
+            background: 'linear-gradient(90deg, rgba(99, 102, 241, 0.1), rgba(168, 85, 247, 0.12))',
+            borderBottom: '1px solid rgba(168, 85, 247, 0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            fontSize: '0.75rem',
+            color: '#c4b5fd',
+          }}
+        >
+          <span style={{ fontSize: '0.9rem' }}>🚪</span>
+          <span>
+            <strong>Single Exit Gate Navigation:</strong> All selected stalls are ordered for the <em>shortest walking distance</em>, concluding at the venue Exit Gate.
+          </span>
         </div>
 
         {/* ── Toolbar: Search & Selection Controls ───────────── */}

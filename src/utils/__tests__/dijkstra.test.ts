@@ -9,6 +9,8 @@ import {
   getHeading,
   advanceRouteOnEarlyTurn,
   computeCrowdCalibratedCoordinates,
+  getDesignatedExitGate,
+  optimizeStallVisitOrderWithExitGate,
 } from '../dijkstra';
 import { type NavigationNode, type NavigationEdge } from '../../lib/supabase';
 
@@ -323,6 +325,100 @@ describe('dijkstra.ts - Navigation Engine', () => {
       const res = computeCrowdCalibratedCoordinates(originalLat, originalLng, samples, 0.5);
       expect(res.shiftMeters).toBeGreaterThan(0);
       expect(res.lat).toBeLessThan(originalLat); // Shifted toward crowd samples
+    });
+  });
+
+  // ─── 10. Exit Gate Determination & TSP Minimum Distance Tour ───────────────
+  describe('getDesignatedExitGate', () => {
+    const nodes: NavigationNode[] = [
+      { id: 'n-ent', label: 'Entrance Gate', latitude: 6.5350, longitude: 80.4010, floor: '1', type: 'entrance', store_id: null, created_at: '' },
+      { id: 'n-path', label: 'Central Corridor', latitude: 6.5355, longitude: 80.4010, floor: '1', type: 'path', store_id: null, created_at: '' },
+      { id: 'n-exit', label: 'School Exit Gate', latitude: 6.5360, longitude: 80.4010, floor: '1', type: 'path', store_id: null, created_at: '' },
+    ];
+
+    it('identifies explicit exit node from graph when label contains exit', () => {
+      const exit = getDesignatedExitGate(nodes);
+      expect(exit.id).toBe('n-exit');
+      expect(exit.label).toContain('Exit');
+    });
+
+    it('respects explicitly configured exit gate node ID in settings', () => {
+      const exit = getDesignatedExitGate(nodes, { exit_gate_node_id: 'n-path', exit_gate_label: 'Custom Exit Door' });
+      expect(exit.id).toBe('n-path');
+      expect(exit.label).toBe('Custom Exit Door');
+    });
+
+    it('falls back to configured coordinates if provided', () => {
+      const exit = getDesignatedExitGate([], {
+        exit_latitude: 6.5370,
+        exit_longitude: 80.4020,
+        exit_gate_label: 'North Gate Exit',
+      });
+      expect(exit.latitude).toBe(6.5370);
+      expect(exit.longitude).toBe(80.4020);
+      expect(exit.label).toBe('North Gate Exit');
+    });
+  });
+
+  describe('optimizeStallVisitOrderWithExitGate', () => {
+    // Linear walkway:
+    // Start (lat 6.530) -> Stall A (lat 6.532) -> Stall B (lat 6.534) -> Stall C (lat 6.536) -> Exit (lat 6.538)
+    const startPoint = { id: 'start', label: 'Entrance', latitude: 6.5300, longitude: 80.4000 };
+    const exitGate = { id: 'exit', label: 'Exit Gate', latitude: 6.5380, longitude: 80.4000 };
+
+    const stallA = { id: 'stall-a', name: 'Stall A', latitude: 6.5320, longitude: 80.4000 };
+    const stallB = { id: 'stall-b', name: 'Stall B', latitude: 6.5340, longitude: 80.4000 };
+    const stallC = { id: 'stall-c', name: 'Stall C', latitude: 6.5360, longitude: 80.4000 };
+
+    it('optimizes visiting order to strictly minimize walking distance to the Exit Gate', () => {
+      // Pass stalls in reverse/jumbled order [C, A, B]
+      const result = optimizeStallVisitOrderWithExitGate(
+        startPoint,
+        exitGate,
+        [stallC, stallA, stallB],
+        [],
+        []
+      );
+
+      // Minimum path MUST be Start -> Stall A -> Stall B -> Stall C -> Exit Gate
+      // (any other sequence like Start -> C -> A -> B -> Exit would backtrack multiple times)
+      expect(result.orderedStalls.map((s) => s.id)).toEqual(['stall-a', 'stall-b', 'stall-c']);
+      expect(result.exitGate.id).toBe('exit');
+      expect(result.legDistances.length).toBe(4); // 3 stalls + 1 final leg to exit
+    });
+
+    it('guarantees the stall closest to the Exit Gate is visited last when optimal', () => {
+      // Start is at lat 6.5300, Exit is at 6.5380.
+      // Stall 1 is at 6.5310 (near start), Stall 2 is at 6.5370 (near exit).
+      const result = optimizeStallVisitOrderWithExitGate(
+        startPoint,
+        exitGate,
+        [
+          { id: 'near-exit', name: 'Near Exit', latitude: 6.5370, longitude: 80.4000 },
+          { id: 'near-start', name: 'Near Start', latitude: 6.5310, longitude: 80.4000 },
+        ],
+        [],
+        []
+      );
+
+      // Order must be near-start first, then near-exit last before exiting
+      expect(result.orderedStalls[0].id).toBe('near-start');
+      expect(result.orderedStalls[1].id).toBe('near-exit');
+    });
+
+    it('correctly handles 1 single stall with start and exit', () => {
+      const result = optimizeStallVisitOrderWithExitGate(
+        startPoint,
+        exitGate,
+        [stallB],
+        [],
+        []
+      );
+
+      expect(result.orderedStalls.length).toBe(1);
+      expect(result.orderedStalls[0].id).toBe('stall-b');
+      expect(result.legDistances.length).toBe(2);
+      expect(result.totalDistanceMeters).toBeGreaterThan(0);
     });
   });
 });

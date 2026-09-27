@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CalendarDays, Store, Megaphone, Users, Activity, Settings, ShieldCheck, ShieldAlert, CheckCircle2, Radio } from 'lucide-react';
+import { CalendarDays, Store, Megaphone, Users, Activity, Settings, ShieldCheck, ShieldAlert, CheckCircle2, Radio, DoorOpen } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { StatCard } from '../../components/admin/StatCard';
 import { fetchLiveCounterConfig, saveLiveCounterConfig } from '../../services/appSettingsService';
@@ -35,6 +35,14 @@ export function AdminDashboardPage() {
   const [entranceLat, setEntranceLat] = useState('6.535472');
   const [entranceLng, setEntranceLng] = useState('80.401000');
   const [entranceThreshold, setEntranceThreshold] = useState('20');
+  
+  // Designated Exit Gate states (Single exit gate for all visitor tours)
+  const [exitGateNodeId, setExitGateNodeId] = useState<string>('');
+  const [exitLat, setExitLat] = useState('6.53586');
+  const [exitLng, setExitLng] = useState('80.40035');
+  const [exitGateLabel, setExitGateLabel] = useState('Main Exit Gate');
+  const [availableNodes, setAvailableNodes] = useState<Array<{ id: string; label: string; floor?: string; type?: string; latitude: number; longitude: number }>>([]);
+
   const [premisesLat, setPremisesLat] = useState('6.535472');
   const [premisesLng, setPremisesLng] = useState('80.401000');
   const [premisesRadius, setPremisesRadius] = useState('150');
@@ -92,21 +100,37 @@ export function AdminDashboardPage() {
         });
 
         // 3. Fetch recent activity (e.g. latest active announcements, latest visitor registrations, and latest anonymous guest sessions)
-        // 4. Fetch existing settings
-        const { data: settingsRes } = await supabase
-          .from('announcements')
-          .select('*')
-          .eq('type', 'settings')
-          .limit(1);
+        // 4. Fetch existing settings & navigation nodes
+        const [settingsRes, nodesRes] = await Promise.all([
+          supabase
+            .from('announcements')
+            .select('*')
+            .eq('type', 'settings')
+            .limit(1),
+          supabase
+            .from('navigation_nodes')
+            .select('id, label, floor, type, latitude, longitude')
+            .order('label'),
+        ]);
 
-        if (settingsRes && settingsRes.length > 0) {
-          const s = settingsRes[0];
+        if (nodesRes.data) {
+          setAvailableNodes(nodesRes.data);
+        }
+
+        if (settingsRes.data && settingsRes.data.length > 0) {
+          const s = settingsRes.data[0];
           setSettingsId(s.id);
           try {
             const parsed = JSON.parse(s.message);
             setEntranceLat(String(parsed.entrance_latitude ?? '6.53586'));
             setEntranceLng(String(parsed.entrance_longitude ?? '80.40035'));
             setEntranceThreshold(String(parsed.entrance_threshold_meters ?? '20'));
+            
+            setExitGateNodeId(parsed.exit_gate_node_id || '');
+            setExitLat(String(parsed.exit_latitude ?? parsed.entrance_latitude ?? '6.53586'));
+            setExitLng(String(parsed.exit_longitude ?? parsed.entrance_longitude ?? '80.40035'));
+            setExitGateLabel(parsed.exit_gate_label || 'Main Exit Gate');
+
             setPremisesLat(String(parsed.premises_center_latitude ?? '6.535472'));
             setPremisesLng(String(parsed.premises_center_longitude ?? '80.401000'));
             setPremisesRadius(String(parsed.premises_radius_meters ?? '150'));
@@ -219,6 +243,19 @@ export function AdminDashboardPage() {
     loadDashboardData();
   }, []);
 
+  const handleSelectExitNode = (nodeId: string) => {
+    setExitGateNodeId(nodeId);
+    if (!nodeId) return;
+    const node = availableNodes.find((n) => n.id === nodeId);
+    if (node) {
+      setExitLat(String(node.latitude));
+      setExitLng(String(node.longitude));
+      if (!exitGateLabel || exitGateLabel === 'Main Exit Gate') {
+        setExitGateLabel(node.label);
+      }
+    }
+  };
+
   const handleQuickToggleBoundary = async (enabled: boolean) => {
     setSchoolBoundaryEnabled(enabled);
     setSettingsSaving(true);
@@ -227,6 +264,10 @@ export function AdminDashboardPage() {
         entrance_latitude: parseFloat(entranceLat) || 6.53586,
         entrance_longitude: parseFloat(entranceLng) || 80.40035,
         entrance_threshold_meters: parseFloat(entranceThreshold) || 20,
+        exit_gate_node_id: exitGateNodeId || null,
+        exit_latitude: parseFloat(exitLat) || parseFloat(entranceLat) || 6.53586,
+        exit_longitude: parseFloat(exitLng) || parseFloat(entranceLng) || 80.40035,
+        exit_gate_label: exitGateLabel.trim() || 'Main Exit Gate',
         premises_center_latitude: parseFloat(premisesLat) || 6.535472,
         premises_center_longitude: parseFloat(premisesLng) || 80.401000,
         premises_radius_meters: parseFloat(premisesRadius) || 150,
@@ -275,6 +316,10 @@ export function AdminDashboardPage() {
         entrance_latitude: parseFloat(entranceLat),
         entrance_longitude: parseFloat(entranceLng),
         entrance_threshold_meters: parseFloat(entranceThreshold),
+        exit_gate_node_id: exitGateNodeId || null,
+        exit_latitude: parseFloat(exitLat) || parseFloat(entranceLat) || 6.53586,
+        exit_longitude: parseFloat(exitLng) || parseFloat(entranceLng) || 80.40035,
+        exit_gate_label: exitGateLabel.trim() || 'Main Exit Gate',
         premises_center_latitude: parseFloat(premisesLat),
         premises_center_longitude: parseFloat(premisesLng),
         premises_radius_meters: parseFloat(premisesRadius),
@@ -494,6 +539,100 @@ export function AdminDashboardPage() {
                   onChange={(e) => setEntranceThreshold(e.target.value)}
                   placeholder="e.g. 20"
                 />
+              </div>
+            </div>
+
+            {/* Designated Exit Gate Settings */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#f59e0b', margin: 0, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <DoorOpen size={16} />
+                  Designated Exit Gate
+                </h3>
+                <span
+                  style={{
+                    fontSize: '0.7rem',
+                    fontWeight: 700,
+                    padding: '0.15rem 0.5rem',
+                    borderRadius: '20px',
+                    background: 'rgba(245, 158, 11, 0.15)',
+                    color: '#fbbf24',
+                    border: '1px solid rgba(245, 158, 11, 0.3)',
+                  }}
+                >
+                  Single Exit Gate
+                </span>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="exit-node-select" style={{ fontSize: '0.75rem' }}>
+                  Choose from Graph Nodes
+                </label>
+                <select
+                  id="exit-node-select"
+                  className="form-select"
+                  value={exitGateNodeId}
+                  onChange={(e) => handleSelectExitNode(e.target.value)}
+                  style={{ fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}
+                >
+                  <option value="">-- Custom / Direct Coordinates --</option>
+                  {availableNodes.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.label} {n.type ? `(${n.type})` : ''} {n.floor ? `· Fl ${n.floor}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label" htmlFor="exit-label" style={{ fontSize: '0.75rem' }}>Exit Gate Name / Label *</label>
+                <input
+                  id="exit-label"
+                  type="text"
+                  className="form-input"
+                  required
+                  value={exitGateLabel}
+                  onChange={(e) => setExitGateLabel(e.target.value)}
+                  placeholder="e.g. Main Exit Gate / School Exit"
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="exit-lat" style={{ fontSize: '0.75rem' }}>Latitude *</label>
+                  <input
+                    id="exit-lat"
+                    type="text"
+                    className="form-input"
+                    required
+                    value={exitLat}
+                    onChange={(e) => {
+                      setExitLat(e.target.value);
+                      setExitGateNodeId('');
+                    }}
+                    placeholder="e.g. 6.53586"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" htmlFor="exit-lng" style={{ fontSize: '0.75rem' }}>Longitude *</label>
+                  <input
+                    id="exit-lng"
+                    type="text"
+                    className="form-input"
+                    required
+                    value={exitLng}
+                    onChange={(e) => {
+                      setExitLng(e.target.value);
+                      setExitGateNodeId('');
+                    }}
+                    placeholder="e.g. 80.40035"
+                  />
+                </div>
+              </div>
+
+              <div style={{ fontSize: '0.72rem', color: 'var(--color-muted)', lineHeight: 1.4 }}>
+                ℹ️ All visitors touring stalls will be prepared with a route terminating at this single exit gate, mathematically minimizing their total walking distance.
               </div>
             </div>
 

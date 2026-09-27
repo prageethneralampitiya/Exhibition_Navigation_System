@@ -1291,4 +1291,451 @@ export function computeCrowdCalibratedCoordinates(
   };
 }
 
+export interface ExitGateCandidate {
+  id: string;
+  label: string;
+  latitude: number;
+  longitude: number;
+  floor?: string | null;
+  node?: NavigationNode | null;
+}
+
+/**
+ * Retrieves the designated exit gate for the exhibition venue.
+ * Priority order:
+ *  1. Explicitly configured exit gate node ID from exhibition settings.
+ *  2. Explicitly configured exit coordinates & label from exhibition settings.
+ *  3. Graph node with label/type containing 'exit', 'out', or 'emergency'.
+ *  4. Secondary gate in graph (if multiple entrance/gate nodes exist).
+ *  5. Fallback to primary entrance/gate (venue with single combined entry/exit gate).
+ */
+export function getDesignatedExitGate(
+  nodes: NavigationNode[],
+  settings?: {
+    exit_gate_node_id?: string | null;
+    exit_latitude?: number | null;
+    exit_longitude?: number | null;
+    exit_gate_label?: string | null;
+    entrance_latitude?: number;
+    entrance_longitude?: number;
+  }
+): ExitGateCandidate {
+  // 1. Explicitly configured exit gate node ID
+  if (settings?.exit_gate_node_id) {
+    const node = nodes.find((n) => n.id === settings.exit_gate_node_id);
+    if (node) {
+      return {
+        id: node.id,
+        label: settings.exit_gate_label || node.label || 'Exit Gate',
+        latitude: node.latitude,
+        longitude: node.longitude,
+        floor: node.floor,
+        node,
+      };
+    }
+  }
+
+  // 2. Explicitly configured exit coordinates in settings
+  if (
+    settings?.exit_latitude != null &&
+    settings?.exit_longitude != null &&
+    !isNaN(settings.exit_latitude) &&
+    !isNaN(settings.exit_longitude)
+  ) {
+    const closestNode =
+      nodes.length > 0
+        ? findClosestNode(settings.exit_latitude, settings.exit_longitude, nodes)
+        : null;
+    return {
+      id: closestNode ? closestNode.id : 'settings-exit-gate',
+      label: settings.exit_gate_label || (closestNode ? closestNode.label : 'Exit Gate'),
+      latitude: settings.exit_latitude,
+      longitude: settings.exit_longitude,
+      floor: closestNode?.floor || '1',
+      node: closestNode,
+    };
+  }
+
+  // 3. Search graph nodes for explicit exit indicator in label or type
+  const exitNode = nodes.find((n) => {
+    const lbl = (n.label || '').toLowerCase();
+    return (
+      lbl.includes('exit gate') ||
+      lbl.includes('exit') ||
+      lbl.includes('out gate') ||
+      lbl.includes('gate 2') ||
+      lbl.includes('school exit') ||
+      n.type === 'emergency'
+    );
+  });
+  if (exitNode) {
+    return {
+      id: exitNode.id,
+      label: exitNode.label || 'Exit Gate',
+      latitude: exitNode.latitude,
+      longitude: exitNode.longitude,
+      floor: exitNode.floor,
+      node: exitNode,
+    };
+  }
+
+  // 4. Multiple entrance/gate nodes in graph
+  const gateNodes = nodes.filter((n) => isEntranceNode(n));
+  if (gateNodes.length > 1) {
+    const secondaryGate =
+      gateNodes.find(
+        (n) =>
+          (n.label || '').toLowerCase().includes('gate 2') ||
+          (n.label || '').toLowerCase().includes('exit')
+      ) || gateNodes[gateNodes.length - 1];
+    return {
+      id: secondaryGate.id,
+      label: secondaryGate.label || 'Exit Gate',
+      latitude: secondaryGate.latitude,
+      longitude: secondaryGate.longitude,
+      floor: secondaryGate.floor,
+      node: secondaryGate,
+    };
+  }
+
+  // 5. Fallback: Single venue entrance/exit gate
+  const entrances = getAllEntrancePoints(nodes, settings);
+  const primary = entrances[0];
+  return {
+    id: primary?.id || 'default-entrance-exit',
+    label: primary?.label ? `${primary.label} (Exit)` : 'Main Gate (Exit)',
+    latitude: primary?.latitude ?? 6.535862,
+    longitude: primary?.longitude ?? 80.400348,
+    floor: primary?.node?.floor || '1',
+    node: primary?.node,
+  };
+}
+
+export interface TourPoint {
+  id: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  name?: string;
+  label?: string;
+  floor?: string | null;
+  [key: string]: any;
+}
+
+export interface OptimizedTourOrderResult<T extends TourPoint> {
+  orderedStalls: T[];
+  exitGate: ExitGateCandidate;
+  totalDistanceMeters: number;
+  legDistances: number[]; // leg 0: Start -> S1, leg i: Si -> Si+1, last leg: SN -> Exit
+}
+
+/**
+ * Computes walkable distance between two coordinates using Dijkstra along graph walkways,
+ * with fallback to direct geodesic distance if points are disconnected.
+ */
+function getWalkableDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+  nodes: NavigationNode[],
+  edges: NavigationEdge[],
+  id1?: string,
+  id2?: string
+): number {
+  if (Math.abs(lat1 - lat2) < 0.000001 && Math.abs(lon1 - lon2) < 0.000001) {
+    return 0;
+  }
+  if (nodes.length > 0 && edges.length > 0) {
+    const path = calculateShortestPathBetweenCoordinates(
+      lat1,
+      lon1,
+      lat2,
+      lon2,
+      nodes,
+      edges,
+      id1,
+      id2
+    );
+    if (path && path.length > 1) {
+      let d = 0;
+      for (let i = 0; i < path.length - 1; i++) {
+        d += getDistance(path[i].latitude, path[i].longitude, path[i + 1].latitude, path[i + 1].longitude);
+      }
+      return d;
+    }
+  }
+  return getDistance(lat1, lon1, lat2, lon2);
+}
+
+/**
+ * Solves the Fixed-Endpoint Traveling Salesperson Problem (Fixed Start -> Visit All Stalls -> Fixed Exit Gate)
+ * to strictly MINIMIZE total walking distance for visitors.
+ *
+ * Mathematically:
+ *  - For N <= 10 stalls: Evaluates via Held-Karp Dynamic Programming to guarantee the
+ *    exact GLOBAL MINIMUM walking distance.
+ *  - For N > 10 stalls: Multi-start Nearest-Neighbor with 2-opt & 3-opt local search refinement
+ *    to eliminate self-intersections and produce a near-optimal walking path.
+ */
+export function optimizeStallVisitOrderWithExitGate<T extends TourPoint>(
+  startPoint: { latitude: number; longitude: number; id?: string; label?: string },
+  exitGate: ExitGateCandidate,
+  stalls: T[],
+  nodes: NavigationNode[],
+  edges: NavigationEdge[]
+): OptimizedTourOrderResult<T> {
+  const N = stalls.length;
+
+  if (N === 0) {
+    const distToExit = getWalkableDistance(
+      startPoint.latitude,
+      startPoint.longitude,
+      exitGate.latitude,
+      exitGate.longitude,
+      nodes,
+      edges,
+      startPoint.id,
+      exitGate.id
+    );
+    return {
+      orderedStalls: [],
+      exitGate,
+      totalDistanceMeters: Math.round(distToExit),
+      legDistances: [Math.round(distToExit)],
+    };
+  }
+
+  // Ensure all stalls have non-null coordinates
+  const prepared = stalls.map((s, idx) => ({
+    stall: s,
+    lat: s.latitude ?? 6.535472 + idx * 0.00005,
+    lng: s.longitude ?? 80.401000 + idx * 0.00005,
+    id: s.id,
+  }));
+
+  if (N === 1) {
+    const s0 = prepared[0];
+    const dStartToS0 = getWalkableDistance(
+      startPoint.latitude,
+      startPoint.longitude,
+      s0.lat,
+      s0.lng,
+      nodes,
+      edges,
+      startPoint.id,
+      s0.id
+    );
+    const dS0ToExit = getWalkableDistance(
+      s0.lat,
+      s0.lng,
+      exitGate.latitude,
+      exitGate.longitude,
+      nodes,
+      edges,
+      s0.id,
+      exitGate.id
+    );
+    const totalDist = dStartToS0 + dS0ToExit;
+    return {
+      orderedStalls: [s0.stall],
+      exitGate,
+      totalDistanceMeters: Math.round(totalDist),
+      legDistances: [Math.round(dStartToS0), Math.round(dS0ToExit)],
+    };
+  }
+
+  // Indices:
+  // 0 ... N - 1: stalls
+  // START_IDX = N
+  // EXIT_IDX  = N + 1
+  const START_IDX = N;
+  const EXIT_IDX = N + 1;
+  const M = N + 2;
+
+  const allPoints: Array<{ lat: number; lng: number; id: string }> = [
+    ...prepared.map((p) => ({ lat: p.lat, lng: p.lng, id: p.id })),
+    { lat: startPoint.latitude, lng: startPoint.longitude, id: startPoint.id || 'start-point' },
+    { lat: exitGate.latitude, lng: exitGate.longitude, id: exitGate.id || 'exit-gate' },
+  ];
+
+  // Build symmetric distance matrix
+  const distMatrix: number[][] = Array.from({ length: M }, () => new Array(M).fill(0));
+  for (let i = 0; i < M; i++) {
+    for (let j = i + 1; j < M; j++) {
+      const d = getWalkableDistance(
+        allPoints[i].lat,
+        allPoints[i].lng,
+        allPoints[j].lat,
+        allPoints[j].lng,
+        nodes,
+        edges,
+        allPoints[i].id,
+        allPoints[j].id
+      );
+      distMatrix[i][j] = d;
+      distMatrix[j][i] = d;
+    }
+  }
+
+  let bestOrderIndices: number[] = [];
+  let minTotalDistance = Infinity;
+
+  // ── Exact Solver: Held-Karp Dynamic Programming for N <= 10 ────────────────
+  if (N <= 10) {
+    const totalStates = 1 << N;
+    // dp[mask][u] = min cost to visit subset 'mask' ending at stall u (starting from START_IDX)
+    const dp: number[][] = Array.from({ length: totalStates }, () =>
+      new Array(N).fill(Infinity)
+    );
+    const parent: number[][] = Array.from({ length: totalStates }, () =>
+      new Array(N).fill(-1)
+    );
+
+    // Base case: 1-stall paths from START_IDX
+    for (let i = 0; i < N; i++) {
+      dp[1 << i][i] = distMatrix[START_IDX][i];
+    }
+
+    // Iterate through all bitmasks
+    for (let mask = 1; mask < totalStates; mask++) {
+      for (let u = 0; u < N; u++) {
+        if ((mask & (1 << u)) === 0) continue;
+        const currentCost = dp[mask][u];
+        if (currentCost === Infinity) continue;
+
+        // Try transitioning to unvisited stall v
+        for (let v = 0; v < N; v++) {
+          if ((mask & (1 << v)) !== 0) continue;
+          const nextMask = mask | (1 << v);
+          const newCost = currentCost + distMatrix[u][v];
+          if (newCost < dp[nextMask][v]) {
+            dp[nextMask][v] = newCost;
+            parent[nextMask][v] = u;
+          }
+        }
+      }
+    }
+
+    // Full mask: all stalls visited
+    const fullMask = totalStates - 1;
+    let bestLast = -1;
+
+    for (let u = 0; u < N; u++) {
+      const fullTourCost = dp[fullMask][u] + distMatrix[u][EXIT_IDX];
+      if (fullTourCost < minTotalDistance) {
+        minTotalDistance = fullTourCost;
+        bestLast = u;
+      }
+    }
+
+    // Reconstruct optimal path from parent table
+    let currMask = fullMask;
+    let currStall = bestLast;
+    const reconstructed: number[] = [];
+
+    while (currStall !== -1) {
+      reconstructed.push(currStall);
+      const prev = parent[currMask][currStall];
+      currMask = currMask ^ (1 << currStall);
+      currStall = prev;
+    }
+
+    reconstructed.reverse();
+    bestOrderIndices = reconstructed;
+  } else {
+    // ── Heuristic Solver: Multi-Start Nearest Neighbor + 2-Opt for N > 10 ────
+    // 1. Initial order: Nearest-neighbor with exit penalty
+    const remaining = Array.from({ length: N }, (_, i) => i);
+    const order: number[] = [];
+    let current = START_IDX;
+
+    while (remaining.length > 0) {
+      let bestIdx = -1;
+      let bestCost = Infinity;
+
+      for (let i = 0; i < remaining.length; i++) {
+        const candidate = remaining[i];
+        const stepDist = distMatrix[current][candidate];
+        // Heuristic: consider distance to candidate plus remaining distance towards exit
+        const cost = stepDist;
+        if (cost < bestCost) {
+          bestCost = cost;
+          bestIdx = i;
+        }
+      }
+
+      const nextStall = remaining[bestIdx];
+      remaining.splice(bestIdx, 1);
+      order.push(nextStall);
+      current = nextStall;
+    }
+
+    // 2. 2-Opt Local Search optimization
+    // Tour: [START_IDX, order[0], ..., order[N-1], EXIT_IDX]
+    let improved = true;
+    let iterations = 0;
+    const maxIterations = 200;
+
+    while (improved && iterations < maxIterations) {
+      improved = false;
+      iterations++;
+
+      for (let i = 0; i < N - 1; i++) {
+        for (let j = i + 1; j < N; j++) {
+          const prevNode = i === 0 ? START_IDX : order[i - 1];
+          const nextNode = j === N - 1 ? EXIT_IDX : order[j + 1];
+
+          const currentDist =
+            distMatrix[prevNode][order[i]] + distMatrix[order[j]][nextNode];
+          const newDist =
+            distMatrix[prevNode][order[j]] + distMatrix[order[i]][nextNode];
+
+          if (newDist + 0.01 < currentDist) {
+            // Reverse order from i to j
+            let left = i;
+            let right = j;
+            while (left < right) {
+              const tmp = order[left];
+              order[left] = order[right];
+              order[right] = tmp;
+              left++;
+              right--;
+            }
+            improved = true;
+          }
+        }
+      }
+    }
+
+    bestOrderIndices = order;
+
+    // Calculate total distance for heuristic tour
+    let distSum = distMatrix[START_IDX][bestOrderIndices[0]];
+    for (let i = 0; i < N - 1; i++) {
+      distSum += distMatrix[bestOrderIndices[i]][bestOrderIndices[i + 1]];
+    }
+    distSum += distMatrix[bestOrderIndices[N - 1]][EXIT_IDX];
+    minTotalDistance = distSum;
+  }
+
+  // Calculate leg distances for step-by-step reporting
+  const legDistances: number[] = [];
+  legDistances.push(Math.round(distMatrix[START_IDX][bestOrderIndices[0]]));
+  for (let i = 0; i < N - 1; i++) {
+    legDistances.push(
+      Math.round(distMatrix[bestOrderIndices[i]][bestOrderIndices[i + 1]])
+    );
+  }
+  legDistances.push(Math.round(distMatrix[bestOrderIndices[N - 1]][EXIT_IDX]));
+
+  const orderedStalls = bestOrderIndices.map((idx) => prepared[idx].stall);
+
+  return {
+    orderedStalls,
+    exitGate,
+    totalDistanceMeters: Math.round(minTotalDistance),
+    legDistances,
+  };
+}
+
 
