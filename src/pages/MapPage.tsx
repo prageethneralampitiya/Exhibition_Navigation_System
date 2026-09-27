@@ -1,17 +1,15 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import {
   Route,
   X,
   Search,
   Navigation,
-  CalendarDays,
   Store,
   ArrowLeft,
   Bell,
   Compass,
   AlertTriangle,
-  CheckSquare,
   Check,
   Award,
   Home,
@@ -20,9 +18,12 @@ import {
   QrCode,
   ChevronDown,
   ChevronUp,
+  FastForward,
+  ChevronLeft,
+  RotateCcw,
 } from 'lucide-react';
 import { useLiveBroadcast } from '../contexts/LiveBroadcastContext';
-import { AdminModal } from '../components/admin/AdminModal';
+import { StallTourSelectModal } from '../components/StallTourSelectModal';
 import { useAuth } from '../contexts/AuthContext';
 import { GPSPermissionBanner } from '../components/GPSPermissionBanner';
 import { QuickPitstopModal } from '../components/QuickPitstopModal';
@@ -48,7 +49,6 @@ import {
 import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
 import { GPSKalmanFilter } from '../utils/gpsFilter';
-import { extractBlocksFromNodes, type BlockEntity } from '../utils/blocks';
 
 // ─── Facility Detection Helper ────────────────────────────────────────────────
 /**
@@ -252,6 +252,7 @@ function LiveAudioMobileButton() {
 }
 
 export function MapPage() {
+  const navigate = useNavigate();
   const { profile } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [unreadNotifications, setUnreadNotifications] = useState(0);
@@ -283,6 +284,7 @@ export function MapPage() {
   const [userLng, setUserLng] = useState<number | null>(null);
   const [userHeading, setUserHeading] = useState<number | null>(null);
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null); // metres
+  const [dismissedLowGps, setDismissedLowGps] = useState(false);
   const [, setSnappedToNode] = useState<string | null>(null); // label of entrance used as fallback start
   const [, setGpsError] = useState<string | null>(null);
   const [mockMode, setMockMode] = useState(false);
@@ -312,7 +314,7 @@ export function MapPage() {
   const [selectedDestinationNodeId, setSelectedDestinationNodeId] = useState('');
   const [calculatedRoute, setCalculatedRoute] = useState<NavigationNode[]>([]);
   const [totalDistance, setTotalDistance] = useState(0); // in meters
-  const [guideSteps, setGuideSteps] = useState<string[]>([]);
+  const [, setGuideSteps] = useState<string[]>([]);
   const [navigationActive, setNavigationActive] = useState(false);
   // Number of leading nodes in calculatedRoute that came from outdoor OSM routing
   // 0 means all nodes are from the internal drawn graph (user is inside campus)
@@ -336,7 +338,6 @@ export function MapPage() {
 
   const [isFarAway, setIsFarAway] = useState(false);
   const [showChecklistPrompt, setShowChecklistPrompt] = useState(false);
-  const [checklistSearchQuery, setChecklistSearchQuery] = useState('');
 
   // LocalStorage persistence for Visited History Tracker
   const LOCAL_STORAGE_VISITED_KEY = 'exhibition_visited_stalls_v1';
@@ -360,7 +361,6 @@ export function MapPage() {
   const [guidedTourActive, setGuidedTourActive] = useState(false);
   const [tourStops, setTourStops] = useState<StoreType[]>([]);
   const [currentTourStopIndex, setCurrentTourStopIndex] = useState(0);
-  const [tourSelectedBlockIds, setTourSelectedBlockIds] = useState<string[]>([]);
   const [arrivedStopPrompt, setArrivedStopPrompt] = useState<StoreType | null>(null);
   const lastPromptedStopIdRef = useRef<string | null>(null);
   const [showTourCompletedModal, setShowTourCompletedModal] = useState(false);
@@ -368,6 +368,7 @@ export function MapPage() {
     totalStalls: 0,
     totalVisited: 0,
   });
+  const [showTourStallsModal, setShowTourStallsModal] = useState(false);
 
   // Pitstop Detour State (temporary detour to washroom, canteen, water, first aid)
   interface ActivePitstopDetour {
@@ -382,9 +383,6 @@ export function MapPage() {
   const [showPitstopModal, setShowPitstopModal] = useState(false);
 
   const handleOpenTourPlanner = () => {
-    const blocks = extractBlocksFromNodes(nodes);
-    // By default, select all blocks
-    setTourSelectedBlockIds(blocks.map(b => b.id));
     setShowChecklistPrompt(true);
   };
 
@@ -764,6 +762,9 @@ export function MapPage() {
         setUserLat(lat);
         setUserLng(lng);
         setGpsAccuracy(accuracy ?? null);
+        if (accuracy && accuracy <= 15) {
+          setDismissedLowGps(false);
+        }
         setGpsError(null);
         setMockMode(false);
 
@@ -823,7 +824,7 @@ export function MapPage() {
   }, [mockMode, mockStartNodeId, nodes, exhibitionSettings, bypassBoundaryCheck]);
 
   const handleMapClick = useCallback((lat: number, lng: number) => {
-    if (mockMode) {
+    if (mockMode && profile?.role === 'admin') {
       setUserLat(lat);
       setUserLng(lng);
 
@@ -840,7 +841,7 @@ export function MapPage() {
         }
       }
     }
-  }, [mockMode, exhibitionSettings]);
+  }, [mockMode, exhibitionSettings, profile?.role]);
 
   const handleSelectMockLocation = (presetOrNodeId: string) => {
     setMockMode(true);
@@ -1111,9 +1112,10 @@ export function MapPage() {
     setCalculatedRoute(sequencedRouteNodes);
     setTotalDistance(Math.round(totalDistVal));
     setGuideSteps(steps);
+    setNavigationActive(true);
   };
 
-  const generateGuidedTourRoute = (selectedBlockIdsToTour: string[]) => {
+  const generateGuidedTourRouteForStores = (targetStores: StoreType[]) => {
     // 1. Determine starting point coordinates
     let startLatVal = userLat;
     let startLngVal = userLng;
@@ -1144,27 +1146,21 @@ export function MapPage() {
       }
     }
 
-    // 2. Build tour stops from selected blocks (blocks are navigation nodes)
-    const allBlocks: BlockEntity[] = extractBlocksFromNodes(nodes);
-    const targetBlocks = allBlocks.filter(b => selectedBlockIdsToTour.includes(b.id));
-
-    if (targetBlocks.length === 0) {
-      alert('Please select at least one block to visit on your tour!');
+    if (targetStores.length === 0) {
+      alert('Please select at least one stall to visit on your tour!');
       return;
     }
 
-    // Convert blocks to StoreType-compatible objects for the routing system
-    const targetStores: StoreType[] = targetBlocks.map(b => ({
-      id: b.id,
-      name: b.name,
-      description: `Block · Floor ${b.floor || '1'}`,
-      latitude: b.latitude,
-      longitude: b.longitude,
-      floor: b.floor || '1',
-      is_active: true,
-      logo_url: null,
-      categories: null,
-    } as StoreType));
+    // Ensure valid coordinates for all target stalls
+    const preparedStores: StoreType[] = targetStores.map((st, idx) => {
+      const sIdx = stores.findIndex(s => s.id === st.id);
+      const campusLoc = getCampusStoreLocation(st, sIdx >= 0 ? sIdx : idx);
+      return {
+        ...st,
+        latitude: st.latitude ?? campusLoc.lat,
+        longitude: st.longitude ?? campusLoc.lng,
+      };
+    });
 
     setLoading(true);
 
@@ -1172,7 +1168,7 @@ export function MapPage() {
     let currentLat = startLatVal;
     let currentLng = startLngVal;
 
-    const remaining = [...targetStores];
+    const remaining = [...preparedStores];
     const orderedTourStops: StoreType[] = [];
 
     while (remaining.length > 0) {
@@ -1228,12 +1224,19 @@ export function MapPage() {
       setNavigationActive(true);
       setNavSheetState('normal');
 
-      // Route strictly to Stop 1 (the first/closest block)
+      // Center map on starting position or first stop
+      if (orderedTourStops[0].latitude && orderedTourStops[0].longitude) {
+        setMapCenterLat(orderedTourStops[0].latitude);
+        setMapCenterLng(orderedTourStops[0].longitude);
+      }
+
+      // Route strictly to Stop 1 (the first/closest stall)
       routeToTourStop(startLatVal, startLngVal, orderedTourStops[0], 0, orderedTourStops.length);
     } else {
-      alert('Could not compute routing path. Please check network graph or block locations.');
+      alert('Could not compute routing path. Please check network graph or stall locations.');
     }
   };
+
 
   const handleMarkStopVisited = (storeToMark: StoreType) => {
     const updatedVisited = Array.from(new Set([...visitedStallIds, storeToMark.id]));
@@ -1313,6 +1316,87 @@ export function MapPage() {
     }
   };
 
+  /** Skip the current stall and advance directly to the next planned stall without marking it visited */
+  const handleSkipCurrentStop = () => {
+    if (!guidedTourActive || tourStops.length === 0) return;
+
+    const nextIndex = currentTourStopIndex + 1;
+    if (nextIndex < tourStops.length) {
+      setCurrentTourStopIndex(nextIndex);
+      lastTourRoutePositionRef.current = null;
+      lastPromptedStopIdRef.current = null;
+      setArrivedStopPrompt(null);
+
+      const currentStop = tourStops[currentTourStopIndex];
+      const fromLat = userLat !== null ? userLat : (currentStop?.latitude || 6.535472);
+      const fromLng = userLng !== null ? userLng : (currentStop?.longitude || 80.401000);
+      routeToTourStop(fromLat, fromLng, tourStops[nextIndex], nextIndex, tourStops.length);
+    } else {
+      // Skipping the final stop completes the tour
+      setGuidedTourActive(false);
+      setCalculatedRoute([]);
+      setNavigationActive(false);
+      setCompletedTourStats({
+        totalStalls: tourStops.length,
+        totalVisited: visitedStallIds.filter((id) => tourStops.some((s) => s.id === id)).length,
+      });
+      setShowTourCompletedModal(true);
+    }
+  };
+
+  /** Navigate back to the previous stall in the tour */
+  const handlePreviousStop = () => {
+    if (!guidedTourActive || tourStops.length === 0 || currentTourStopIndex <= 0) return;
+    const prevIndex = currentTourStopIndex - 1;
+    setCurrentTourStopIndex(prevIndex);
+    lastTourRoutePositionRef.current = null;
+    lastPromptedStopIdRef.current = null;
+    setArrivedStopPrompt(null);
+
+    const currentStop = tourStops[currentTourStopIndex];
+    const fromLat = userLat !== null ? userLat : (currentStop?.latitude || 6.535472);
+    const fromLng = userLng !== null ? userLng : (currentStop?.longitude || 80.401000);
+    routeToTourStop(fromLat, fromLng, tourStops[prevIndex], prevIndex, tourStops.length);
+  };
+
+  /** Jump directly to any stall in the active tour sequence */
+  const handleJumpToTourStop = (index: number, forceReroute = false) => {
+    if (!guidedTourActive || index < 0 || index >= tourStops.length) return;
+    if (index === currentTourStopIndex && !forceReroute) return;
+    setCurrentTourStopIndex(index);
+    lastTourRoutePositionRef.current = null;
+    lastPromptedStopIdRef.current = null;
+    setArrivedStopPrompt(null);
+
+    const currentStop = tourStops[currentTourStopIndex];
+    const fromLat = userLat !== null ? userLat : (currentStop?.latitude || 6.535472);
+    const fromLng = userLng !== null ? userLng : (currentStop?.longitude || 80.401000);
+    routeToTourStop(fromLat, fromLng, tourStops[index], index, tourStops.length);
+  };
+
+  /** Unmark a stall as visited (e.g. if pressed accidentally, or to revisit) */
+  const handleUnmarkStopVisited = (storeId: string, shouldNavigateThere: boolean = false) => {
+    setVisitedStallIds((prev) => prev.filter((id) => id !== storeId));
+
+    if (shouldNavigateThere) {
+      if (guidedTourActive && tourStops.length > 0) {
+        const stopIdx = tourStops.findIndex((s) => s.id === storeId);
+        if (stopIdx >= 0) {
+          handleJumpToTourStop(stopIdx, true);
+        }
+      } else {
+        setSelectedDestinationStoreId(storeId);
+        setSelectedDestinationNodeId('');
+        setNavigationActive(true);
+        const storeObj = stores.find((s) => s.id === storeId);
+        if (storeObj && storeObj.latitude && storeObj.longitude) {
+          setMapCenterLat(storeObj.latitude);
+          setMapCenterLng(storeObj.longitude);
+        }
+      }
+    }
+  };
+
   const handleCancelTour = () => {
     setGuidedTourActive(false);
     setCalculatedRoute([]);
@@ -1323,6 +1407,7 @@ export function MapPage() {
     lastPromptedStopIdRef.current = null;
     lastTourRoutePositionRef.current = null;
     setActivePitstopDetour(null);
+    navigate('/');
   };
 
   // Pitstop Detour Handlers
@@ -1470,6 +1555,19 @@ export function MapPage() {
       }
     }
 
+    // Deep link directly to a pre-selected tour of stalls (from HomePage or link)
+    const tourStallsParam = searchParams.get('tourStalls');
+    if (tourStallsParam && stores.length > 0) {
+      const stallIds = tourStallsParam.split(',').map((s) => s.trim()).filter(Boolean);
+      const matchedStores = stores.filter((s) => stallIds.includes(s.id));
+      if (matchedStores.length > 0) {
+        generateGuidedTourRouteForStores(matchedStores);
+      }
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('tourStalls');
+      setSearchParams(nextParams, { replace: true });
+    }
+
     const toParam = searchParams.get('to');
     const toNodeParam = searchParams.get('toNode');
     if (toParam && stores.length > 0) {
@@ -1488,6 +1586,7 @@ export function MapPage() {
     if (selectedDestinationStoreId || selectedDestinationNodeId) {
       calculateRoutePath();
     } else if (guidedTourActive && tourStops.length > 0) {
+      setNavigationActive(true);
       // Maintain guided tour route and update current leg as user walks with GPS.
       // Throttle: only recalculate when stop changes OR user moved >= TOUR_REROUTE_THRESHOLD_METERS.
       const currentStop = tourStops[currentTourStopIndex];
@@ -1513,7 +1612,7 @@ export function MapPage() {
           }
         }
       }
-    } else {
+    } else if (!guidedTourActive) {
       lastTourRoutePositionRef.current = null;
       setCalculatedRoute([]);
       setTotalDistance(0);
@@ -2117,61 +2216,7 @@ export function MapPage() {
 
           {/* Right: desktop nav links */}
           <div className="map-topbar-links" style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexShrink: 0 }}>
-            <button
-              onClick={() => {
-                setMapCenterLat(6.535472);
-                setMapCenterLng(80.401000);
-              }}
-              className="btn btn-sm"
-              style={{
-                padding: '0.35rem 0.65rem',
-                background: 'linear-gradient(135deg, #a855f7, #6366f1)',
-                color: '#fff',
-                border: 'none',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-              title="Center on Kalawana National School"
-            >
-              📍 Kalawana School
-            </button>
-            <button
-              onClick={() => {
-                setMapCenterLat(6.796300);
-                setMapCenterLng(79.900000);
-              }}
-              className="btn btn-sm"
-              style={{
-                padding: '0.35rem 0.65rem',
-                background: 'linear-gradient(135deg, #06b6d4, #3b82f6)',
-                color: '#fff',
-                border: 'none',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-              title="Center on University of Moratuwa"
-            >
-              📍 Uni Campus
-            </button>
-            {/* 3D View Link Button (hidden from UI) */}
-            <Link
-              to="/map3d"
-              className="btn btn-sm"
-              style={{
-                display: 'none',
-                padding: '0.35rem 0.65rem',
-                background: 'rgba(168, 85, 247, 0.15)',
-                color: '#a855f7',
-                border: '1px solid rgba(168, 85, 247, 0.4)',
-                fontWeight: 600,
-              }}
-            >
-              3D School
-            </Link>
-            <Link to="/search" className="btn btn-ghost btn-sm" style={{ padding: '0.35rem 0.65rem' }}>
-              <Search size={14} style={{ marginRight: 4 }} />
-              Search
-            </Link>
+            {/* Announcements Bell */}
             <button
               onClick={handleOpenAnnouncements}
               className="btn btn-ghost btn-sm btn-icon"
@@ -2187,14 +2232,6 @@ export function MapPage() {
                 }} />
               )}
             </button>
-            <Link to="/exhibitions" className="btn btn-ghost btn-sm" style={{ padding: '0.35rem 0.65rem' }}>
-              <CalendarDays size={14} style={{ marginRight: 4 }} />
-              Exhibitions
-            </Link>
-            <Link to="/stores" className="btn btn-ghost btn-sm" style={{ padding: '0.35rem 0.65rem' }}>
-              <Store size={14} style={{ marginRight: 4 }} />
-              Stores
-            </Link>
             {profile?.role === 'admin' && (
               <>
                 <button
@@ -2222,33 +2259,8 @@ export function MapPage() {
             <LiveAudioHeaderButton />
           </div>
 
-          {/* Mobile-only: Tour button + boundary toggle + live audio + bell icon inline */}
+          {/* Mobile-only: boundary toggle + live audio + bell icon inline */}
           <div className="map-topbar-mobile-icons" style={{ display: 'none', gap: '0.3rem', alignItems: 'center', flexShrink: 0 }}>
-            <button
-              onClick={handleOpenTourPlanner}
-              className="btn btn-primary btn-sm"
-              style={{
-                padding: '0.25rem 0.5rem',
-                fontSize: '0.72rem',
-                fontWeight: 700,
-                borderRadius: '6px',
-                background: guidedTourActive
-                  ? 'linear-gradient(135deg, #10b981, #06b6d4)'
-                  : 'linear-gradient(135deg, #6366f1, #06b6d4)',
-                color: '#fff',
-                border: 'none',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.25rem',
-                boxShadow: '0 2px 6px rgba(99, 102, 241, 0.4)',
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-              }}
-              title="Start guided tour"
-            >
-              <Compass size={13} />
-              <span>{guidedTourActive ? `${currentTourStopIndex + 1}/${tourStops.length}` : 'Start Tour'}</span>
-            </button>
             {profile?.role === 'admin' && (
               <button
                 onClick={handleToggleBoundaryVisibility}
@@ -2300,22 +2312,68 @@ export function MapPage() {
           alignItems: 'center',
           gap: '0.25rem',
         }}>
-          <Link to="/search" className="btn btn-ghost btn-sm" style={{ flexDirection: 'column', gap: '0.15rem', padding: '0.35rem 0.5rem', fontSize: '0.6rem', minHeight: 'unset' }}>
-            <Search size={18} />
-            Search
-          </Link>
-          <Link to="/exhibitions" className="btn btn-ghost btn-sm" style={{ flexDirection: 'column', gap: '0.15rem', padding: '0.35rem 0.5rem', fontSize: '0.6rem', minHeight: 'unset' }}>
-            <CalendarDays size={18} />
-            Events
-          </Link>
-          <Link to="/stores" className="btn btn-ghost btn-sm" style={{ flexDirection: 'column', gap: '0.15rem', padding: '0.35rem 0.5rem', fontSize: '0.6rem', minHeight: 'unset' }}>
+          {/* Mobile Footer: Change Stall button */}
+          <button
+            onClick={handleOpenTourPlanner}
+            className="btn btn-ghost btn-sm"
+            style={{
+              flex: 1,
+              flexDirection: 'column',
+              gap: '0.2rem',
+              padding: '0.35rem 0.5rem',
+              fontSize: '0.68rem',
+              minHeight: 'unset',
+              color: 'var(--color-accent)',
+              borderRadius: '8px',
+            }}
+            title="Change selected tour stalls"
+          >
+            <Compass size={18} />
+            <span>Change Stall</span>
+          </button>
+
+          {/* Mobile Footer: Stalls button (lists visited & revisit options) */}
+          <button
+            onClick={() => setShowTourStallsModal(true)}
+            className="btn btn-ghost btn-sm"
+            style={{
+              flex: 1,
+              position: 'relative',
+              flexDirection: 'column',
+              gap: '0.2rem',
+              padding: '0.35rem 0.5rem',
+              fontSize: '0.68rem',
+              minHeight: 'unset',
+              color: '#fff',
+              borderRadius: '8px',
+            }}
+            title="View tour stalls and visited status"
+          >
             <Store size={18} />
-            Stores
-          </Link>
+            <span>Tour Stalls</span>
+            {visitedStallIds.length > 0 && (
+              <span
+                style={{
+                  position: 'absolute',
+                  top: '1px',
+                  right: '18px',
+                  background: '#22c55e',
+                  color: '#fff',
+                  fontSize: '0.58rem',
+                  fontWeight: 800,
+                  borderRadius: '10px',
+                  padding: '0.05rem 0.35rem',
+                }}
+              >
+                {visitedStallIds.length}
+              </span>
+            )}
+          </button>
+
           {profile?.role === 'admin' && (
-            <a href="/admin/" className="btn btn-ghost btn-sm" style={{ flexDirection: 'column', gap: '0.15rem', padding: '0.35rem 0.5rem', fontSize: '0.6rem', color: 'var(--color-warning)', minHeight: 'unset', display: 'inline-flex', alignItems: 'center' }}>
+            <a href="/admin/" className="btn btn-ghost btn-sm" style={{ flex: 1, flexDirection: 'column', gap: '0.2rem', padding: '0.35rem 0.5rem', fontSize: '0.68rem', color: 'var(--color-warning)', minHeight: 'unset', display: 'inline-flex', alignItems: 'center', borderRadius: '8px' }}>
               <Navigation size={18} />
-              Admin
+              <span>Admin</span>
             </a>
           )}
         </nav>
@@ -2607,8 +2665,78 @@ export function MapPage() {
             </div>
           )}
 
-          {/* Active Mock Location Top Banner */}
-          {mockMode && (
+          {/* Low GPS Signal Strength Notification Banner (Non-intrusive top-of-display badge) */}
+          {!mockMode && !calibratedLocation && gpsAccuracy !== null && gpsAccuracy > 18 && !dismissedLowGps && (
+            <div
+              className="glass animate-fade-in"
+              style={{
+                position: 'absolute',
+                top: '4.75rem',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 1000,
+                padding: '0.4rem 0.85rem',
+                borderRadius: '24px',
+                background: 'rgba(245, 158, 11, 0.2)',
+                border: '1px solid rgba(245, 158, 11, 0.55)',
+                color: '#fef3c7',
+                fontSize: '0.78rem',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.55rem',
+                boxShadow: '0 8px 30px rgba(0, 0, 0, 0.45)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
+                maxWidth: '92vw',
+                pointerEvents: 'auto',
+              }}
+            >
+              <div
+                style={{
+                  width: 24,
+                  height: 24,
+                  borderRadius: '50%',
+                  background: 'rgba(245, 158, 11, 0.35)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <AlertTriangle size={13} color="#fbbf24" />
+              </div>
+              <div style={{ minWidth: 0, lineHeight: 1.3 }}>
+                <span style={{ fontWeight: 700, color: '#fbbf24' }}>
+                  Low Signal Strength
+                </span>
+                <span style={{ opacity: 0.88, marginLeft: '0.35rem', fontSize: '0.72rem' }}>
+                  (±{Math.round(gpsAccuracy)}m accuracy — position may drift)
+                </span>
+              </div>
+              <button
+                onClick={() => setDismissedLowGps(true)}
+                className="btn btn-ghost btn-sm"
+                style={{
+                  padding: '0.15rem 0.45rem',
+                  fontSize: '0.68rem',
+                  borderRadius: '12px',
+                  background: 'rgba(255, 255, 255, 0.12)',
+                  color: '#fff',
+                  marginLeft: '0.2rem',
+                  flexShrink: 0,
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+                title="Dismiss warning"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* Active Mock Location Top Banner (Admin Only) */}
+          {mockMode && profile?.role === 'admin' && (
             <div className="glass map-mock-active-banner" style={{
               position: 'absolute',
               top: '1rem',
@@ -2641,35 +2769,35 @@ export function MapPage() {
             </div>
           )}
 
-          {/* Right Floating Controls Stack (Settings, Tour & Mock GPS) */}
-          <div
-            className="map-right-controls-stack"
-            style={{
-              position: 'absolute',
-              top: '4.85rem',
-              right: '1rem',
-              width: '220px',
-              zIndex: 999,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.65rem',
-              maxHeight: 'calc(100vh - 6.5rem)',
-              overflowY: 'auto',
-              pointerEvents: 'none',
-              scrollbarWidth: 'none',
-            }}
-          >
-            {/* Map Controls (Theme, Guided Tour & Testing Tools) */}
-            <div className="glass map-controls-panel" style={{
-              width: '100%',
-              pointerEvents: 'auto',
-              padding: '0.75rem',
-              borderRadius: '12px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.65rem'
-            }}>
-              {profile?.role === 'admin' && (
+          {/* Right Floating Controls Stack (Admin Testing Tools & Mock GPS only) */}
+          {profile?.role === 'admin' && (
+            <div
+              className="map-right-controls-stack"
+              style={{
+                position: 'absolute',
+                top: '4.85rem',
+                right: '1rem',
+                width: '220px',
+                zIndex: 999,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.65rem',
+                maxHeight: 'calc(100vh - 6.5rem)',
+                overflowY: 'auto',
+                pointerEvents: 'none',
+                scrollbarWidth: 'none',
+              }}
+            >
+              {/* Map Controls (Testing Tools & Mesh) */}
+              <div className="glass map-controls-panel" style={{
+                width: '100%',
+                pointerEvents: 'auto',
+                padding: '0.75rem',
+                borderRadius: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.65rem'
+              }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                   <input
                     type="checkbox"
@@ -2682,38 +2810,6 @@ export function MapPage() {
                     Show Path Nodes
                   </label>
                 </div>
-              )}
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
-                <label style={{ display: 'block', fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
-                  Guided Tour
-                </label>
-                <button
-                  className="btn btn-primary btn-sm"
-                  style={{ width: '100%', fontSize: '0.8rem', padding: '0.35rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
-                  onClick={handleOpenTourPlanner}
-                >
-                  <Compass size={14} />
-                  {guidedTourActive ? 'Restart Tour' : 'Start Tour'}
-                </button>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  style={{ width: '100%', fontSize: '0.75rem', padding: '0.3rem 0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.08)' }}
-                  onClick={handleOpenTourPlanner}
-                >
-                  <CheckSquare size={13} />
-                  <span>Visited Tracker ({visitedStallIds.length}/{(stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s)).length > 0 ? stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s)) : DEFAULT_DEMO_STALLS.filter(s => !isFacilityStore(s))).length})</span>
-                </button>
-                {guidedTourActive && (
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ width: '100%', fontSize: '0.75rem', padding: '0.25rem 0.5rem', color: 'var(--color-danger)' }}
-                    onClick={handleCancelTour}
-                  >
-                    Cancel Tour
-                  </button>
-                )}
-              </div>
 
               {/* Testing / Mock Location Mode Toggle Button */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
@@ -2864,9 +2960,10 @@ export function MapPage() {
               </div>
             )}
           </div>
+          )}
 
           {/* Bottom Navigation Panel — Google Maps-style draggable bottom sheet */}
-          {navigationActive && (
+          {(navigationActive || guidedTourActive) && (
             <div
               ref={sheetRef}
               className={`glass map-nav-panel map-nav-${navSheetState}`}
@@ -2925,25 +3022,48 @@ export function MapPage() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flexShrink: 0 }}>
                     {guidedTourActive && (
-                      <button
-                        className="btn btn-primary btn-sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleMarkCurrentStopVisited();
-                        }}
-                        style={{
-                          fontSize: '0.7rem',
-                          padding: '0.2rem 0.55rem',
-                          background: 'linear-gradient(135deg, #22c55e, #16a34a)',
-                          border: 'none',
-                          fontWeight: 700,
-                          borderRadius: '6px',
-                        }}
-                      >
-                        {currentTourStopIndex + 1 < tourStops.length ? 'Next ✓' : 'Finish 🎉'}
-                      </button>
+                      <>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleMarkCurrentStopVisited();
+                          }}
+                          style={{
+                            fontSize: '0.72rem',
+                            padding: '0.22rem 0.6rem',
+                            background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                            border: 'none',
+                            fontWeight: 700,
+                            borderRadius: '6px',
+                          }}
+                        >
+                          {currentTourStopIndex + 1 < tourStops.length ? 'Next ✓' : 'Finish 🎉'}
+                        </button>
+                        {currentTourStopIndex + 1 < tourStops.length && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSkipCurrentStop();
+                            }}
+                            style={{
+                              fontSize: '0.7rem',
+                              padding: '0.2rem 0.5rem',
+                              background: 'rgba(255, 255, 255, 0.08)',
+                              border: '1px solid rgba(255, 255, 255, 0.15)',
+                              color: 'var(--color-text)',
+                              fontWeight: 600,
+                              borderRadius: '6px',
+                            }}
+                            title="Skip this stall"
+                          >
+                            Skip ⏭️
+                          </button>
+                        )}
+                      </>
                     )}
                     <span style={{ fontSize: '0.72rem', color: 'var(--color-muted)', display: 'flex', alignItems: 'center', gap: '0.15rem' }}>
                       <ChevronUp size={16} /> Drag up
@@ -3007,14 +3127,15 @@ export function MapPage() {
                         </div>
                       </div>
 
-                      {/* Clean Dedicated Action Buttons Row (No Clashes!) */}
-                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', width: '100%', marginTop: '0.1rem' }}>
+                      {/* Clean Dedicated Action Buttons Row: Next Stall, Skip Store, Prev, Stalls, End */}
+                      <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', width: '100%', marginTop: '0.2rem', flexWrap: 'wrap' }}>
+                        {/* Next Stall Button */}
                         <button
                           className="btn btn-primary btn-sm"
                           onClick={handleMarkCurrentStopVisited}
                           style={{
-                            flex: 1,
-                            fontSize: '0.8rem',
+                            flex: '1 1 120px',
+                            fontSize: '0.82rem',
                             padding: '0.45rem 0.8rem',
                             background: 'linear-gradient(135deg, #22c55e, #16a34a)',
                             border: 'none',
@@ -3024,18 +3145,113 @@ export function MapPage() {
                             justifyContent: 'center',
                             gap: '0.35rem',
                             borderRadius: '10px',
-                            boxShadow: '0 2px 8px rgba(34, 197, 94, 0.35)'
+                            boxShadow: '0 2px 8px rgba(34, 197, 94, 0.35)',
                           }}
+                          title="Mark stall as visited and route to next stall"
                         >
                           <Check size={15} />
                           <span>{currentTourStopIndex + 1 < tourStops.length ? 'Next Stall ✓' : 'Finish Tour 🎉'}</span>
                         </button>
 
+                        {/* Skip Store Button */}
+                        {currentTourStopIndex + 1 < tourStops.length && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={handleSkipCurrentStop}
+                            style={{
+                              flex: '1 1 100px',
+                              fontSize: '0.8rem',
+                              padding: '0.45rem 0.75rem',
+                              background: 'rgba(255, 255, 255, 0.06)',
+                              border: '1px solid rgba(255, 255, 255, 0.15)',
+                              color: 'var(--color-text)',
+                              fontWeight: 600,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '0.35rem',
+                              borderRadius: '10px',
+                            }}
+                            title="Skip this store and route directly to the next stall"
+                          >
+                            <FastForward size={14} />
+                            <span>Skip Store</span>
+                          </button>
+                        )}
+
+                        {/* Previous Stall Button */}
+                        {currentTourStopIndex > 0 && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={handlePreviousStop}
+                            style={{
+                              padding: '0.45rem 0.65rem',
+                              fontSize: '0.78rem',
+                              background: 'rgba(255, 255, 255, 0.04)',
+                              border: '1px solid var(--color-border)',
+                              borderRadius: '10px',
+                              color: 'var(--color-muted)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.2rem',
+                            }}
+                            title="Go back to previous stall"
+                          >
+                            <ChevronLeft size={14} />
+                            <span>Prev</span>
+                          </button>
+                        )}
+
+                        {/* Change / Add Stalls Button */}
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={handleOpenTourPlanner}
+                          style={{
+                            padding: '0.45rem 0.65rem',
+                            fontSize: '0.78rem',
+                            background: 'rgba(99, 102, 241, 0.1)',
+                            border: '1px solid rgba(99, 102, 241, 0.3)',
+                            borderRadius: '10px',
+                            color: 'var(--color-primary-h)',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                          }}
+                          title="Open stall planner to change or select stalls"
+                        >
+                          <Compass size={13} />
+                          <span>Change Stall</span>
+                        </button>
+
+                        {/* Stalls List Button (Visited Tracker & Revisit) */}
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => setShowTourStallsModal(true)}
+                          style={{
+                            padding: '0.45rem 0.65rem',
+                            fontSize: '0.78rem',
+                            background: 'rgba(34, 211, 238, 0.1)',
+                            border: '1px solid rgba(34, 211, 238, 0.3)',
+                            borderRadius: '10px',
+                            color: 'var(--color-accent)',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                          }}
+                          title="View all stalls, visited tracker, and revisit options"
+                        >
+                          <Store size={13} />
+                          <span>Stalls ({visitedStallIds.filter((id) => tourStops.some((s) => s.id === id)).length}/{tourStops.length})</span>
+                        </button>
+
+                        {/* Cancel / End Tour Button */}
                         <button
                           className="btn btn-ghost btn-sm"
                           onClick={handleCancelTour}
                           style={{
-                            padding: '0.45rem 0.85rem',
+                            padding: '0.45rem 0.75rem',
                             border: '1px solid rgba(244, 63, 94, 0.3)',
                             borderRadius: '10px',
                             fontSize: '0.78rem',
@@ -3043,12 +3259,13 @@ export function MapPage() {
                             background: 'rgba(244, 63, 94, 0.08)',
                             fontWeight: 600,
                           }}
+                          title="Exit guided tour"
                         >
                           ✕ End
                         </button>
                       </div>
 
-                      {/* Tour Stops Sequence Progress Pills */}
+                      {/* Tour Stops Sequence Progress Pills (Clickable to jump to any stop!) */}
                       <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', paddingBottom: '0.15rem', scrollbarWidth: 'none' }}>
                         {tourStops.map((stop, sIdx) => {
                           const isCurrent = sIdx === currentTourStopIndex;
@@ -3056,28 +3273,34 @@ export function MapPage() {
                           return (
                             <div
                               key={stop.id}
+                              onClick={() => handleJumpToTourStop(sIdx)}
                               style={{
-                                padding: '0.2rem 0.5rem',
-                                borderRadius: '6px',
+                                padding: '0.22rem 0.55rem',
+                                borderRadius: '8px',
                                 fontSize: '0.68rem',
                                 fontWeight: 700,
                                 whiteSpace: 'nowrap',
                                 display: 'flex',
                                 alignItems: 'center',
                                 gap: '0.25rem',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease',
                                 background: isCurrent
-                                  ? 'rgba(34, 211, 238, 0.2)'
+                                  ? 'rgba(34, 211, 238, 0.22)'
                                   : isPast
                                     ? 'rgba(34, 197, 94, 0.15)'
                                     : 'rgba(255, 255, 255, 0.05)',
-                                border: `1px solid ${isCurrent
+                                border: `1px solid ${
+                                  isCurrent
                                     ? '#22d3ee'
                                     : isPast
                                       ? '#22c55e'
                                       : 'var(--color-border)'
-                                  }`,
-                                color: isCurrent ? '#22d3ee' : isPast ? '#22c55e' : 'var(--color-muted)'
+                                }`,
+                                color: isCurrent ? '#22d3ee' : isPast ? '#22c55e' : 'var(--color-muted)',
+                                boxShadow: isCurrent ? '0 0 10px rgba(34, 211, 238, 0.35)' : 'none',
                               }}
+                              title={`Jump directly to Stop ${sIdx + 1}: ${stop.name}`}
                             >
                               <span>{isPast ? '✓' : sIdx + 1}</span>
                               <span>{stop.name}</span>
@@ -3167,55 +3390,7 @@ export function MapPage() {
                         >
                           ✕ Clear Route
                         </button>
-
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => setNavSheetState(curr => curr === 'expanded' ? 'normal' : 'expanded')}
-                          style={{
-                            padding: '0.45rem 0.75rem',
-                            border: '1px solid rgba(34, 211, 238, 0.25)',
-                            borderRadius: '10px',
-                            fontSize: '0.78rem',
-                            color: '#22d3ee',
-                            background: 'rgba(34, 211, 238, 0.08)',
-                            fontWeight: 600,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.3rem',
-                          }}
-                        >
-                          {navSheetState === 'expanded' ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-                          <span>{navSheetState === 'expanded' ? 'Hide Steps' : 'View Steps'}</span>
-                        </button>
                       </div>
-                    </div>
-                  )}
-
-                  {/* Step guidance — visible when expanded */}
-                  {navSheetState === 'expanded' && (
-                    <div
-                      className="nav-sheet-steps"
-                      style={{
-                        overflowY: 'auto',
-                        paddingRight: '0.5rem',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '0.5rem',
-                        borderTop: '1px solid var(--color-border)',
-                        paddingTop: '0.75rem',
-                        maxHeight: '38vh',
-                      }}
-                    >
-                      {guideSteps.map((step, idx) => (
-                        <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', fontSize: '0.85rem' }}>
-                          <div style={{ width: 20, height: 20, borderRadius: '50%', background: idx === 0 ? 'rgba(34,211,238,0.15)' : 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
-                            <span style={{ fontSize: '0.6rem', fontWeight: 700, color: idx === 0 ? 'var(--color-accent)' : 'var(--color-muted)' }}>{idx + 1}</span>
-                          </div>
-                          <span style={{ color: idx === 0 ? 'var(--color-accent)' : 'inherit', fontWeight: idx === 0 ? 600 : 400, lineHeight: 1.4 }}>
-                            {step}
-                          </span>
-                        </div>
-                      ))}
                     </div>
                   )}
                 </>
@@ -3356,7 +3531,7 @@ export function MapPage() {
                 You are currently outside the exhibition boundaries. Please proceed to the exhibition center to start the map navigation system.
               </p>
               <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1rem' }}>
-                {!mockMode && (
+                {profile?.role === 'admin' && !mockMode && (
                   <button className="btn btn-primary" onClick={() => setMockMode(true)}>
                     Switch to Mock Location
                   </button>
@@ -3365,7 +3540,7 @@ export function MapPage() {
                   Bypass (View Map)
                 </button>
               </div>
-              {mockMode && (
+              {profile?.role === 'admin' && mockMode && (
                 <p style={{ color: 'var(--color-accent)', fontSize: '0.85rem', marginTop: '0.75rem' }}>
                   Tip: Select a mock start node inside the premises or tap the map to test.
                 </p>
@@ -3711,174 +3886,386 @@ export function MapPage() {
             </div>
           )}
 
-          {showChecklistPrompt && (() => {
-            const allBlocks: BlockEntity[] = extractBlocksFromNodes(nodes);
-            const filteredBlocks = allBlocks.filter(b => {
-              if (!checklistSearchQuery.trim()) return true;
-              return b.name.toLowerCase().includes(checklistSearchQuery.toLowerCase());
-            });
-            return (
-              <AdminModal
-                title="📋 Guided Tour Planner"
-                onClose={() => setShowChecklistPrompt(false)}
-                footer={
-                  <div style={{ display: 'flex', gap: '0.6rem', width: '100%', justifyContent: 'flex-end', alignItems: 'center' }}>
-                    <button
-                      className="btn btn-ghost"
-                      style={{ padding: '0.45rem 1rem', fontSize: '0.85rem' }}
-                      onClick={() => setShowChecklistPrompt(false)}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      className="btn btn-primary"
-                      style={{ padding: '0.45rem 1.25rem', fontSize: '0.85rem', fontWeight: 700 }}
-                      disabled={tourSelectedBlockIds.length === 0}
-                      onClick={() => {
-                        setShowChecklistPrompt(false);
-                        generateGuidedTourRoute(tourSelectedBlockIds);
-                      }}
-                    >
-                      🚀 Start Tour ({tourSelectedBlockIds.length} {tourSelectedBlockIds.length === 1 ? 'Block' : 'Blocks'})
-                    </button>
-                  </div>
-                }
+          {/* Tour Stalls & Visited Tracker Modal / Bottom Drawer */}
+          {showTourStallsModal && (
+            <div
+              className="animate-fade-in"
+              style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(11, 15, 26, 0.85)',
+                backdropFilter: 'blur(16px)',
+                WebkitBackdropFilter: 'blur(16px)',
+                zIndex: 10050,
+                display: 'flex',
+                alignItems: 'flex-end',
+                justifyContent: 'center',
+                padding: '0',
+              }}
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setShowTourStallsModal(false);
+              }}
+            >
+              <div
+                className="glass"
+                style={{
+                  width: '100%',
+                  maxWidth: '560px',
+                  maxHeight: '85vh',
+                  background: 'linear-gradient(170deg, rgba(26, 34, 53, 0.98), rgba(15, 23, 42, 0.99))',
+                  border: '1px solid rgba(99, 102, 241, 0.35)',
+                  borderRadius: '24px 24px 0 0',
+                  boxShadow: '0 -10px 40px rgba(0, 0, 0, 0.75)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                  position: 'relative',
+                }}
               >
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: 1, minHeight: 0 }}>
-                  <p style={{ fontSize: '0.82rem', color: 'var(--color-muted)', margin: 0, lineHeight: 1.4 }}>
-                    Choose which blocks you want to visit on your tour. By default, <strong>all blocks are selected</strong> for the shortest optimal path.
-                  </p>
+                {/* Drawer Top Pull Pill */}
+                <div
+                  style={{
+                    width: '36px',
+                    height: '4px',
+                    background: 'rgba(255, 255, 255, 0.25)',
+                    borderRadius: '2px',
+                    margin: '0.6rem auto 0.2rem',
+                    flexShrink: 0,
+                  }}
+                />
 
-                  {/* Stats & Quick Actions Toolbar */}
-                  <div style={{
+                {/* Header */}
+                <div
+                  style={{
+                    padding: '0.75rem 1.25rem 0.85rem',
+                    borderBottom: '1px solid var(--color-border)',
                     display: 'flex',
-                    flexWrap: 'wrap',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    gap: '0.4rem',
-                    padding: '0.45rem 0.65rem',
-                    background: 'rgba(255, 255, 255, 0.03)',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: '10px'
-                  }}>
-                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', fontSize: '0.78rem', fontWeight: 700 }}>
-                      <span style={{ color: 'var(--color-accent)', background: 'rgba(34, 211, 238, 0.15)', padding: '0.15rem 0.45rem', borderRadius: '6px' }}>
-                        🎯 In Tour: {tourSelectedBlockIds.length}/{allBlocks.length}
-                      </span>
+                    gap: '0.75rem',
+                    flexShrink: 0,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                    <div
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: '10px',
+                        background: 'linear-gradient(135deg, #06b6d4, #6366f1)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#fff',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Store size={18} />
                     </div>
-
-                    <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        style={{ fontSize: '0.7rem', padding: '0.2rem 0.45rem', color: 'var(--color-accent)', minHeight: 'unset' }}
-                        onClick={() => setTourSelectedBlockIds(allBlocks.map(b => b.id))}
-                      >
-                        Select All
-                      </button>
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        style={{ fontSize: '0.7rem', padding: '0.2rem 0.45rem', color: 'var(--color-warning)', minHeight: 'unset' }}
-                        onClick={() => setTourSelectedBlockIds([])}
-                      >
-                        Deselect
-                      </button>
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: '0.96rem', fontWeight: 800 }}>
+                        {guidedTourActive ? 'Exhibition Tour Stalls' : 'Exhibition Stalls'}
+                      </h3>
+                      <p style={{ margin: 0, fontSize: '0.73rem', color: 'var(--color-muted)' }}>
+                        <span style={{ color: '#22c55e', fontWeight: 700 }}>
+                          {(guidedTourActive && tourStops.length > 0 ? tourStops : stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s))).filter(s => visitedStallIds.includes(s.id)).length}
+                        </span> of {(guidedTourActive && tourStops.length > 0 ? tourStops : stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s))).length} Stalls Visited
+                      </p>
                     </div>
                   </div>
 
-                  {/* Block Search Filter */}
-                  <input
-                    type="text"
-                    className="form-input"
-                    placeholder="🔍 Search blocks by name..."
-                    value={checklistSearchQuery}
-                    onChange={(e) => setChecklistSearchQuery(e.target.value)}
-                    style={{ fontSize: '0.82rem', padding: '0.4rem 0.65rem' }}
-                  />
-
-                  <div style={{
-                    flex: 1,
-                    minHeight: '160px',
-                    maxHeight: '42vh',
-                    overflowY: 'auto',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: '10px',
-                    padding: '0.4rem',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '0.35rem'
-                  }}>
-                    {filteredBlocks.length === 0 && (
-                      <div style={{ textAlign: 'center', color: 'var(--color-muted)', fontSize: '0.82rem', padding: '2rem 0' }}>
-                        🏢 No blocks found{checklistSearchQuery ? ` for "${checklistSearchQuery}"` : '. Add POI nodes in the admin panel.'}
-                      </div>
-                    )}
-                    {filteredBlocks.map((block) => {
-                      const isSelected = tourSelectedBlockIds.includes(block.id);
-                      return (
-                        <label
-                          key={block.id}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '0.65rem',
-                            padding: '0.55rem 0.75rem',
-                            borderRadius: '8px',
-                            background: isSelected ? `${block.color}12` : 'rgba(255, 255, 255, 0.02)',
-                            cursor: 'pointer',
-                            border: `1px solid ${isSelected ? `${block.color}40` : 'rgba(255, 255, 255, 0.06)'}`,
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            style={{ width: 18, height: 18, accentColor: block.color || '#22d3ee', cursor: 'pointer', flexShrink: 0 }}
-                            onChange={() => {
-                              if (isSelected) {
-                                setTourSelectedBlockIds(tourSelectedBlockIds.filter(id => id !== block.id));
-                              } else {
-                                setTourSelectedBlockIds([...tourSelectedBlockIds, block.id]);
-                              }
-                            }}
-                          />
-                          {/* Color dot */}
-                          <div style={{
-                            width: 26, height: 26, borderRadius: '50%',
-                            background: block.color || '#06b6d4',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: '12px', fontWeight: 800, color: '#fff', flexShrink: 0,
-                          }}>
-                            {block.name.match(/\d+/)?.[0] ?? block.name.slice(0, 2).toUpperCase()}
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.4rem' }}>
-                              <span style={{ fontSize: '0.85rem', fontWeight: 700, color: isSelected ? 'var(--color-text)' : 'var(--color-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                🏢 {block.name}
-                              </span>
-                              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', flexShrink: 0 }}>
-                                {isSelected ? (
-                                  <span style={{ fontSize: '0.65rem', color: block.color || '#22d3ee', fontWeight: 700, background: `${block.color || '#22d3ee'}20`, padding: '0.1rem 0.35rem', borderRadius: '4px' }}>
-                                    🎯 In Tour
-                                  </span>
-                                ) : (
-                                  <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)', fontWeight: 600, background: 'rgba(255, 255, 255, 0.05)', padding: '0.1rem 0.35rem', borderRadius: '4px' }}>
-                                    ⏭️ Excluded
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.15rem', fontSize: '0.7rem', color: 'var(--color-muted)' }}>
-                              <span>📍 Floor {block.floor || '1'}</span>
-                            </div>
-                          </div>
-                        </label>
-                      );
-                    })}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                    <button
+                      onClick={() => {
+                        setShowTourStallsModal(false);
+                        handleOpenTourPlanner();
+                      }}
+                      className="btn btn-ghost btn-sm"
+                      style={{
+                        fontSize: '0.74rem',
+                        padding: '0.3rem 0.65rem',
+                        color: 'var(--color-accent)',
+                        border: '1px solid rgba(34, 211, 238, 0.3)',
+                        borderRadius: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.3rem',
+                      }}
+                    >
+                      <Compass size={13} />
+                      <span>Change Stall</span>
+                    </button>
+                    <button
+                      onClick={() => setShowTourStallsModal(false)}
+                      className="btn btn-ghost btn-sm btn-icon"
+                      style={{ width: 30, height: 30, padding: 0 }}
+                    >
+                      <X size={16} />
+                    </button>
                   </div>
                 </div>
-              </AdminModal>
-            );
-          })()}
+
+                {/* Stalls List */}
+                <div
+                  style={{
+                    flex: '1 1 auto',
+                    overflowY: 'auto',
+                    padding: '0.85rem 1rem 2rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.65rem',
+                  }}
+                >
+                  {(guidedTourActive && tourStops.length > 0 ? tourStops : stores.filter(s => s.id !== 'kalawana-national-school-landmark' && !isFacilityStore(s))).map((stall, idx) => {
+                    const isVisited = visitedStallIds.includes(stall.id);
+                    const isCurrent = guidedTourActive && idx === currentTourStopIndex;
+
+                    return (
+                      <div
+                        key={stall.id}
+                        style={{
+                          background: isCurrent
+                            ? 'rgba(34, 211, 238, 0.08)'
+                            : isVisited
+                              ? 'rgba(34, 197, 94, 0.06)'
+                              : 'rgba(255, 255, 255, 0.03)',
+                          border: `1px solid ${
+                            isCurrent
+                              ? 'rgba(34, 211, 238, 0.45)'
+                              : isVisited
+                                ? 'rgba(34, 197, 94, 0.3)'
+                                : 'rgba(255, 255, 255, 0.08)'
+                          }`,
+                          borderRadius: '14px',
+                          padding: '0.75rem 0.85rem',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '0.55rem',
+                          flexShrink: 0,
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        {/* Top: Stall Info & Status Badge */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0, flex: 1 }}>
+                            <div
+                              style={{
+                                width: 28,
+                                height: 28,
+                                borderRadius: '8px',
+                                background: isVisited
+                                  ? 'rgba(34, 197, 94, 0.2)'
+                                  : isCurrent
+                                    ? 'rgba(34, 211, 238, 0.2)'
+                                    : 'rgba(255, 255, 255, 0.06)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                color: isVisited ? '#22c55e' : isCurrent ? '#22d3ee' : 'var(--color-muted)',
+                                fontWeight: 800,
+                                fontSize: '0.75rem',
+                                flexShrink: 0,
+                              }}
+                            >
+                              {isVisited ? '✓' : idx + 1}
+                            </div>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <div style={{ fontWeight: 700, fontSize: '0.88rem', color: isVisited ? '#e2e8f0' : '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {stall.name}
+                              </div>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--color-muted)' }}>
+                                {stall.floor ? `🏢 ${stall.floor}` : 'Exhibition Hall'}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Status Badge */}
+                          <div style={{ flexShrink: 0 }}>
+                            {isVisited ? (
+                              <span
+                                style={{
+                                  fontSize: '0.68rem',
+                                  fontWeight: 700,
+                                  color: '#22c55e',
+                                  background: 'rgba(34, 197, 94, 0.15)',
+                                  border: '1px solid rgba(34, 197, 94, 0.35)',
+                                  padding: '0.15rem 0.5rem',
+                                  borderRadius: '6px',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '0.25rem',
+                                }}
+                              >
+                                ✓ Visited
+                              </span>
+                            ) : isCurrent ? (
+                              <span
+                                style={{
+                                  fontSize: '0.68rem',
+                                  fontWeight: 700,
+                                  color: '#22d3ee',
+                                  background: 'rgba(34, 211, 238, 0.15)',
+                                  border: '1px solid rgba(34, 211, 238, 0.35)',
+                                  padding: '0.15rem 0.5rem',
+                                  borderRadius: '6px',
+                                }}
+                              >
+                                📍 Active Stop
+                              </span>
+                            ) : (
+                              <span
+                                style={{
+                                  fontSize: '0.68rem',
+                                  color: 'var(--color-muted)',
+                                  background: 'rgba(255, 255, 255, 0.05)',
+                                  padding: '0.15rem 0.45rem',
+                                  borderRadius: '6px',
+                                }}
+                              >
+                                Upcoming
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Actions Row */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap' }}>
+                          {isVisited ? (
+                            <>
+                              {/* Revisit Button */}
+                              <button
+                                onClick={() => {
+                                  handleUnmarkStopVisited(stall.id, true);
+                                  setShowTourStallsModal(false);
+                                }}
+                                className="btn btn-sm"
+                                style={{
+                                  flex: 1,
+                                  fontSize: '0.74rem',
+                                  padding: '0.35rem 0.6rem',
+                                  background: 'rgba(34, 211, 238, 0.12)',
+                                  border: '1px solid rgba(34, 211, 238, 0.35)',
+                                  color: '#22d3ee',
+                                  fontWeight: 700,
+                                  borderRadius: '8px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '0.3rem',
+                                }}
+                                title="Revisit this stall (routes here now and marks unvisited)"
+                              >
+                                <RotateCcw size={13} />
+                                <span>Revisit</span>
+                              </button>
+
+                              {/* Mark as Not Visited Button (undo accidental click) */}
+                              <button
+                                onClick={() => handleUnmarkStopVisited(stall.id, false)}
+                                className="btn btn-ghost btn-sm"
+                                style={{
+                                  flex: 1,
+                                  fontSize: '0.72rem',
+                                  padding: '0.35rem 0.6rem',
+                                  background: 'rgba(245, 158, 11, 0.08)',
+                                  border: '1px solid rgba(245, 158, 11, 0.25)',
+                                  color: '#fbbf24',
+                                  fontWeight: 600,
+                                  borderRadius: '8px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '0.25rem',
+                                }}
+                                title="If pressed visited by accident, tap to mark as not visited"
+                              >
+                                ✕ Mark as Not Visited
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              {/* Navigate Here Button */}
+                              <button
+                                onClick={() => {
+                                  if (guidedTourActive) {
+                                    handleJumpToTourStop(idx, true);
+                                  } else {
+                                    setSelectedDestinationStoreId(stall.id);
+                                    setSelectedDestinationNodeId('');
+                                    setNavigationActive(true);
+                                    if (stall.latitude && stall.longitude) {
+                                      setMapCenterLat(stall.latitude);
+                                      setMapCenterLng(stall.longitude);
+                                    }
+                                  }
+                                  setShowTourStallsModal(false);
+                                }}
+                                className="btn btn-sm"
+                                style={{
+                                  flex: 1,
+                                  fontSize: '0.74rem',
+                                  padding: '0.35rem 0.6rem',
+                                  background: isCurrent ? 'linear-gradient(135deg, #06b6d4, #3b82f6)' : 'rgba(255, 255, 255, 0.06)',
+                                  border: isCurrent ? 'none' : '1px solid rgba(255, 255, 255, 0.15)',
+                                  color: '#fff',
+                                  fontWeight: 600,
+                                  borderRadius: '8px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '0.3rem',
+                                }}
+                              >
+                                <Navigation size={13} />
+                                <span>{isCurrent ? 'Navigating Here' : 'Navigate Here'}</span>
+                              </button>
+
+                              {/* Mark Visited Button */}
+                              <button
+                                onClick={() => handleMarkStopVisited(stall)}
+                                className="btn btn-sm"
+                                style={{
+                                  flex: 1,
+                                  fontSize: '0.74rem',
+                                  padding: '0.35rem 0.6rem',
+                                  background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+                                  border: 'none',
+                                  color: '#fff',
+                                  fontWeight: 700,
+                                  borderRadius: '8px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '0.3rem',
+                                }}
+                              >
+                                <Check size={13} />
+                                <span>Mark Visited</span>
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Guided Tour Planner: Stalls Grouped under Blocks in Ascending Order */}
+          <StallTourSelectModal
+            isOpen={showChecklistPrompt}
+            onClose={() => setShowChecklistPrompt(false)}
+            stores={stores}
+            nodes={nodes}
+            initialSelectedStoreIds={tourStops.length > 0 ? tourStops.map((s) => s.id) : undefined}
+            onConfirmTour={(selectedIds) => {
+              setShowChecklistPrompt(false);
+              const selectedStores = stores.filter((s) => selectedIds.includes(s.id));
+              generateGuidedTourRouteForStores(selectedStores);
+            }}
+          />
         </div>
       </div>
     </>

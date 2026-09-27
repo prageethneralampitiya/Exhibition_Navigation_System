@@ -29,6 +29,7 @@ import { SiteFooter } from '../components/SiteFooter';
 import { EmergencyContactsModal } from '../components/EmergencyContactsModal';
 import { VideoLivesModal } from '../components/VideoLivesModal';
 import { EventBannerCarousel } from '../components/EventBannerCarousel';
+import { StallTourSelectModal } from '../components/StallTourSelectModal';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ⏱️ TIMING CONFIGURATION: INTRO SPLASH & HOME FADE-IN DELAY
@@ -691,6 +692,7 @@ export function HomePage() {
   // Modals for new buttons
   const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
   const [isVideoLivesModalOpen, setIsVideoLivesModalOpen] = useState(false);
+  const [isStallTourModalOpen, setIsStallTourModalOpen] = useState(false);
 
   // Real building blocks extracted dynamically from navigation nodes
   const realBlocks: BlockEntity[] = useMemo(() => {
@@ -970,10 +972,15 @@ export function HomePage() {
               </p>
             </div>
           </div>
-          <Link to="/map" className="btn btn-primary home-map-cta-btn" id="home-open-map-btn">
+          <button
+            type="button"
+            onClick={() => setIsStallTourModalOpen(true)}
+            className="btn btn-primary home-map-cta-btn"
+            id="home-open-map-btn"
+          >
             Open Map
             <ArrowRight size={15} />
-          </Link>
+          </button>
           {/* 3D School button hidden from UI, preserved in codebase */}
           <Link
             to="/map3d"
@@ -1491,6 +1498,22 @@ export function HomePage() {
       <VideoLivesModal
         isOpen={isVideoLivesModalOpen}
         onClose={() => setIsVideoLivesModalOpen(false)}
+      />
+
+      {/* Exhibition Stalls by Block Selection Modal */}
+      <StallTourSelectModal
+        isOpen={isStallTourModalOpen}
+        onClose={() => setIsStallTourModalOpen(false)}
+        stores={stores}
+        nodes={nodes}
+        onConfirmTour={(selectedStoreIds) => {
+          setIsStallTourModalOpen(false);
+          navigate(`/map?tourStalls=${selectedStoreIds.join(',')}`);
+        }}
+        onOpenFreeMap={() => {
+          setIsStallTourModalOpen(false);
+          navigate('/map');
+        }}
       />
 
       {/* Contact & Partner Information Ribbon Footer */}
