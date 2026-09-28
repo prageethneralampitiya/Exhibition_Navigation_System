@@ -53,6 +53,7 @@ import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
 import { GPSKalmanFilter } from '../utils/gpsFilter';
 import { isFacilityStore } from '../utils/facilities';
+import { calculateMovementBearing } from '../utils/headingUp';
 
 
 const DEFAULT_DEMO_STALLS: StoreType[] = [
@@ -273,6 +274,11 @@ export function MapPage() {
   const [, setSnappedToNode] = useState<string | null>(null); // label of entrance used as fallback start
   const [, setGpsError] = useState<string | null>(null);
   const [mockMode, setMockMode] = useState(false);
+
+  // Google Maps-style Heading-Up Navigation state
+  const [isHeadingUp, setIsHeadingUp] = useState(false);
+  const [recenterCount, setRecenterCount] = useState(0);
+  const lastGpsCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
 
   // Indoor QR Calibration State (locks user to checkpoint indoors)
   const [calibratedLocation, setCalibratedLocation] = useState<{
@@ -756,8 +762,22 @@ export function MapPage() {
 
     geoWatchIdRef.current = navigator.geolocation.watchPosition(
       (position) => {
-        const { latitude: rawLat, longitude: rawLng, accuracy } = position.coords;
+        const { latitude: rawLat, longitude: rawLng, accuracy, heading: gpsHeading } = position.coords;
         const { lat, lng } = filterRef.current.filter(rawLat, rawLng, accuracy, position.timestamp || Date.now());
+
+        // Detect user movement direction/bearing from hardware GPS or coordinate delta
+        if (gpsHeading !== null && gpsHeading !== undefined && !isNaN(gpsHeading) && gpsHeading >= 0) {
+          setUserHeading(gpsHeading);
+        } else if (lastGpsCoordsRef.current) {
+          const dist = getDistance(lastGpsCoordsRef.current.lat, lastGpsCoordsRef.current.lng, lat, lng);
+          if (dist >= 1.2) {
+            const bearing = calculateMovementBearing(lastGpsCoordsRef.current.lat, lastGpsCoordsRef.current.lng, lat, lng);
+            setUserHeading(bearing);
+            lastGpsCoordsRef.current = { lat, lng };
+          }
+        } else {
+          lastGpsCoordsRef.current = { lat, lng };
+        }
 
         // If the visitor calibrated at an indoor QR checkpoint, suppress poor GPS jumps (>12m)
         if (calibratedLocationRef.current && accuracy && accuracy > 12) {
@@ -830,6 +850,13 @@ export function MapPage() {
 
   const handleMapClick = useCallback((lat: number, lng: number) => {
     if (mockMode && profile?.role === 'admin') {
+      if (userLat !== null && userLng !== null) {
+        const dist = getDistance(userLat, userLng, lat, lng);
+        if (dist > 0.5) {
+          const bearing = calculateMovementBearing(userLat, userLng, lat, lng);
+          setUserHeading(bearing);
+        }
+      }
       setUserLat(lat);
       setUserLng(lng);
 
@@ -846,7 +873,7 @@ export function MapPage() {
         }
       }
     }
-  }, [mockMode, exhibitionSettings, profile?.role]);
+  }, [mockMode, exhibitionSettings, profile?.role, userLat, userLng]);
 
   const handleSelectMockLocation = (presetOrNodeId: string) => {
     setMockMode(true);
@@ -2131,6 +2158,7 @@ export function MapPage() {
     if (calibratedLocationRef.current) {
       setMapCenterLat(calibratedLocationRef.current.lat);
       setMapCenterLng(calibratedLocationRef.current.lng);
+      setRecenterCount((c) => c + 1);
       return;
     }
 
@@ -2143,6 +2171,26 @@ export function MapPage() {
         setMapCenterLat(node.latitude);
         setMapCenterLng(node.longitude);
       }
+    }
+    // Re-center and resume heading-up mode tracking
+    setRecenterCount((c) => c + 1);
+  };
+
+  const handleToggleHeadingUp = () => {
+    // If turning ON, also trigger compass permissions on iOS if needed
+    if (!isHeadingUp) {
+      const DeviceEvent = window.DeviceOrientationEvent as any;
+      if (DeviceEvent && typeof DeviceEvent.requestPermission === 'function') {
+        DeviceEvent.requestPermission().catch(console.error);
+      }
+      setIsHeadingUp(true);
+      if (userLat !== null && userLng !== null) {
+        setMapCenterLat(userLat);
+        setMapCenterLng(userLng);
+      }
+      setRecenterCount((c) => c + 1);
+    } else {
+      setIsHeadingUp(false);
     }
   };
 
@@ -2439,7 +2487,7 @@ export function MapPage() {
             stores={stores}
             userLat={userLat}
             userLng={userLng}
-            userHeading={mockMode ? null : userHeading}
+            userHeading={userHeading}
             route={calculatedRoute}
             theme="satellite"
             showGraphMesh={showMesh}
@@ -2455,6 +2503,8 @@ export function MapPage() {
               lng: exhibitionSettings.premises_center_longitude,
             }}
             boundaryRadius={exhibitionSettings.premises_radius_meters}
+            headingUpMode={isHeadingUp}
+            recenterTrigger={recenterCount}
             onSelectStore={(id) => {
               // Check if the ID is a navigation node (block) first
               const matchedNode = nodes.find(n => n.id === id);
@@ -2499,6 +2549,76 @@ export function MapPage() {
             title="Recenter Map"
           >
             <Navigation size={18} style={{ transform: 'rotate(45deg)' }} />
+          </button>
+
+          {/* Floating Heading-Up / North-Up Compass Mode Button */}
+          <button
+            id="heading-up-toggle-btn"
+            onClick={handleToggleHeadingUp}
+            className={`btn map-heading-toggle-btn ${isHeadingUp ? 'active-heading-up' : ''}`}
+            style={{
+              position: 'absolute',
+              bottom: navigationActive
+                ? (navSheetState === 'hidden'
+                    ? 'calc(168px + var(--safe-bottom, 0px))'
+                    : navSheetState === 'expanded'
+                      ? 'calc(min(65vh, 480px) + 74px)'
+                      : 'calc(289px + var(--safe-bottom, 0px))')
+                : '168px',
+              right: '16px',
+              zIndex: 1000,
+              borderRadius: '50%',
+              width: '46px',
+              height: '46px',
+              padding: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: isHeadingUp
+                ? 'linear-gradient(135deg, #06b6d4, #3b82f6)'
+                : 'rgba(15, 23, 42, 0.85)',
+              border: isHeadingUp
+                ? '2px solid #22d3ee'
+                : '1px solid rgba(255, 255, 255, 0.2)',
+              backdropFilter: 'blur(8px)',
+              color: isHeadingUp ? '#fff' : 'var(--color-text)',
+              boxShadow: isHeadingUp
+                ? '0 0 16px rgba(34, 211, 238, 0.6), 0 4px 12px rgba(0,0,0,0.4)'
+                : '0 4px 12px rgba(0,0,0,0.35)',
+              transition: 'bottom 0.3s ease, right 0.3s ease, background 0.25s, transform 0.2s',
+              cursor: 'pointer',
+            }}
+            title={
+              isHeadingUp
+                ? 'Heading-Up ON: Map camera rotates to follow your heading (Click for North-Up)'
+                : 'Heading-Up OFF: North is Up (Click for Heading-Up navigation)'
+            }
+            aria-label="Toggle Heading-Up Camera Mode"
+          >
+            <div style={{ position: 'relative', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Compass
+                size={22}
+                style={{
+                  transform: isHeadingUp ? `rotate(${-(userHeading ?? 0)}deg)` : 'none',
+                  transition: 'transform 0.3s ease',
+                  color: isHeadingUp ? '#fff' : 'var(--color-accent)',
+                }}
+              />
+              {isHeadingUp && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '-6px',
+                    right: '-6px',
+                    width: '8px',
+                    height: '8px',
+                    borderRadius: '50%',
+                    background: '#22d3ee',
+                    boxShadow: '0 0 6px #22d3ee',
+                  }}
+                />
+              )}
+            </div>
           </button>
 
           {/* Left Floating Controls Stack (Search & Alerts) */}
@@ -3534,11 +3654,11 @@ export function MapPage() {
                 right: '16px',
                 bottom: navigationActive
                   ? (navSheetState === 'hidden'
-                      ? 'calc(170px + var(--safe-bottom, 0px))'
+                      ? 'calc(222px + var(--safe-bottom, 0px))'
                       : navSheetState === 'expanded'
-                        ? 'calc(min(65vh, 480px) + 76px)'
-                        : 'calc(290px + var(--safe-bottom, 0px))')
-                  : '170px',
+                        ? 'calc(min(65vh, 480px) + 128px)'
+                        : 'calc(343px + var(--safe-bottom, 0px))')
+                  : '222px',
                 zIndex: 1005,
               }}
               title={

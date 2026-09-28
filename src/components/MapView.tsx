@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { type Store, type NavigationNode, type NavigationEdge } from '../lib/supabase';
 import { extractBlocksFromNodes, matchStoreToBlock, type BlockEntity } from '../utils/blocks';
 import { isFacilityStore } from '../utils/facilities';
+import { calculateShortestRotation, calculateReturnToNorthRotation, shouldUpdateHeading } from '../utils/headingUp';
 
 // ── Satellite / Street tile sources ──────────────────────────────────────────
 const TILE_SOURCES = {
@@ -41,6 +42,9 @@ interface MapViewProps {
   showSchoolBoundary?: boolean;
   boundaryCenter?: { lat: number; lng: number };
   boundaryRadius?: number;
+  headingUpMode?: boolean;
+  onPannedChange?: (isPanned: boolean) => void;
+  recenterTrigger?: number;
 }
 
 export function MapView({
@@ -64,9 +68,43 @@ export function MapView({
   showSchoolBoundary = true,
   boundaryCenter,
   boundaryRadius,
+  headingUpMode = false,
+  onPannedChange,
+  recenterTrigger = 0,
 }: MapViewProps) {
+  const viewportWrapperRef = useRef<HTMLDivElement>(null);
+  const rotatorRef = useRef<HTMLDivElement>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<L.Map | null>(null);
+
+  // Heading-Up camera rotation state & refs
+  const [cameraRotation, setCameraRotation] = useState<number>(0);
+  const currentRotationRef = useRef<number>(0);
+  const lastReliableHeadingRef = useRef<number | null>(null);
+  const [rotatorSize, setRotatorSize] = useState<number>(0);
+  const [isRotatedViewActive, setIsRotatedViewActive] = useState<boolean>(false);
+  const isPannedAwayRef = useRef<boolean>(false);
+  const isTransitioningRef = useRef<boolean>(true);
+  const headingUpModeRef = useRef<boolean>(headingUpMode);
+  headingUpModeRef.current = headingUpMode;
+  const onPannedChangeRef = useRef(onPannedChange);
+  onPannedChangeRef.current = onPannedChange;
+
+  // Measure viewport and calculate diagonal size so full rotation is always 100% covered
+  useEffect(() => {
+    const el = viewportWrapperRef.current;
+    if (!el) return;
+    const updateSize = () => {
+      const w = el.clientWidth || window.innerWidth;
+      const h = el.clientHeight || window.innerHeight;
+      const diag = Math.ceil(Math.hypot(w, h)) + 60;
+      setRotatorSize(diag);
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const onMapClickRef = useRef(onMapClick);
   useEffect(() => {
@@ -101,6 +139,91 @@ export function MapView({
     setTileMode(theme === 'satellite' ? 'satellite' : 'street');
   }, [theme]);
 
+  // Handle Heading-Up ON / OFF transitions
+  useEffect(() => {
+    if (!map) return;
+
+    if (headingUpMode) {
+      setIsRotatedViewActive(true);
+      isPannedAwayRef.current = false;
+      onPannedChangeRef.current?.(false);
+
+      requestAnimationFrame(() => {
+        map.invalidateSize({ animate: false });
+        if (userLat !== null && userLng !== null) {
+          map.setView([userLat, userLng], map.getZoom(), { animate: false });
+        }
+      });
+
+      const headingToUse = userHeading ?? lastReliableHeadingRef.current ?? 0;
+      lastReliableHeadingRef.current = ((headingToUse % 360) + 360) % 360;
+
+      const nextRot = calculateShortestRotation(currentRotationRef.current, headingToUse);
+      currentRotationRef.current = nextRot;
+      isTransitioningRef.current = true;
+      setCameraRotation(nextRot);
+    } else {
+      isPannedAwayRef.current = false;
+      onPannedChangeRef.current?.(false);
+
+      // Smoothly rotate back to North-Up (0°) via shortest path
+      const nextRot = calculateReturnToNorthRotation(currentRotationRef.current);
+      currentRotationRef.current = nextRot;
+      isTransitioningRef.current = true;
+      setCameraRotation(nextRot);
+
+      const timer = setTimeout(() => {
+        setIsRotatedViewActive(false);
+        setCameraRotation(0);
+        currentRotationRef.current = 0;
+        map.invalidateSize({ animate: false });
+        if (userLat !== null && userLng !== null) {
+          map.setView([userLat, userLng], map.getZoom(), { animate: false });
+        } else {
+          map.setView([latitude, longitude], map.getZoom(), { animate: false });
+        }
+      }, 360);
+
+      return () => clearTimeout(timer);
+    }
+  }, [headingUpMode, map]);
+
+  // Auto-rotate camera to follow user heading changes (with deadband & shortest path)
+  useEffect(() => {
+    if (!headingUpMode || !isRotatedViewActive) return;
+    if (!shouldUpdateHeading(userHeading, lastReliableHeadingRef.current, 2.5)) {
+      // Retain last reliable heading if temporarily unavailable or within deadband
+      return;
+    }
+
+    const normHeading = ((userHeading! % 360) + 360) % 360;
+    lastReliableHeadingRef.current = normHeading;
+
+    // Calculate shortest rotation path across 359° <-> 0° boundary
+    const nextRot = calculateShortestRotation(currentRotationRef.current, normHeading);
+    currentRotationRef.current = nextRot;
+    isTransitioningRef.current = true;
+    setCameraRotation(nextRot);
+  }, [headingUpMode, isRotatedViewActive, userHeading]);
+
+  // Keep user location centered while Heading-Up mode is active and not manually panned away
+  useEffect(() => {
+    if (!map || !headingUpMode || !isRotatedViewActive) return;
+    if (userLat !== null && userLng !== null && !isPannedAwayRef.current) {
+      map.setView([userLat, userLng], map.getZoom(), { animate: false });
+    }
+  }, [map, headingUpMode, isRotatedViewActive, userLat, userLng]);
+
+  // Handle explicit re-center trigger from parent
+  useEffect(() => {
+    if (!map || recenterTrigger === 0) return;
+    isPannedAwayRef.current = false;
+    onPannedChangeRef.current?.(false);
+    if (userLat !== null && userLng !== null) {
+      map.setView([userLat, userLng], map.getZoom(), { animate: true });
+    }
+  }, [recenterTrigger, map, userLat, userLng]);
+
   // 1. Initialize Map
   useEffect(() => {
     if (!mapContainerRef.current) return;
@@ -126,6 +249,10 @@ export function MapView({
     // Track user gesture interactions to avoid snapping map during active pan/zoom
     const handleTouchOrDragStart = () => {
       isUserInteractingRef.current = true;
+      if (headingUpModeRef.current) {
+        isPannedAwayRef.current = true;
+        onPannedChangeRef.current?.(true);
+      }
     };
     const handleTouchOrDragEnd = () => {
       setTimeout(() => {
@@ -149,6 +276,11 @@ export function MapView({
 
     // Add scale bar control
     L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(newMap);
+
+    // Keep control container in viewportWrapper so controls stay in screen corners and unrotated
+    if (viewportWrapperRef.current && (newMap as any)._controlContainer) {
+      viewportWrapperRef.current.appendChild((newMap as any)._controlContainer);
+    }
 
     // Track zoom end
     newMap.on('zoomend', () => {
@@ -175,6 +307,9 @@ export function MapView({
       resizeObserver.disconnect();
       newMap.off('dragstart zoomstart movestart', handleTouchOrDragStart);
       newMap.off('dragend zoomend moveend', handleTouchOrDragEnd);
+      if ((newMap as any)._controlContainer && (newMap as any)._controlContainer.parentNode) {
+        (newMap as any)._controlContainer.parentNode.removeChild((newMap as any)._controlContainer);
+      }
       newMap.remove();
       setMap(null);
       markersLayerRef.current = null;
@@ -254,10 +389,10 @@ export function MapView({
     const lngChanged = prevCenterRef.current.lng !== longitude;
     prevCenterRef.current = { lat: latitude, lng: longitude };
 
-    if ((latChanged || lngChanged) && route.length === 0 && !isUserInteractingRef.current) {
+    if (!headingUpMode && (latChanged || lngChanged) && route.length === 0 && !isUserInteractingRef.current) {
       map.setView([latitude, longitude], zoom, { animate: true });
     }
-  }, [map, latitude, longitude, zoom, route.length]);
+  }, [map, latitude, longitude, zoom, route.length, headingUpMode]);
 
   // 4. Render Block Markers — one marker per building block, derived from navigation nodes
   useEffect(() => {
@@ -421,7 +556,10 @@ export function MapView({
     if (!map) return;
 
     if (userLat !== null && userLng !== null) {
-      const hasHeading = userHeading !== null && userHeading !== undefined;
+      const effectiveHeading = (userHeading !== null && userHeading !== undefined && !isNaN(userHeading))
+        ? userHeading
+        : (headingUpMode ? lastReliableHeadingRef.current : null);
+      const hasHeading = effectiveHeading !== null && effectiveHeading !== undefined;
 
       const userIcon = L.divIcon({
         className: 'user-map-pin',
@@ -436,7 +574,7 @@ export function MapView({
                 left: -33px;
                 background: conic-gradient(from 335deg, transparent 0deg, rgba(34, 211, 238, 0.4) 25deg, transparent 50deg, transparent 360deg);
                 border-radius: 50%;
-                transform: rotate(${userHeading}deg);
+                transform: rotate(${effectiveHeading}deg);
                 pointer-events: none;
                 z-index: -1;
               "></div>
@@ -474,7 +612,7 @@ export function MapView({
         userMarkerRef.current = null;
       }
     }
-  }, [map, userLat, userLng, userHeading]);
+  }, [map, userLat, userLng, userHeading, headingUpMode]);
 
   // 6. Render Route Polyline
   useEffect(() => {
@@ -642,21 +780,52 @@ export function MapView({
   }, [map, showGraphMesh, nodes, edges]);
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+    <div
+      ref={viewportWrapperRef}
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        borderRadius: 'var(--radius-lg)',
+      }}
+    >
       <div
-        ref={mapContainerRef}
-        className="map-container"
-        style={{
+        ref={rotatorRef}
+        style={isRotatedViewActive ? {
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          width: `${rotatorSize || 1200}px`,
+          height: `${rotatorSize || 1200}px`,
+          transform: `translate(-50%, -50%) rotate(${cameraRotation}deg)`,
+          transformOrigin: 'center center',
+          transition: isTransitioningRef.current ? 'transform 0.35s cubic-bezier(0.25, 1, 0.5, 1)' : 'none',
+          willChange: 'transform',
+        } : {
+          position: 'absolute',
+          top: 0,
+          left: 0,
           width: '100%',
           height: '100%',
-          borderRadius: 'var(--radius-lg)',
-          border: '1px solid var(--color-border)',
-          overflow: 'hidden',
-          touchAction: 'none',
-          userSelect: 'none',
-          WebkitUserSelect: 'none',
+          transform: 'none',
         }}
-      />
+      >
+        <div
+          ref={mapContainerRef}
+          className="map-container"
+          style={{
+            width: '100%',
+            height: '100%',
+            borderRadius: isRotatedViewActive ? 0 : 'var(--radius-lg)',
+            border: isRotatedViewActive ? 'none' : '1px solid var(--color-border)',
+            overflow: 'hidden',
+            touchAction: 'none',
+            userSelect: 'none',
+            WebkitUserSelect: 'none',
+          }}
+        />
+      </div>
       {map && (
         <div
           className="map-zoom-badge"
