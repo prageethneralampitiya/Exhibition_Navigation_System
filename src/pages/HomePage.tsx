@@ -16,6 +16,7 @@ import {
   Video,
   Megaphone,
   Flame,
+  Star,
   Building2,
 } from 'lucide-react';
 import { supabase, type Exhibition, type Store as StoreType, type NavigationNode } from '../lib/supabase';
@@ -30,6 +31,8 @@ import { EmergencyContactsModal } from '../components/EmergencyContactsModal';
 import { VideoLivesModal } from '../components/VideoLivesModal';
 import { EventBannerCarousel } from '../components/EventBannerCarousel';
 import { StallTourSelectModal } from '../components/StallTourSelectModal';
+import { useStallPopularity, recordStallEngagement } from '../services/stallPopularityService';
+import { useAllStallRatings, type StallRatingSummary } from '../services/stallRatingService';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ⏱️ TIMING CONFIGURATION: INTRO SPLASH & HOME FADE-IN DELAY
@@ -743,31 +746,41 @@ export function HomePage() {
     return String(fallbackIndex);
   }, []);
 
-  // Popular stalls ranked by views & navigation interactions
+  // ── Top 10 Popular Stalls (Ranked by Directions, Tour Selections & Views) ──
   interface PopularStallItem extends StoreType {
     rank: number;
     popularityScore: number;
   }
 
+  const { scores: popularityScores, getScore: getStallScore } = useStallPopularity();
+  const { getRating: getStallRating } = useAllStallRatings();
+
   const popularStalls = useMemo<PopularStallItem[]>(() => {
     if (stores.length === 0) return [];
 
-    const eventCounts = new Map<string, number>();
-    analyticsEvents.forEach((ev: any) => {
-      if (ev.target_id) {
-        eventCounts.set(ev.target_id, (eventCounts.get(ev.target_id) || 0) + 1);
-      }
-      if (ev.target_name) {
-        const key = ev.target_name.toLowerCase().trim();
-        eventCounts.set(key, (eventCounts.get(key) || 0) + 1);
-      }
-    });
+    // Filter to active exhibition stalls only (exclude venue facilities like toilets, water points)
+    const validExhibitionStalls = stores.filter((s) => !isFacilityStore(s) && s.is_active);
 
-    const scored = stores.map((s, idx) => {
-      const idCount = eventCounts.get(s.id) || 0;
-      const nameCount = eventCounts.get(s.name.toLowerCase().trim()) || 0;
-      const totalScore = idCount + nameCount;
-      return { store: s, score: totalScore, originalIndex: idx };
+    const scored = validExhibitionStalls.map((s, idx) => {
+      // 1. Live popularity score from real directions, tour planner selections & views
+      const liveScore = getStallScore(s.id, s.name);
+      const stallRating = getStallRating(s.id, s.name);
+      const ratingScore = stallRating.total_votes > 0 ? Math.round(stallRating.average * stallRating.total_votes * 1.5) : 0;
+
+      // 2. Also incorporate any Supabase analytics events
+      let dbScore = 0;
+      if (analyticsEvents && analyticsEvents.length > 0) {
+        const norm = s.name.toLowerCase().trim();
+        analyticsEvents.forEach((ev: any) => {
+          if (ev.target_id === s.id || (ev.target_name && ev.target_name.toLowerCase().trim() === norm)) {
+            const w = ev.event_type === 'route_calculation' ? 5 : ev.event_type === 'store_view' ? 2 : 1;
+            dbScore += w;
+          }
+        });
+      }
+
+      const totalScore = liveScore + dbScore + ratingScore;
+      return { store: s, score: totalScore, originalIndex: idx, rating: stallRating };
     });
 
     // Sort descending by score. On ties, retain stable index order
@@ -776,17 +789,19 @@ export function HomePage() {
       return a.originalIndex - b.originalIndex;
     });
 
-    return scored.map((item, index) => ({
+    // STRICTLY Top 10 Popular Stalls
+    return scored.slice(0, 10).map((item, index) => ({
       ...item.store,
       rank: index + 1,
       popularityScore: item.score,
+      rating: item.rating,
     }));
-  }, [stores, analyticsEvents]);
+  }, [stores, analyticsEvents, popularityScores, getStallScore, getStallRating]);
 
   const popularCopies = useMemo(() => {
     const count = popularStalls.length;
-    if (count === 0) return 6;
-    return Math.max(6, Math.ceil(24 / count));
+    if (count === 0) return 2;
+    return Math.max(2, Math.ceil(20 / count));
   }, [popularStalls.length]);
 
   const popularDisplayList = useMemo(() => {
@@ -1275,8 +1290,8 @@ export function HomePage() {
                   <Flame size={18} color="#fff" />
                 </div>
                 <div>
-                  <h2 className="home-section-title">Popular Stalls</h2>
-                  <p className="home-section-sub">Most viewed &amp; top-navigated stalls on campus</p>
+                  <h2 className="home-section-title">Top 10 Popular Stalls</h2>
+                  <p className="home-section-sub">Most viewed &amp; top-navigated stalls across exhibition</p>
                 </div>
               </div>
               <Link to="/stores" className="home-view-all-link" id="home-view-all-popular">
@@ -1311,6 +1326,7 @@ export function HomePage() {
                       <Link
                         key={`pop-${st.id}-${index}`}
                         to={`/stores/${st.id}`}
+                        onClick={() => recordStallEngagement(st.id, st.name, 'view')}
                         className="home-store-carousel-card"
                         id={`home-popular-card-${st.id}-${index}`}
                         style={{
@@ -1342,6 +1358,9 @@ export function HomePage() {
                         {/* Top-right Flame indicator */}
                         <div className="stall-popular-badge">
                           <Flame size={12} color="#f59e0b" />
+                          <span style={{ fontSize: '0.65rem', fontWeight: 800, color: '#f59e0b', marginLeft: '3px' }}>
+                            Top {rank}
+                          </span>
                         </div>
 
                         {/* Store Logo */}
@@ -1361,7 +1380,39 @@ export function HomePage() {
                         {/* Stall Name */}
                         <h3 className="home-store-carousel-name" title={st.name}>{st.name}</h3>
 
-                        {/* Stall Block and Floor */}
+                        {/* Safe Star Rating Badge */}
+                        {(() => {
+                          const r = st.rating || getStallRating(st.id, st.name);
+                          const avg = r && typeof r.average === 'number' ? r.average : 4.8;
+                          const votes = r && typeof r.total_votes === 'number' ? r.total_votes : 0;
+                          return (
+                            <div
+                              className="stall-rating-chip"
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px',
+                                margin: '4px 0 2px 0',
+                                fontSize: '0.72rem',
+                                color: '#f59e0b',
+                                fontWeight: 700,
+                                background: 'rgba(245, 158, 11, 0.1)',
+                                padding: '2px 6px',
+                                borderRadius: '6px',
+                                border: '1px solid rgba(245, 158, 11, 0.25)',
+                                width: 'fit-content',
+                              }}
+                              title={`Visitor rating: ${avg.toFixed(1)} / 5 (${votes} reviews)`}
+                            >
+                              <Star size={11} fill="#f59e0b" color="#f59e0b" />
+                              <span>{avg.toFixed(1)}</span>
+                              <span style={{ opacity: 0.65, fontSize: '0.62rem', fontWeight: 500 }}>
+                                ({votes})
+                              </span>
+                            </div>
+                          );
+                        })()}
+
                         <div className="stall-location-chip" style={{ color: loc.blockColor }}>
                           <Building2 size={11} style={{ flexShrink: 0 }} />
                           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{loc.blockName}</span>

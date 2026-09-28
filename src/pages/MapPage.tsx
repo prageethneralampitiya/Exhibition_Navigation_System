@@ -52,6 +52,7 @@ import {
 } from '../utils/dijkstra';
 import { fetchOSRMRoute } from '../utils/osrmRouting';
 import { logAnalyticsEvent } from '../lib/analytics';
+import { recordStallEngagement } from '../services/stallPopularityService';
 import { GPSKalmanFilter } from '../utils/gpsFilter';
 import { isFacilityStore } from '../utils/facilities';
 import { calculateMovementBearing } from '../utils/headingUp';
@@ -1725,6 +1726,7 @@ export function MapPage() {
     if (destId && destId !== lastLoggedDestinationRef.current) {
       lastLoggedDestinationRef.current = destId;
       logAnalyticsEvent('route_calculation', destId, targetLabel);
+      recordStallEngagement(destId, targetLabel, 'route');
     }
 
     if (targetLat === null || targetLng === null) {
@@ -2527,105 +2529,145 @@ export function MapPage() {
             }}
           />
 
-          {/* Floating Recenter Location Button */}
-          <button
-            onClick={handleRecenterLocation}
-            className="btn btn-primary map-recenter-btn"
+          {/* Right Floating Controls Stack (Recenter, Auto-Rotation Compass, Quick Pitstop) */}
+          <div
+            className="map-floating-actions-stack"
             style={{
               position: 'absolute',
-              bottom: navigationActive
+              right: '14px',
+              bottom: (navigationActive || guidedTourActive)
                 ? (navSheetState === 'hidden'
-                    ? 'calc(114px + var(--safe-bottom, 0px))'
+                    ? 'calc(74px + var(--safe-bottom, 0px))'
                     : navSheetState === 'expanded'
                       ? 'calc(min(65vh, 480px) + 20px)'
-                      : 'calc(235px + var(--safe-bottom, 0px))')
-                : '114px',
-              right: '16px',
-              zIndex: 1000,
-              borderRadius: '50%',
-              width: '46px',
-              height: '46px',
-              padding: 0,
+                      : 'calc(255px + var(--safe-bottom, 0px))')
+                : 'calc(166px + var(--safe-bottom, 0px))',
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 4px 12px rgba(99,102,241,0.4)',
-              transition: 'bottom 0.3s ease, right 0.3s ease',
+              flexDirection: 'column-reverse',
+              alignItems: 'flex-end',
+              gap: '10px',
+              zIndex: 1005,
+              pointerEvents: 'none',
+              transition: 'bottom 0.32s cubic-bezier(0.32, 0.72, 0, 1), right 0.3s ease',
             }}
-            title="Recenter Map"
           >
-            <Navigation size={18} style={{ transform: 'rotate(45deg)' }} />
-          </button>
+            {/* 1. Floating Recenter Location Button (Bottom) */}
+            <button
+              onClick={handleRecenterLocation}
+              className="btn btn-primary map-recenter-btn"
+              style={{
+                pointerEvents: 'auto',
+                borderRadius: '50%',
+                width: '46px',
+                height: '46px',
+                padding: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 4px 14px rgba(99,102,241,0.45)',
+                cursor: 'pointer',
+                flexShrink: 0,
+              }}
+              title="Recenter Map on Current Location"
+              aria-label="Recenter Map"
+            >
+              <Navigation size={18} style={{ transform: 'rotate(45deg)' }} />
+            </button>
 
-          {/* Floating Heading-Up / North-Up Compass Mode Button */}
-          <button
-            id="heading-up-toggle-btn"
-            onClick={handleToggleHeadingUp}
-            className={`btn map-heading-toggle-btn ${isHeadingUp ? 'active-heading-up' : ''}`}
-            style={{
-              position: 'absolute',
-              bottom: navigationActive
-                ? (navSheetState === 'hidden'
-                    ? 'calc(168px + var(--safe-bottom, 0px))'
-                    : navSheetState === 'expanded'
-                      ? 'calc(min(65vh, 480px) + 74px)'
-                      : 'calc(289px + var(--safe-bottom, 0px))')
-                : '168px',
-              right: '16px',
-              zIndex: 1000,
-              borderRadius: '50%',
-              width: '46px',
-              height: '46px',
-              padding: 0,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: isHeadingUp
-                ? 'linear-gradient(135deg, #06b6d4, #3b82f6)'
-                : 'rgba(15, 23, 42, 0.85)',
-              border: isHeadingUp
-                ? '2px solid #22d3ee'
-                : '1px solid rgba(255, 255, 255, 0.2)',
-              backdropFilter: 'blur(8px)',
-              color: isHeadingUp ? '#fff' : 'var(--color-text)',
-              boxShadow: isHeadingUp
-                ? '0 0 16px rgba(34, 211, 238, 0.6), 0 4px 12px rgba(0,0,0,0.4)'
-                : '0 4px 12px rgba(0,0,0,0.35)',
-              transition: 'bottom 0.3s ease, right 0.3s ease, background 0.25s, transform 0.2s',
-              cursor: 'pointer',
-            }}
-            title={
-              isHeadingUp
-                ? 'Heading-Up ON: Map camera rotates to follow your heading (Click for North-Up)'
-                : 'Heading-Up OFF: North is Up (Click for Heading-Up navigation)'
-            }
-            aria-label="Toggle Heading-Up Camera Mode"
-          >
-            <div style={{ position: 'relative', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Compass
-                size={22}
-                style={{
-                  transform: isHeadingUp ? `rotate(${-(userHeading ?? 0)}deg)` : 'none',
-                  transition: 'transform 0.3s ease',
-                  color: isHeadingUp ? '#fff' : 'var(--color-accent)',
-                }}
-              />
-              {isHeadingUp && (
-                <span
+            {/* 2. Floating Auto-Rotation / Compass Heading Button (Middle) */}
+            <button
+              id="heading-up-toggle-btn"
+              onClick={handleToggleHeadingUp}
+              className={`btn map-heading-toggle-btn ${isHeadingUp ? 'active-heading-up' : ''}`}
+              style={{
+                pointerEvents: 'auto',
+                borderRadius: '50%',
+                width: '46px',
+                height: '46px',
+                padding: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: isHeadingUp
+                  ? 'linear-gradient(135deg, #06b6d4, #3b82f6)'
+                  : 'rgba(15, 23, 42, 0.9)',
+                border: isHeadingUp
+                  ? '2px solid #22d3ee'
+                  : '1px solid rgba(255, 255, 255, 0.25)',
+                backdropFilter: 'blur(10px)',
+                WebkitBackdropFilter: 'blur(10px)',
+                color: isHeadingUp ? '#fff' : 'var(--color-text)',
+                boxShadow: isHeadingUp
+                  ? '0 0 16px rgba(34, 211, 238, 0.6), 0 4px 12px rgba(0,0,0,0.4)'
+                  : '0 4px 12px rgba(0,0,0,0.35)',
+                cursor: 'pointer',
+                flexShrink: 0,
+                transition: 'background 0.25s, transform 0.2s',
+              }}
+              title={
+                isHeadingUp
+                  ? 'Auto-Rotation ON: Map rotates to follow your heading (Click for North-Up)'
+                  : 'Auto-Rotation OFF: North is Up (Click to enable Auto-Rotation)'
+              }
+              aria-label="Toggle Auto-Rotation Heading-Up Mode"
+            >
+              <div style={{ position: 'relative', width: '22px', height: '22px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Compass
+                  size={22}
                   style={{
-                    position: 'absolute',
-                    top: '-6px',
-                    right: '-6px',
-                    width: '8px',
-                    height: '8px',
-                    borderRadius: '50%',
-                    background: '#22d3ee',
-                    boxShadow: '0 0 6px #22d3ee',
+                    transform: isHeadingUp ? `rotate(${-(userHeading ?? 0)}deg)` : 'none',
+                    transition: 'transform 0.3s ease',
+                    color: isHeadingUp ? '#fff' : 'var(--color-accent)',
                   }}
                 />
-              )}
-            </div>
-          </button>
+                {isHeadingUp && (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      top: '-6px',
+                      right: '-6px',
+                      width: '8px',
+                      height: '8px',
+                      borderRadius: '50%',
+                      background: '#22d3ee',
+                      boxShadow: '0 0 6px #22d3ee',
+                    }}
+                  />
+                )}
+              </div>
+            </button>
+
+            {/* 3. Floating Quick Pitstop Button (Top of Stack) */}
+            {(navigationActive || guidedTourActive || activePitstopDetour) && (
+              <button
+                id="quick-pitstop-fab-btn"
+                className={`quick-pitstop-fab ${activePitstopDetour ? 'active-detour' : ''}`}
+                onClick={() => {
+                  if (activePitstopDetour) {
+                    handleResumeOriginalRoute();
+                  } else {
+                    setShowPitstopModal(true);
+                  }
+                }}
+                style={{
+                  pointerEvents: 'auto',
+                  flexShrink: 0,
+                }}
+                title={
+                  activePitstopDetour
+                    ? 'Finished your pitstop? Click to resume your original route'
+                    : 'Need a quick pitstop? (Washroom, Canteen, Water, First Aid)'
+                }
+              >
+                <span style={{ fontSize: '1.05rem', lineHeight: 1 }}>
+                  {activePitstopDetour ? '✓' : '🚻'}
+                </span>
+                <span>
+                  {activePitstopDetour ? 'Resume' : 'Pitstop'}
+                </span>
+              </button>
+            )}
+          </div>
 
           {/* Left Floating Controls Stack (Search & Alerts) */}
           <div
@@ -3641,45 +3683,6 @@ export function MapPage() {
                 <span>Resume Route ➔</span>
               </button>
             </div>
-          )}
-
-          {/* Floating Pitstop Button (Right Side, floating above Recenter button) */}
-          {(navigationActive || guidedTourActive || activePitstopDetour) && (
-            <button
-              id="quick-pitstop-fab-btn"
-              className={`quick-pitstop-fab ${activePitstopDetour ? 'active-detour' : ''}`}
-              onClick={() => {
-                if (activePitstopDetour) {
-                  handleResumeOriginalRoute();
-                } else {
-                  setShowPitstopModal(true);
-                }
-              }}
-              style={{
-                position: 'fixed',
-                right: '16px',
-                bottom: navigationActive
-                  ? (navSheetState === 'hidden'
-                      ? 'calc(222px + var(--safe-bottom, 0px))'
-                      : navSheetState === 'expanded'
-                        ? 'calc(min(65vh, 480px) + 128px)'
-                        : 'calc(343px + var(--safe-bottom, 0px))')
-                  : '222px',
-                zIndex: 1005,
-              }}
-              title={
-                activePitstopDetour
-                  ? 'Finished your pitstop? Click to resume your original route'
-                  : 'Need a quick stop? (Washroom, Canteen, Water, First Aid)'
-              }
-            >
-              <span style={{ fontSize: '1.05rem', lineHeight: 1 }}>
-                {activePitstopDetour ? '✓' : '🚻'}
-              </span>
-              <span>
-                {activePitstopDetour ? 'Resume' : 'Pitstop'}
-              </span>
-            </button>
           )}
 
           {/* Quick Pitstop Modal */}

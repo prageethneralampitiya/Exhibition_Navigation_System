@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { supabase, type Store as StoreType, type Exhibition, type NavigationNode } from '../lib/supabase';
+import { recordStallEngagement } from '../services/stallPopularityService';
 
 type SearchCategory = 'all' | 'stores' | 'exhibitions' | 'facilities';
 
@@ -222,11 +223,19 @@ export function SearchPage() {
                     </div>
 
                     <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
-                      <Link to={`/stores/${st.id}`} className="btn btn-ghost btn-sm" style={{ flex: 1, padding: '0.45rem', fontSize: '0.75rem' }}>
+                      <Link
+                        to={`/stores/${st.id}`}
+                        onClick={() => recordStallEngagement(st.id, st.name, 'search')}
+                        className="btn btn-ghost btn-sm"
+                        style={{ flex: 1, padding: '0.45rem', fontSize: '0.75rem' }}
+                      >
                         View Profile
                       </Link>
                       <button
-                        onClick={() => navigate(`/map?to=${st.id}`)}
+                        onClick={() => {
+                          recordStallEngagement(st.id, st.name, 'route');
+                          navigate(`/map?to=${st.id}`);
+                        }}
                         className="btn btn-primary btn-sm"
                         style={{ flex: 1, padding: '0.45rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}
                       >

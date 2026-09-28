@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useState, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { logAnalyticsEvent } from '../lib/analytics';
+import { recordStallEngagement } from '../services/stallPopularityService';
+import { StallRatingWidget } from '../components/StallRatingWidget';
 import {
   ArrowLeft,
   MapPin,
@@ -71,6 +73,7 @@ export function StoreDetailPage() {
       } else {
         list.push(store.id);
         setIsMarkedToVisit(true);
+        recordStallEngagement(store.id, store.name, 'tour_select');
       }
       localStorage.setItem(LOCAL_STORAGE_SELECTED_STALLS, JSON.stringify(list));
     } catch (e) {
@@ -111,6 +114,7 @@ export function StoreDetailPage() {
 
       setStore(storeData);
       logAnalyticsEvent('store_view', storeData.id, storeData.name);
+      recordStallEngagement(storeData.id, storeData.name, 'view');
 
       // Fetch sibling stalls in the same block/building
       const { data: allActiveStores } = await supabase
@@ -370,6 +374,9 @@ export function StoreDetailPage() {
           </div>
         </div>
       </section>
+
+      {/* Interactive 5-Star Visitor Rating Card */}
+      <StallRatingWidget stallId={store.id} stallName={store.name} />
 
       {/* Image Gallery Section */}
       {images.length > 0 && (

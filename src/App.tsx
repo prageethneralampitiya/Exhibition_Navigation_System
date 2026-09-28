@@ -1,10 +1,13 @@
-import { lazy, Suspense, useLayoutEffect } from 'react';
+import { lazy, Suspense, useLayoutEffect, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { LiveBroadcastProvider } from './contexts/LiveBroadcastContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { RealtimeAnnouncements } from './components/RealtimeAnnouncements';
 import { SplashScreen } from './components/SplashScreen';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { useTrackVisitorPresence } from './services/presenceService';
+import { recordClientVisit } from './services/visitorStatsService';
 import './index.css';
 
 // Automatically scrolls window to top on route change so pages always open from the top
@@ -41,8 +44,6 @@ const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m
 const RegisterPage = lazy(() => import('./pages/RegisterPage').then(m => ({ default: m.RegisterPage })));
 const ProfilePage = lazy(() => import('./pages/ProfilePage').then(m => ({ default: m.ProfilePage })));
 const HomePage = lazy(() => import('./pages/HomePage').then(m => ({ default: m.HomePage })));
-
-
 const StoreDirectoryPage = lazy(() => import('./pages/StoreDirectoryPage').then(m => ({ default: m.StoreDirectoryPage })));
 const StoreDetailPage = lazy(() => import('./pages/StoreDetailPage').then(m => ({ default: m.StoreDetailPage })));
 const ExhibitionDirectoryPage = lazy(() => import('./pages/ExhibitionDirectoryPage').then(m => ({ default: m.ExhibitionDirectoryPage })));
@@ -71,11 +72,11 @@ function PageLoader() {
   );
 }
 
-
-import { useTrackVisitorPresence } from './services/presenceService';
-
 function PresenceTracker() {
   useTrackVisitorPresence();
+  useEffect(() => {
+    recordClientVisit();
+  }, []);
   return null;
 }
 
@@ -90,8 +91,9 @@ function App() {
           <SplashScreen durationSeconds={3.5} />
           <div className="site-upper-background" aria-hidden="true" />
           <RealtimeAnnouncements />
-          <Suspense fallback={<PageLoader />}>
-            <Routes>
+          <ErrorBoundary>
+            <Suspense fallback={<PageLoader />}>
+              <Routes>
               {/* Public routes */}
               <Route path="/login" element={<LoginPage />} />
               <Route path="/register" element={<RegisterPage />} />
@@ -119,7 +121,8 @@ function App() {
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
-          </Suspense>
+            </Suspense>
+          </ErrorBoundary>
         </LiveBroadcastProvider>
       </AuthProvider>
     </BrowserRouter>
@@ -127,4 +130,3 @@ function App() {
 }
 
 export default App;
-

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { CalendarDays, Store, Megaphone, Users, Activity, Settings, ShieldCheck, ShieldAlert, CheckCircle2, Radio, DoorOpen } from 'lucide-react';
+import { CalendarDays, Store, Megaphone, Users, Activity, Settings, ShieldCheck, ShieldAlert, CheckCircle2, Radio, DoorOpen, UserCheck, Globe } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { StatCard } from '../../components/admin/StatCard';
 import { fetchLiveCounterConfig, saveLiveCounterConfig } from '../../services/appSettingsService';
 import { useRealtimeOnlineCount } from '../../services/presenceService';
+import { useVisitorStats } from '../../services/visitorStatsService';
 
 interface DashboardStats {
   registeredCount: number;
@@ -69,6 +70,40 @@ export function AdminDashboardPage() {
   ]);
   const [liveOutsideCount, setLiveOutsideCount] = useState('0');
   const [liveCounterSaving, setLiveCounterSaving] = useState(false);
+
+  // Total App Users (Full count of the day & All-time total users)
+  const { stats: visitorStats, loading: visitorStatsLoading, saveStats: saveVisitorStatsData } = useVisitorStats();
+  const [dayUserCountInput, setDayUserCountInput] = useState<string>('');
+  const [allTimeUserCountInput, setAllTimeUserCountInput] = useState<string>('');
+  const [visitorStatsSaving, setVisitorStatsSaving] = useState(false);
+
+  useEffect(() => {
+    if (visitorStats) {
+      setDayUserCountInput(String(visitorStats.today_count));
+      setAllTimeUserCountInput(String(visitorStats.all_time_count));
+    }
+  }, [visitorStats.today_count, visitorStats.all_time_count]);
+
+  const handleSaveVisitorStats = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setVisitorStatsSaving(true);
+    try {
+      const todayCount = Math.max(0, parseInt(dayUserCountInput, 10) || 0);
+      const allTimeCount = Math.max(0, parseInt(allTimeUserCountInput, 10) || 0);
+      await saveVisitorStatsData({
+        today_date: visitorStats.today_date,
+        today_count: todayCount,
+        all_time_count: allTimeCount,
+      });
+      setToastMessage('Total user counts saved successfully! Full day count and all-time total updated.');
+      setTimeout(() => setToastMessage(null), 4000);
+    } catch (err) {
+      console.error('Error saving visitor stats:', err);
+      alert('Failed to save visitor counts.');
+    } finally {
+      setVisitorStatsSaving(false);
+    }
+  };
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -533,6 +568,18 @@ export function AdminDashboardPage() {
               <Activity size={20} color="#22c55e" style={{ position: 'relative' }} />
             </div>
           }
+        />
+        <StatCard
+          label="Today's Users (Day Count)"
+          value={visitorStats.today_count}
+          loading={visitorStatsLoading}
+          icon={<UserCheck size={20} color="#38bdf8" />}
+        />
+        <StatCard
+          label="All-Time Total Users"
+          value={visitorStats.all_time_count}
+          loading={visitorStatsLoading}
+          icon={<Globe size={20} color="#a855f7" />}
         />
         <StatCard
           label="Registered Accounts"
@@ -1168,6 +1215,106 @@ export function AdminDashboardPage() {
             <button type="submit" className="btn btn-primary" disabled={liveCounterSaving} style={{ minWidth: '180px' }}>
               {liveCounterSaving ? <span className="spinner" /> : <Radio size={14} />}
               Save Counter Settings
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {/* Total User Counts — Full Day Count & All-Time Management */}
+      <section style={{ marginTop: '1.5rem', marginBottom: '2.5rem' }}>
+        <form onSubmit={handleSaveVisitorStats} className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+              <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(56, 189, 248, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <UserCheck size={20} color="#38bdf8" />
+              </div>
+              <div>
+                <h2 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0, color: 'var(--color-text)' }}>
+                  Total App Users Management
+                </h2>
+                <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)', margin: '0.2rem 0 0' }}>
+                  Manage and calibrate the full count of users for the day and cumulative all-time total users
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontSize: '0.75rem', color: 'var(--color-muted)', background: 'rgba(255,255,255,0.05)', padding: '0.25rem 0.6rem', borderRadius: '6px' }}>
+                📅 Tracking Date: <strong style={{ color: 'var(--color-text)' }}>{visitorStats.today_date}</strong>
+              </span>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem' }}>
+            {/* Full Count of the Day */}
+            <div style={{ background: 'rgba(56, 189, 248, 0.05)', border: '1px solid rgba(56, 189, 248, 0.2)', borderRadius: '12px', padding: '1.1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.4rem' }}>
+                <UserCheck size={17} color="#38bdf8" />
+                <label htmlFor="day-user-count" style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--color-text)' }}>
+                  Full Count of the Day
+                </label>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--color-muted)', margin: '0 0 0.85rem', lineHeight: 1.4 }}>
+                Total unique visitors who used the app today. Automatically rolls over at midnight.
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  id="day-user-count"
+                  type="number"
+                  min="0"
+                  className="form-input"
+                  value={dayUserCountInput}
+                  onChange={(e) => setDayUserCountInput(e.target.value)}
+                  style={{ fontSize: '1.05rem', fontWeight: 700, padding: '0.5rem 0.75rem' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setDayUserCountInput((prev) => String((parseInt(prev, 10) || 0) + 10))}
+                  className="btn btn-ghost btn-sm"
+                  style={{ fontSize: '0.75rem', padding: '0.45rem 0.65rem', whiteSpace: 'nowrap' }}
+                >
+                  +10
+                </button>
+              </div>
+            </div>
+
+            {/* Full Count from All the Time */}
+            <div style={{ background: 'rgba(168, 85, 247, 0.05)', border: '1px solid rgba(168, 85, 247, 0.2)', borderRadius: '12px', padding: '1.1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.4rem' }}>
+                <Globe size={17} color="#a855f7" />
+                <label htmlFor="all-time-user-count" style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--color-text)' }}>
+                  Full Count from All the Time
+                </label>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--color-muted)', margin: '0 0 0.85rem', lineHeight: 1.4 }}>
+                Cumulative total unique users who have ever accessed and used the exhibition navigation app.
+              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  id="all-time-user-count"
+                  type="number"
+                  min="0"
+                  className="form-input"
+                  value={allTimeUserCountInput}
+                  onChange={(e) => setAllTimeUserCountInput(e.target.value)}
+                  style={{ fontSize: '1.05rem', fontWeight: 700, padding: '0.5rem 0.75rem' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setAllTimeUserCountInput((prev) => String((parseInt(prev, 10) || 0) + 50))}
+                  className="btn btn-ghost btn-sm"
+                  style={{ fontSize: '0.75rem', padding: '0.45rem 0.65rem', whiteSpace: 'nowrap' }}
+                >
+                  +50
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
+            <button type="submit" className="btn btn-primary" disabled={visitorStatsSaving} style={{ minWidth: '180px' }}>
+              {visitorStatsSaving ? <span className="spinner" /> : <UserCheck size={15} />}
+              Save Total User Counts
             </button>
           </div>
         </form>

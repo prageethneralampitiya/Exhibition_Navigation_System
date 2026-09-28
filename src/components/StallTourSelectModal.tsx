@@ -26,6 +26,8 @@ import {
 } from '../utils/blocks';
 import { getEffectiveStoreHours } from '../utils/storeHours';
 import { isFacilityStore } from '../utils/facilities';
+import mainDarkBg from '../pics/main dark.png';
+import { recordStallEngagement } from '../services/stallPopularityService';
 
 export interface StallTourSelectModalProps {
   isOpen: boolean;
@@ -127,6 +129,11 @@ export function StallTourSelectModal({
 }: StallTourSelectModalProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [detailStall, setDetailStall] = useState<StoreType | null>(null);
+
+  const handleOpenDetail = useCallback((stall: StoreType) => {
+    recordStallEngagement(stall.id, stall.name, 'view');
+    setDetailStall(stall);
+  }, []);
 
   // Real building blocks from navigation nodes
   const realBlocks: BlockEntity[] = useMemo(() => {
@@ -360,6 +367,24 @@ export function StallTourSelectModal({
           position: 'relative',
         }}
       >
+        {/* Home Screen Honeycomb Top Background Image (Green & Yellow Hexagon Theme) */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: '140px',
+            backgroundImage: `linear-gradient(180deg, rgba(15, 23, 42, 0.4) 0%, rgba(15, 23, 42, 0.8) 60%, rgba(15, 23, 42, 0.99) 100%), url(${mainDarkBg})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center top',
+            backgroundRepeat: 'no-repeat',
+            pointerEvents: 'none',
+            zIndex: 0,
+            opacity: 0.95,
+          }}
+        />
+
         {/* Ambient Top Glow */}
         <div
           style={{
@@ -368,51 +393,54 @@ export function StallTourSelectModal({
             left: '50%',
             transform: 'translateX(-50%)',
             width: '280px',
-            height: '100px',
-            background: 'radial-gradient(ellipse, rgba(99, 102, 241, 0.4), transparent 70%)',
+            height: '80px',
+            background: 'radial-gradient(ellipse, rgba(99, 102, 241, 0.35), transparent 70%)',
             pointerEvents: 'none',
+            zIndex: 0,
           }}
         />
 
-        {/* ── Modal Header ────────────────────────────────────── */}
+        {/* ── Modal Header (Ultra-Compact) ────────────────────── */}
         <div
           style={{
-            padding: '1rem 1.4rem 0.85rem',
-            borderBottom: '1px solid var(--color-border)',
+            padding: '0.5rem 1rem 0.45rem',
+            background: 'rgba(15, 23, 42, 0.55)',
+            backdropFilter: 'blur(8px)',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            gap: '1rem',
+            gap: '0.75rem',
             position: 'relative',
             zIndex: 1,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
             <div
               style={{
-                width: 44,
-                height: 44,
-                borderRadius: 14,
+                width: 32,
+                height: 32,
+                borderRadius: 10,
                 background: 'linear-gradient(135deg, #6366f1, #a855f7)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 color: '#fff',
-                boxShadow: '0 4px 14px rgba(99, 102, 241, 0.45)',
+                boxShadow: '0 2px 8px rgba(99, 102, 241, 0.45)',
                 flexShrink: 0,
               }}
             >
-              <Compass size={24} />
+              <Compass size={18} />
             </div>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 <h3
                   style={{
                     margin: 0,
-                    fontSize: '1.2rem',
+                    fontSize: '1.02rem',
                     fontWeight: 800,
-                    color: 'var(--color-text)',
-                    letterSpacing: '-0.02em',
+                    color: '#fff',
+                    letterSpacing: '-0.01em',
                   }}
                 >
                   Exhibition Tour Planner
@@ -422,12 +450,12 @@ export function StallTourSelectModal({
                     background: 'rgba(34, 211, 238, 0.15)',
                     color: 'var(--color-accent)',
                     border: '1px solid rgba(34, 211, 238, 0.3)',
-                    fontSize: '0.68rem',
+                    fontSize: '0.64rem',
                     fontWeight: 800,
-                    padding: '0.15rem 0.5rem',
+                    padding: '0.1rem 0.4rem',
                     borderRadius: '999px',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
+                    letterSpacing: '0.04em',
                   }}
                 >
                   Smart Route
@@ -435,10 +463,10 @@ export function StallTourSelectModal({
               </div>
               <p
                 style={{
-                  margin: '0.2rem 0 0',
-                  fontSize: '0.82rem',
-                  color: 'var(--color-muted)',
-                  lineHeight: 1.3,
+                  margin: '0.05rem 0 0',
+                  fontSize: '0.74rem',
+                  color: 'rgba(255, 255, 255, 0.65)',
+                  lineHeight: 1.2,
                 }}
               >
                 Select stalls
@@ -451,29 +479,32 @@ export function StallTourSelectModal({
             className="btn btn-ghost btn-sm btn-icon"
             style={{
               borderRadius: '50%',
-              width: 36,
-              height: 36,
+              width: 30,
+              height: 30,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: 'var(--color-muted)',
+              color: 'rgba(255, 255, 255, 0.75)',
               flexShrink: 0,
             }}
             title="Close"
           >
-            <X size={18} />
+            <X size={16} />
           </button>
         </div>
 
-        {/* ── Toolbar: Search & Selection Controls ───────────── */}
+        {/* ── Toolbar: Search & Selection Controls (Compact) ── */}
         <div
           style={{
-            padding: '0.65rem 1.4rem',
-            background: 'rgba(255, 255, 255, 0.02)',
-            borderBottom: '1px solid var(--color-border)',
+            padding: '0.35rem 0.85rem 0.45rem',
+            background: 'rgba(15, 23, 42, 0.75)',
+            backdropFilter: 'blur(8px)',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
             display: 'flex',
             flexDirection: 'column',
-            gap: '0.55rem',
+            gap: '0.35rem',
+            position: 'relative',
+            zIndex: 1,
           }}
         >
           {/* Search Input */}
@@ -481,14 +512,14 @@ export function StallTourSelectModal({
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '0.6rem',
-              background: 'rgba(15, 23, 42, 0.65)',
-              border: '1px solid var(--color-border)',
-              borderRadius: '12px',
-              padding: '0.5rem 0.85rem',
+              gap: '0.5rem',
+              background: 'rgba(15, 23, 42, 0.85)',
+              border: '1px solid rgba(255, 255, 255, 0.14)',
+              borderRadius: '10px',
+              padding: '0.35rem 0.7rem',
             }}
           >
-            <Search size={16} color="var(--color-muted)" style={{ flexShrink: 0 }} />
+            <Search size={15} color="rgba(255, 255, 255, 0.55)" style={{ flexShrink: 0 }} />
             <input
               type="text"
               placeholder="Search stall name, block number, floor, or category..."
@@ -499,8 +530,8 @@ export function StallTourSelectModal({
                 border: 'none',
                 outline: 'none',
                 width: '100%',
-                fontSize: '0.88rem',
-                color: 'var(--color-text)',
+                fontSize: '0.82rem',
+                color: '#fff',
               }}
             />
             {searchQuery && (
@@ -510,13 +541,13 @@ export function StallTourSelectModal({
                   background: 'transparent',
                   border: 'none',
                   cursor: 'pointer',
-                  color: 'var(--color-muted)',
+                  color: 'rgba(255, 255, 255, 0.6)',
                   display: 'flex',
                   alignItems: 'center',
                   padding: 0,
                 }}
               >
-                <X size={15} />
+                <X size={14} />
               </button>
             )}
           </div>
@@ -527,47 +558,47 @@ export function StallTourSelectModal({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              gap: '0.5rem',
+              gap: '0.4rem',
               flexWrap: 'wrap',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
               <span
                 style={{
-                  fontSize: '0.78rem',
+                  fontSize: '0.72rem',
                   fontWeight: 700,
-                  color: selectedStallIds.length > 0 ? '#22c55e' : 'var(--color-muted)',
+                  color: selectedStallIds.length > 0 ? '#4ade80' : 'rgba(255, 255, 255, 0.6)',
                   background:
                     selectedStallIds.length > 0
-                      ? 'rgba(34, 197, 94, 0.12)'
+                      ? 'rgba(74, 222, 128, 0.12)'
                       : 'rgba(255, 255, 255, 0.05)',
-                  padding: '0.2rem 0.6rem',
-                  borderRadius: '8px',
+                  padding: '0.15rem 0.45rem',
+                  borderRadius: '6px',
                   border: `1px solid ${
                     selectedStallIds.length > 0
-                      ? 'rgba(34, 197, 94, 0.3)'
+                      ? 'rgba(74, 222, 128, 0.3)'
                       : 'rgba(255, 255, 255, 0.08)'
                   }`,
                 }}
               >
                 ✓ {selectedStallIds.length} of {totalStallsCount} Selected
               </span>
-              <span style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
+              <span style={{ fontSize: '0.7rem', color: 'rgba(255, 255, 255, 0.55)' }}>
                 across {blockGroups.length} Blocks
               </span>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
               <button
                 type="button"
                 onClick={handleSelectAll}
                 className="btn btn-ghost btn-sm"
                 style={{
-                  fontSize: '0.75rem',
-                  padding: '0.25rem 0.6rem',
+                  fontSize: '0.72rem',
+                  padding: '0.2rem 0.55rem',
                   color: 'var(--color-accent)',
                   border: '1px solid rgba(34, 211, 238, 0.3)',
-                  borderRadius: '8px',
+                  borderRadius: '6px',
                   height: 'unset',
                   minHeight: 'unset',
                 }}
@@ -579,11 +610,11 @@ export function StallTourSelectModal({
                 onClick={handleDeselectAll}
                 className="btn btn-ghost btn-sm"
                 style={{
-                  fontSize: '0.75rem',
-                  padding: '0.25rem 0.6rem',
+                  fontSize: '0.72rem',
+                  padding: '0.2rem 0.55rem',
                   color: 'var(--color-warning)',
                   border: '1px solid rgba(245, 158, 11, 0.3)',
-                  borderRadius: '8px',
+                  borderRadius: '6px',
                   height: 'unset',
                   minHeight: 'unset',
                 }}
@@ -600,25 +631,25 @@ export function StallTourSelectModal({
             flex: '1 1 auto',
             minHeight: 0,
             overflowY: 'auto',
-            padding: '0.85rem 1.4rem 1.75rem',
+            padding: '0.45rem 0.85rem 0.85rem',
             display: 'flex',
             flexDirection: 'column',
-            gap: '1.25rem',
+            gap: '0.5rem',
           }}
         >
           {filteredGroups.length === 0 ? (
             <div
               style={{
                 textAlign: 'center',
-                padding: '3rem 1rem',
+                padding: '2.5rem 1rem',
                 color: 'var(--color-muted)',
               }}
             >
-              <Store size={36} style={{ margin: '0 auto 0.75rem', opacity: 0.35 }} />
-              <p style={{ margin: 0, fontSize: '0.92rem', fontWeight: 600 }}>
+              <Store size={32} style={{ margin: '0 auto 0.5rem', opacity: 0.35 }} />
+              <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 600 }}>
                 No stalls found matching "{searchQuery}"
               </p>
-              <span style={{ fontSize: '0.78rem', opacity: 0.8 }}>
+              <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>
                 Try searching for a different block number, floor, or stall name.
               </span>
             </div>
@@ -641,7 +672,7 @@ export function StallTourSelectModal({
                     border: `1px solid ${
                       selectedCountInBlock > 0 ? `${grp.blockColor}40` : 'rgba(255, 255, 255, 0.08)'
                     }`,
-                    borderRadius: '16px',
+                    borderRadius: '12px',
                     overflow: 'hidden',
                     flexShrink: 0,
                     transition: 'all 0.2s ease',
@@ -650,7 +681,7 @@ export function StallTourSelectModal({
                   {/* Block Header (Static, Not Collapsible) */}
                   <div
                     style={{
-                      padding: '0.85rem 1.1rem',
+                      padding: '0.45rem 0.75rem',
                       background:
                         selectedCountInBlock > 0
                           ? `linear-gradient(90deg, ${grp.blockColor}22, rgba(255,255,255,0.02))`
@@ -659,7 +690,7 @@ export function StallTourSelectModal({
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      gap: '0.65rem',
+                      gap: '0.5rem',
                       userSelect: 'none',
                     }}
                   >
@@ -668,7 +699,7 @@ export function StallTourSelectModal({
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '0.75rem',
+                        gap: '0.55rem',
                         flex: 1,
                         minWidth: 0,
                       }}
@@ -694,14 +725,14 @@ export function StallTourSelectModal({
                         title={allBlockSelected ? 'Deselect Block' : 'Select All in Block'}
                       >
                         {allBlockSelected ? (
-                          <CheckSquare size={20} />
+                          <CheckSquare size={17} />
                         ) : someBlockSelected ? (
                           <div
                             style={{
-                              width: 20,
-                              height: 20,
+                              width: 17,
+                              height: 17,
                               border: `2px solid var(--color-accent)`,
-                              borderRadius: '4px',
+                              borderRadius: '3px',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
@@ -709,33 +740,33 @@ export function StallTourSelectModal({
                           >
                             <div
                               style={{
-                                width: 10,
-                                height: 3,
+                                width: 8,
+                                height: 2.5,
                                 background: 'var(--color-accent)',
                                 borderRadius: '2px',
                               }}
                             />
                           </div>
                         ) : (
-                          <Square size={20} />
+                          <Square size={17} />
                         )}
                       </button>
 
                       {/* Block Number Circle */}
                       <div
                         style={{
-                          width: 32,
-                          height: 32,
-                          borderRadius: '10px',
+                          width: 24,
+                          height: 24,
+                          borderRadius: '7px',
                           background: grp.blockColor,
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
                           color: '#fff',
                           fontWeight: 800,
-                          fontSize: '0.85rem',
+                          fontSize: '0.74rem',
                           flexShrink: 0,
-                          boxShadow: `0 2px 8px ${grp.blockColor}50`,
+                          boxShadow: `0 1px 6px ${grp.blockColor}50`,
                         }}
                       >
                         {grp.displayName.match(/\d+/)?.[0] ?? grp.displayName.slice(0, 2).toUpperCase()}
@@ -744,8 +775,8 @@ export function StallTourSelectModal({
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <span
                           style={{
-                            fontWeight: 800,
-                            fontSize: '0.96rem',
+                            fontWeight: 700,
+                            fontSize: '0.86rem',
                             color: 'var(--color-text)',
                             letterSpacing: '-0.01em',
                           }}
@@ -760,13 +791,13 @@ export function StallTourSelectModal({
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '0.4rem',
+                        gap: '0.35rem',
                         flexShrink: 0,
                       }}
                     >
                       <span
                         style={{
-                          fontSize: '0.74rem',
+                          fontSize: '0.7rem',
                           fontWeight: 700,
                           color: selectedCountInBlock > 0 ? grp.blockColor : 'var(--color-muted)',
                         }}
@@ -779,10 +810,10 @@ export function StallTourSelectModal({
                   {/* Stalls Grouped under Floor Tags (Vertical only) */}
                   <div
                     style={{
-                      padding: '0.75rem 0.85rem',
+                      padding: '0.4rem 0.55rem',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: '0.85rem',
+                      gap: '0.45rem',
                     }}
                   >
                     {grp.floors.map((flr) => {
@@ -799,7 +830,7 @@ export function StallTourSelectModal({
                           style={{
                             display: 'flex',
                             flexDirection: 'column',
-                            gap: '0.45rem',
+                            gap: '0.35rem',
                             flexShrink: 0,
                           }}
                         >
@@ -810,27 +841,27 @@ export function StallTourSelectModal({
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'space-between',
-                                padding: '0.2rem 0.4rem',
+                                padding: '0.1rem 0.3rem',
                                 borderBottom: '1px dashed rgba(255, 255, 255, 0.08)',
-                                paddingBottom: '0.35rem',
-                                marginBottom: '0.15rem',
+                                paddingBottom: '0.2rem',
+                                marginBottom: '0.1rem',
                               }}
                             >
                               <div
                                 style={{
                                   display: 'inline-flex',
                                   alignItems: 'center',
-                                  gap: '0.35rem',
+                                  gap: '0.25rem',
                                   background: 'rgba(34, 211, 238, 0.1)',
                                   border: '1px solid rgba(34, 211, 238, 0.25)',
-                                  borderRadius: '16px',
-                                  padding: '0.15rem 0.6rem',
-                                  fontSize: '0.74rem',
+                                  borderRadius: '12px',
+                                  padding: '0.1rem 0.45rem',
+                                  fontSize: '0.68rem',
                                   fontWeight: 700,
                                   color: 'var(--color-accent)',
                                 }}
                               >
-                                <Layers size={13} />
+                                <Layers size={11} />
                                 <span>{flr.floorLevel}</span>
                               </div>
 
@@ -841,10 +872,10 @@ export function StallTourSelectModal({
                                   background: 'transparent',
                                   border: 'none',
                                   cursor: 'pointer',
-                                  fontSize: '0.7rem',
+                                  fontSize: '0.68rem',
                                   color: allFloorSelected ? 'var(--color-accent)' : 'var(--color-muted)',
                                   fontWeight: 600,
-                                  padding: '0.1rem 0.35rem',
+                                  padding: '0.05rem 0.25rem',
                                 }}
                                 title={allFloorSelected ? 'Deselect floor stalls' : 'Select all floor stalls'}
                               >
@@ -857,8 +888,8 @@ export function StallTourSelectModal({
                           <div
                             style={{
                               display: 'grid',
-                              gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-                              gap: '0.55rem',
+                              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                              gap: '0.4rem',
                               width: '100%',
                             }}
                           >
@@ -874,9 +905,9 @@ export function StallTourSelectModal({
                                   style={{
                                     display: 'flex',
                                     alignItems: 'center',
-                                    gap: '0.75rem',
-                                    padding: '0.65rem 0.85rem',
-                                    borderRadius: '12px',
+                                    gap: '0.55rem',
+                                    padding: '0.4rem 0.6rem',
+                                    borderRadius: '10px',
                                     background: isSelected
                                       ? 'rgba(99, 102, 241, 0.14)'
                                       : 'rgba(255, 255, 255, 0.02)',
@@ -913,7 +944,7 @@ export function StallTourSelectModal({
                                     style={{
                                       background: 'transparent',
                                       border: 'none',
-                                      padding: '2px',
+                                      padding: '1px',
                                       cursor: 'pointer',
                                       display: 'flex',
                                       alignItems: 'center',
@@ -923,10 +954,10 @@ export function StallTourSelectModal({
                                   >
                                     <div
                                       style={{
-                                        width: 22,
-                                        height: 22,
-                                        borderRadius: '6px',
-                                        border: `2px solid ${
+                                        width: 18,
+                                        height: 18,
+                                        borderRadius: '5px',
+                                        border: `1.5px solid ${
                                           isSelected ? '#6366f1' : 'rgba(255, 255, 255, 0.35)'
                                         }`,
                                         background: isSelected ? '#6366f1' : 'rgba(255, 255, 255, 0.05)',
@@ -935,20 +966,20 @@ export function StallTourSelectModal({
                                         justifyContent: 'center',
                                         color: '#fff',
                                         transition: 'all 0.15s ease',
-                                        boxShadow: isSelected ? '0 0 8px rgba(99, 102, 241, 0.5)' : 'none',
+                                        boxShadow: isSelected ? '0 0 6px rgba(99, 102, 241, 0.5)' : 'none',
                                       }}
                                     >
-                                      {isSelected && <Check size={14} strokeWidth={3} />}
+                                      {isSelected && <Check size={12} strokeWidth={3} />}
                                     </div>
                                   </button>
 
                                   {/* Stall Logo / Icon: click opens stall details */}
                                   <div
-                                    onClick={() => setDetailStall(stall)}
+                                    onClick={() => handleOpenDetail(stall)}
                                     style={{
-                                      width: 36,
-                                      height: 36,
-                                      borderRadius: '10px',
+                                      width: 30,
+                                      height: 30,
+                                      borderRadius: '8px',
                                       background: 'rgba(255, 255, 255, 0.06)',
                                       display: 'flex',
                                       alignItems: 'center',
@@ -973,7 +1004,7 @@ export function StallTourSelectModal({
                                       />
                                     ) : (
                                       <Store
-                                        size={18}
+                                        size={15}
                                         color={stall.categories?.color || grp.blockColor}
                                       />
                                     )}
@@ -986,25 +1017,25 @@ export function StallTourSelectModal({
                                       minWidth: 0,
                                       display: 'flex',
                                       flexDirection: 'column',
-                                      gap: '0.15rem',
+                                      gap: '0.1rem',
                                     }}
                                   >
                                     <div
                                       style={{
                                         display: 'flex',
                                         alignItems: 'center',
-                                        gap: '0.45rem',
+                                        gap: '0.35rem',
                                         flexWrap: 'wrap',
                                       }}
                                     >
                                       <span
                                         style={{
-                                          fontSize: '0.68rem',
+                                          fontSize: '0.64rem',
                                           fontWeight: 800,
                                           color: grp.blockColor,
                                           background: `${grp.blockColor}18`,
-                                          padding: '0.1rem 0.4rem',
-                                          borderRadius: '5px',
+                                          padding: '0.05rem 0.35rem',
+                                          borderRadius: '4px',
                                           flexShrink: 0,
                                         }}
                                       >
@@ -1013,20 +1044,20 @@ export function StallTourSelectModal({
                                       {/* Clickable Stall Name that triggers detail popup */}
                                       <button
                                         type="button"
-                                        onClick={() => setDetailStall(stall)}
+                                        onClick={() => handleOpenDetail(stall)}
                                         style={{
                                           background: 'transparent',
                                           border: 'none',
                                           padding: 0,
                                           textAlign: 'left',
                                           cursor: 'pointer',
-                                          fontSize: '0.91rem',
+                                          fontSize: '0.85rem',
                                           fontWeight: 700,
                                           color: isSelected ? '#fff' : 'var(--color-text)',
                                           wordBreak: 'break-word',
                                           display: 'inline-flex',
                                           alignItems: 'center',
-                                          gap: '0.35rem',
+                                          gap: '0.25rem',
                                           transition: 'color 0.15s ease',
                                         }}
                                         onMouseEnter={(e) => {
@@ -1040,7 +1071,7 @@ export function StallTourSelectModal({
                                         title="Click stall name to view details"
                                       >
                                         <span>{stall.name}</span>
-                                        <Info size={13} style={{ opacity: 0.6, flexShrink: 0 }} />
+                                        <Info size={12} style={{ opacity: 0.6, flexShrink: 0 }} />
                                       </button>
                                     </div>
 
@@ -1049,18 +1080,18 @@ export function StallTourSelectModal({
                                       style={{
                                         display: 'flex',
                                         alignItems: 'center',
-                                        gap: '0.45rem',
+                                        gap: '0.35rem',
                                         flexWrap: 'wrap',
                                       }}
                                     >
                                       {stall.categories && (
                                         <span
                                           style={{
-                                            fontSize: '0.7rem',
+                                            fontSize: '0.65rem',
                                             fontWeight: 600,
                                             color: stall.categories.color || 'var(--color-muted)',
                                             background: `${stall.categories.color || '#6366f1'}15`,
-                                            padding: '0.05rem 0.45rem',
+                                            padding: '0.04rem 0.35rem',
                                             borderRadius: '4px',
                                           }}
                                         >
@@ -1070,7 +1101,7 @@ export function StallTourSelectModal({
                                       {stall.description && (
                                         <span
                                           style={{
-                                            fontSize: '0.72rem',
+                                            fontSize: '0.68rem',
                                             color: 'var(--color-muted)',
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis',
@@ -1100,14 +1131,13 @@ export function StallTourSelectModal({
         {/* ── Modal Footer with Locate on Map Button ──────────── */}
         <div
           style={{
-            padding: '1rem 1.5rem',
-            borderTop: '1px solid var(--color-border)',
-            background: 'rgba(15, 23, 42, 0.8)',
+            padding: '0.55rem 1rem',
+            borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+            background: 'rgba(15, 23, 42, 0.95)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            gap: '0.75rem',
-            flexWrap: 'wrap',
+            gap: '0.65rem',
           }}
         >
           {/* Skip / Free Explore Button */}
@@ -1117,11 +1147,13 @@ export function StallTourSelectModal({
               onClick={onOpenFreeMap}
               className="btn btn-ghost"
               style={{
-                fontSize: '0.84rem',
+                fontSize: '0.8rem',
                 color: 'var(--color-muted)',
-                padding: '0.6rem 1rem',
-                borderRadius: '12px',
+                padding: '0.45rem 0.85rem',
+                borderRadius: '10px',
                 border: '1px solid rgba(255, 255, 255, 0.08)',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
               }}
             >
               Open Free Map Directly
@@ -1132,14 +1164,20 @@ export function StallTourSelectModal({
           <button
             type="button"
             disabled={selectedStallIds.length === 0}
-            onClick={() => onConfirmTour(selectedStallIds)}
+            onClick={() => {
+              selectedStallIds.forEach((id) => {
+                const s = validStalls.find((item) => item.id === id);
+                recordStallEngagement(id, s?.name || '', 'tour_select');
+              });
+              onConfirmTour(selectedStallIds);
+            }}
             className="btn btn-primary"
             id="locate-on-map-submit-btn"
             style={{
               flex: onOpenFreeMap ? '1 1 auto' : '1',
-              padding: '0.75rem 1.5rem',
-              borderRadius: '12px',
-              fontSize: '0.92rem',
+              padding: '0.55rem 1.1rem',
+              borderRadius: '10px',
+              fontSize: '0.86rem',
               fontWeight: 800,
               background:
                 selectedStallIds.length === 0
@@ -1150,24 +1188,23 @@ export function StallTourSelectModal({
               boxShadow:
                 selectedStallIds.length === 0
                   ? 'none'
-                  : '0 4px 18px rgba(99, 102, 241, 0.5)',
+                  : '0 4px 14px rgba(99, 102, 241, 0.5)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '0.55rem',
+              gap: '0.45rem',
               cursor: selectedStallIds.length === 0 ? 'not-allowed' : 'pointer',
               transition: 'all 0.2s ease',
+              whiteSpace: 'nowrap',
             }}
           >
-            <MapPin size={18} />
+            <MapPin size={16} />
             <span>
               {selectedStallIds.length === 0
                 ? 'Select Stalls to Locate'
-                : `Locate on the Map (${selectedStallIds.length} ${
-                    selectedStallIds.length === 1 ? 'Stall' : 'Stalls'
-                  })`}
+                : `Locate on Map (${selectedStallIds.length})`}
             </span>
-            <ArrowRight size={16} />
+            <ArrowRight size={15} />
           </button>
         </div>
       </div>
@@ -1208,16 +1245,37 @@ export function StallTourSelectModal({
               position: 'relative',
             }}
           >
+            {/* Top Honeycomb Glow for Detail Modal */}
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                height: '160px',
+                backgroundImage: `linear-gradient(180deg, rgba(15, 23, 42, 0.45) 0%, rgba(15, 23, 42, 0.88) 75%, rgba(15, 23, 42, 1) 100%), url(${mainDarkBg})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center top',
+                backgroundRepeat: 'no-repeat',
+                pointerEvents: 'none',
+                zIndex: 0,
+                opacity: 0.92,
+              }}
+            />
+
             {/* Top Banner & Header */}
             <div
               style={{
                 padding: '1.25rem 1.4rem 1rem',
-                borderBottom: '1px solid var(--color-border)',
+                borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                background: 'rgba(15, 23, 42, 0.45)',
+                backdropFilter: 'blur(6px)',
                 display: 'flex',
                 alignItems: 'flex-start',
                 justifyContent: 'space-between',
                 gap: '1rem',
                 position: 'relative',
+                zIndex: 1,
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flex: 1, minWidth: 0 }}>

@@ -4566,12 +4566,7 @@ button.home-box-link {
     margin-right: 0.75rem !important;
   }
 
-  /* Tier 3: Recenter button on right */
-  .map-recenter-btn {
-    bottom: calc(156px + var(--safe-bottom, 0px)) !important;
-    right: 0.75rem !important;
-    z-index: 1000 !important;
-  }
+  /* Recenter button managed by .map-right-controls-stack */
 
   /* ── Bottom Sheet Nav Panel ─────────────────────── */
   .map-nav-panel {
@@ -4880,12 +4875,7 @@ button.home-box-link {
     margin-right: 12px !important;
   }
 
-  /* Recenter button: stacked cleanly above zoom controls */
-  .map-recenter-btn {
-    bottom: calc(168px + var(--safe-bottom, 0px)) !important;
-    right: 12px !important;
-    z-index: 1000 !important;
-  }
+  /* Recenter button managed by .map-right-controls-stack */
 }
 
 /* ── Mobile Map Navigation Bottom Sheet (Draggable, Collapsible) ────────── */
@@ -5726,3 +5716,32 @@ body:has(.store-dir-enhanced) .site-upper-background {
 
 
 
+
+
+/* ── Unified Map Floating Action Buttons Stack (Recenter, Auto-Rotate, Pitstop) ── */
+.map-floating-actions-stack {
+  position: absolute;
+  right: 14px;
+  z-index: 1005;
+  display: flex;
+  flex-direction: column-reverse; /* Recenter at bottom, Auto-rotate in middle, Pitstop on top */
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+  transition: bottom 0.32s cubic-bezier(0.32, 0.72, 0, 1), right 0.3s ease;
+}
+
+.map-floating-actions-stack > * {
+  pointer-events: auto;
+  position: static !important;
+  right: auto !important;
+  bottom: auto !important;
+  margin: 0 !important;
+}
+
+@media (min-width: 769px) {
+  .map-floating-actions-stack {
+    bottom: 2rem !important;
+    right: 1.5rem !important;
+  }
+}

@@ -10,6 +10,7 @@ import { supabase, type Store as StoreType, type Category, type NavigationNode }
 import { extractBlocksFromNodes, matchStoreToBlock, type BlockEntity } from '../utils/blocks';
 import { isFacilityStore } from '../utils/facilities';
 import { formatStoreHours, isStoreCurrentlyOpen } from '../utils/storeHours';
+import { StallRatingWidget } from '../components/StallRatingWidget';
 
 type ViewMode = 'blocks' | 'list' | 'grid';
 
@@ -744,6 +745,7 @@ export function StoreDirectoryPage() {
                                   >
                                     {block.name}
                                   </span>
+                                  <StallRatingWidget stallId={store.id} stallName={store.name} variant="badge" />
                                 </div>
 
                                 <p className="store-list-desc" style={{ fontSize: '0.82rem', marginBottom: '0.35rem' }}>
