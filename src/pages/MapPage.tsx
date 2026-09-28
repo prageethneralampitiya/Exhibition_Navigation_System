@@ -321,6 +321,7 @@ export function MapPage() {
     entrance_threshold_meters: number;
     premises_center_latitude: number;
     premises_center_longitude: number;
+    premises_radius_meters: number;
     school_boundary_enabled: boolean;
     allow_boundary_bypass?: boolean;
     google_maps_url?: string;

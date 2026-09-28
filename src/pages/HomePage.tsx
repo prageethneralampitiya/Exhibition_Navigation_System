@@ -32,7 +32,7 @@ import { VideoLivesModal } from '../components/VideoLivesModal';
 import { EventBannerCarousel } from '../components/EventBannerCarousel';
 import { StallTourSelectModal } from '../components/StallTourSelectModal';
 import { useStallPopularity, recordStallEngagement } from '../services/stallPopularityService';
-import { useAllStallRatings, type StallRatingSummary } from '../services/stallRatingService';
+import { useAllStallRatings } from '../services/stallRatingService';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ⏱️ TIMING CONFIGURATION: INTRO SPLASH & HOME FADE-IN DELAY
@@ -750,6 +750,7 @@ export function HomePage() {
   interface PopularStallItem extends StoreType {
     rank: number;
     popularityScore: number;
+    rating?: any;
   }
 
   const { scores: popularityScores, getScore: getStallScore } = useStallPopularity();
@@ -1382,7 +1383,7 @@ export function HomePage() {
 
                         {/* Safe Star Rating Badge */}
                         {(() => {
-                          const r = st.rating || getStallRating(st.id, st.name);
+                          const r = (st as any).rating || getStallRating(st.id, st.name);
                           const avg = r && typeof r.average === 'number' ? r.average : 4.8;
                           const votes = r && typeof r.total_votes === 'number' ? r.total_votes : 0;
                           return (

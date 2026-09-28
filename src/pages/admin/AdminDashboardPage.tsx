@@ -53,7 +53,7 @@ export function AdminDashboardPage() {
   const [googleMapsUrl, setGoogleMapsUrl] = useState('');
   
   // Real-time online users on website (via Supabase Realtime Presence)
-  const { realtimeCount, isConnected: isPresenceConnected } = useRealtimeOnlineCount();
+  const { realtimeCount } = useRealtimeOnlineCount();
   
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [settingsSaving, setSettingsSaving] = useState(false);

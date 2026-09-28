@@ -77,7 +77,6 @@ export function StallRatingWidget({
   }
 
   // Full interactive widget for Stall Detail Page
-  const effectiveRating = hoveredStars !== null ? hoveredStars : (userRating || 0);
 
   return (
     <div
