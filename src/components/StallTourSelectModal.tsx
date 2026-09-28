@@ -10,6 +10,12 @@ import {
   Square,
   ArrowRight,
   Layers,
+  Info,
+  Clock,
+  Phone,
+  Mail,
+  Globe,
+  ExternalLink,
 } from 'lucide-react';
 import type { Store as StoreType, NavigationNode } from '../lib/supabase';
 import {
@@ -91,6 +97,24 @@ function normalizeFloorName(floorRaw: string): string {
   return trimmed;
 }
 
+/** Formats time string (HH:MM:SS) into friendly AM/PM format */
+function formatStallTime(timeStr?: string | null): string | null {
+  if (!timeStr) return null;
+  try {
+    const parts = timeStr.split(':');
+    if (parts.length >= 2) {
+      let h = parseInt(parts[0], 10);
+      const m = parts[1];
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      return `${h}:${m} ${ampm}`;
+    }
+    return timeStr;
+  } catch {
+    return timeStr;
+  }
+}
+
 export function StallTourSelectModal({
   isOpen,
   onClose,
@@ -101,6 +125,7 @@ export function StallTourSelectModal({
   initialSelectedStoreIds,
 }: StallTourSelectModalProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [detailStall, setDetailStall] = useState<StoreType | null>(null);
 
   // Real building blocks from navigation nodes
   const realBlocks: BlockEntity[] = useMemo(() => {
@@ -320,9 +345,10 @@ export function StallTourSelectModal({
       <div
         className="glass"
         style={{
-          width: '100%',
-          maxWidth: '720px',
-          maxHeight: '92vh',
+          width: 'min(940px, 96vw)',
+          maxWidth: '940px',
+          height: '92vh',
+          maxHeight: '94vh',
           background: 'linear-gradient(165deg, rgba(26, 34, 53, 0.98), rgba(15, 23, 42, 0.99))',
           border: '1px solid rgba(99, 102, 241, 0.35)',
           borderRadius: '24px',
@@ -350,7 +376,7 @@ export function StallTourSelectModal({
         {/* ── Modal Header ────────────────────────────────────── */}
         <div
           style={{
-            padding: '1.25rem 1.5rem 1rem',
+            padding: '1rem 1.4rem 0.85rem',
             borderBottom: '1px solid var(--color-border)',
             display: 'flex',
             alignItems: 'center',
@@ -411,10 +437,10 @@ export function StallTourSelectModal({
                   margin: '0.2rem 0 0',
                   fontSize: '0.82rem',
                   color: 'var(--color-muted)',
-                  lineHeight: 1.4,
+                  lineHeight: 1.3,
                 }}
               >
-                Select the stalls you wish to visit. Route optimizes for minimum walking distance and guides you to the Exit Gate.
+                Select stalls
               </p>
             </div>
           </div>
@@ -438,34 +464,15 @@ export function StallTourSelectModal({
           </button>
         </div>
 
-        {/* ── Shortest Path & Single Exit Information Badge ───── */}
-        <div
-          style={{
-            padding: '0.45rem 1.5rem',
-            background: 'linear-gradient(90deg, rgba(99, 102, 241, 0.1), rgba(168, 85, 247, 0.12))',
-            borderBottom: '1px solid rgba(168, 85, 247, 0.2)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-            fontSize: '0.75rem',
-            color: '#c4b5fd',
-          }}
-        >
-          <span style={{ fontSize: '0.9rem' }}>🚪</span>
-          <span>
-            <strong>Single Exit Gate Navigation:</strong> All selected stalls are ordered for the <em>shortest walking distance</em>, concluding at the venue Exit Gate.
-          </span>
-        </div>
-
         {/* ── Toolbar: Search & Selection Controls ───────────── */}
         <div
           style={{
-            padding: '0.85rem 1.5rem',
+            padding: '0.65rem 1.4rem',
             background: 'rgba(255, 255, 255, 0.02)',
             borderBottom: '1px solid var(--color-border)',
             display: 'flex',
             flexDirection: 'column',
-            gap: '0.65rem',
+            gap: '0.55rem',
           }}
         >
           {/* Search Input */}
@@ -586,13 +593,13 @@ export function StallTourSelectModal({
           </div>
         </div>
 
-        {/* ── Scrollable Blocks & Stalls List (Fully Open, Vertical Only) ── */}
+        {/* ── Scrollable Blocks & Stalls List ── */}
         <div
           style={{
             flex: '1 1 auto',
             minHeight: 0,
             overflowY: 'auto',
-            padding: '1rem 1.25rem 2.5rem',
+            padding: '0.85rem 1.4rem 1.75rem',
             display: 'flex',
             flexDirection: 'column',
             gap: '1.25rem',
@@ -845,12 +852,12 @@ export function StallTourSelectModal({
                             </div>
                           )}
 
-                          {/* Pure Vertical Stalls List (One per row, full width) */}
+                          {/* Responsive Stalls Grid: gives much more space to see stalls */}
                           <div
                             style={{
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '0.45rem',
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+                              gap: '0.55rem',
                               width: '100%',
                             }}
                           >
@@ -863,12 +870,11 @@ export function StallTourSelectModal({
                               return (
                                 <div
                                   key={stall.id}
-                                  onClick={() => handleToggleStall(stall.id)}
                                   style={{
                                     display: 'flex',
                                     alignItems: 'center',
-                                    gap: '0.85rem',
-                                    padding: '0.7rem 0.95rem',
+                                    gap: '0.75rem',
+                                    padding: '0.65rem 0.85rem',
                                     borderRadius: '12px',
                                     background: isSelected
                                       ? 'rgba(99, 102, 241, 0.14)'
@@ -878,11 +884,10 @@ export function StallTourSelectModal({
                                         ? 'rgba(99, 102, 241, 0.5)'
                                         : 'rgba(255, 255, 255, 0.06)'
                                     }`,
-                                    cursor: 'pointer',
                                     transition: 'all 0.15s ease',
                                     width: '100%',
                                     boxSizing: 'border-box',
-                                    flexShrink: 0,
+                                    position: 'relative',
                                   }}
                                   onMouseEnter={(e) => {
                                     if (!isSelected) {
@@ -895,29 +900,50 @@ export function StallTourSelectModal({
                                     }
                                   }}
                                 >
-                                  {/* Stall Checkbox */}
-                                  <div
+                                  {/* Stall Checkbox Box: clicking this selects / deselects */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleToggleStall(stall.id);
+                                    }}
+                                    aria-label={isSelected ? `Deselect ${stall.name}` : `Select ${stall.name}`}
+                                    title={isSelected ? 'Click box to deselect' : 'Click box to select'}
                                     style={{
-                                      width: 20,
-                                      height: 20,
-                                      borderRadius: '6px',
-                                      border: `2px solid ${
-                                        isSelected ? '#6366f1' : 'rgba(255, 255, 255, 0.3)'
-                                      }`,
-                                      background: isSelected ? '#6366f1' : 'transparent',
+                                      background: 'transparent',
+                                      border: 'none',
+                                      padding: '2px',
+                                      cursor: 'pointer',
                                       display: 'flex',
                                       alignItems: 'center',
                                       justifyContent: 'center',
-                                      color: '#fff',
                                       flexShrink: 0,
-                                      transition: 'all 0.15s ease',
                                     }}
                                   >
-                                    {isSelected && <Check size={14} strokeWidth={3} />}
-                                  </div>
+                                    <div
+                                      style={{
+                                        width: 22,
+                                        height: 22,
+                                        borderRadius: '6px',
+                                        border: `2px solid ${
+                                          isSelected ? '#6366f1' : 'rgba(255, 255, 255, 0.35)'
+                                        }`,
+                                        background: isSelected ? '#6366f1' : 'rgba(255, 255, 255, 0.05)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        color: '#fff',
+                                        transition: 'all 0.15s ease',
+                                        boxShadow: isSelected ? '0 0 8px rgba(99, 102, 241, 0.5)' : 'none',
+                                      }}
+                                    >
+                                      {isSelected && <Check size={14} strokeWidth={3} />}
+                                    </div>
+                                  </button>
 
-                                  {/* Stall Logo / Icon */}
+                                  {/* Stall Logo / Icon: click opens stall details */}
                                   <div
+                                    onClick={() => setDetailStall(stall)}
                                     style={{
                                       width: 36,
                                       height: 36,
@@ -929,7 +955,9 @@ export function StallTourSelectModal({
                                       overflow: 'hidden',
                                       flexShrink: 0,
                                       border: '1px solid rgba(255, 255, 255, 0.08)',
+                                      cursor: 'pointer',
                                     }}
+                                    title="Click to view details"
                                   >
                                     {stall.logo_url ? (
                                       <img
@@ -950,7 +978,7 @@ export function StallTourSelectModal({
                                     )}
                                   </div>
 
-                                  {/* Stall Details: Full width with ample space */}
+                                  {/* Stall Info: clicking the name pops up and shows stall details */}
                                   <div
                                     style={{
                                       flex: 1,
@@ -981,17 +1009,38 @@ export function StallTourSelectModal({
                                       >
                                         #{stallNum}
                                       </span>
-                                      <span
+                                      {/* Clickable Stall Name that triggers detail popup */}
+                                      <button
+                                        type="button"
+                                        onClick={() => setDetailStall(stall)}
                                         style={{
-                                          fontSize: '0.92rem',
+                                          background: 'transparent',
+                                          border: 'none',
+                                          padding: 0,
+                                          textAlign: 'left',
+                                          cursor: 'pointer',
+                                          fontSize: '0.91rem',
                                           fontWeight: 700,
                                           color: isSelected ? '#fff' : 'var(--color-text)',
                                           wordBreak: 'break-word',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '0.35rem',
+                                          transition: 'color 0.15s ease',
                                         }}
-                                        title={stall.name}
+                                        onMouseEnter={(e) => {
+                                          e.currentTarget.style.color = 'var(--color-accent)';
+                                          e.currentTarget.style.textDecoration = 'underline';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          e.currentTarget.style.color = isSelected ? '#fff' : 'var(--color-text)';
+                                          e.currentTarget.style.textDecoration = 'none';
+                                        }}
+                                        title="Click stall name to view details"
                                       >
-                                        {stall.name}
-                                      </span>
+                                        <span>{stall.name}</span>
+                                        <Info size={13} style={{ opacity: 0.6, flexShrink: 0 }} />
+                                      </button>
                                     </div>
 
                                     {/* Category and Subtitle details */}
@@ -1025,7 +1074,7 @@ export function StallTourSelectModal({
                                             overflow: 'hidden',
                                             textOverflow: 'ellipsis',
                                             whiteSpace: 'nowrap',
-                                            maxWidth: '300px',
+                                            maxWidth: '220px',
                                           }}
                                         >
                                           {stall.description}
@@ -1121,6 +1170,334 @@ export function StallTourSelectModal({
           </button>
         </div>
       </div>
+
+      {/* ── Stall Details Pop-up Modal ───────────────────────── */}
+      {detailStall && (
+        <div
+          className="animate-fade-in"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(5, 8, 16, 0.85)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
+            zIndex: 10100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '1rem',
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setDetailStall(null);
+          }}
+        >
+          <div
+            className="glass"
+            style={{
+              width: '100%',
+              maxWidth: '560px',
+              maxHeight: '88vh',
+              background: 'linear-gradient(165deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.99))',
+              border: '1px solid rgba(99, 102, 241, 0.4)',
+              borderRadius: '20px',
+              boxShadow: '0 24px 70px rgba(0, 0, 0, 0.9), 0 0 35px rgba(99, 102, 241, 0.25)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden',
+              position: 'relative',
+            }}
+          >
+            {/* Top Banner & Header */}
+            <div
+              style={{
+                padding: '1.25rem 1.4rem 1rem',
+                borderBottom: '1px solid var(--color-border)',
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: '1rem',
+                position: 'relative',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    width: 52,
+                    height: 52,
+                    borderRadius: 14,
+                    background: 'rgba(255, 255, 255, 0.06)',
+                    border: '1.5px solid rgba(255, 255, 255, 0.12)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    overflow: 'hidden',
+                    flexShrink: 0,
+                  }}
+                >
+                  {detailStall.logo_url ? (
+                    <img
+                      src={detailStall.logo_url}
+                      alt={detailStall.name}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <Store size={26} color={detailStall.categories?.color || '#6366f1'} />
+                  )}
+                </div>
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap', marginBottom: '0.2rem' }}>
+                    {detailStall.categories && (
+                      <span
+                        style={{
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          color: detailStall.categories.color || 'var(--color-accent)',
+                          background: `${detailStall.categories.color || '#6366f1'}18`,
+                          border: `1px solid ${detailStall.categories.color || '#6366f1'}35`,
+                          padding: '0.15rem 0.5rem',
+                          borderRadius: '6px',
+                        }}
+                      >
+                        {detailStall.categories.name}
+                      </span>
+                    )}
+                  </div>
+                  <h3
+                    style={{
+                      margin: 0,
+                      fontSize: '1.15rem',
+                      fontWeight: 800,
+                      color: 'var(--color-text)',
+                      lineHeight: 1.25,
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {detailStall.name}
+                  </h3>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setDetailStall(null)}
+                className="btn btn-ghost btn-sm btn-icon"
+                style={{
+                  borderRadius: '50%',
+                  width: 34,
+                  height: 34,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--color-muted)',
+                  flexShrink: 0,
+                }}
+                title="Close details"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body content */}
+            <div
+              style={{
+                padding: '1.25rem 1.4rem',
+                overflowY: 'auto',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '1rem',
+              }}
+            >
+              {/* Location pill */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.6rem',
+                  padding: '0.65rem 0.85rem',
+                  borderRadius: '10px',
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid rgba(255, 255, 255, 0.07)',
+                  fontSize: '0.85rem',
+                }}
+              >
+                <MapPin size={16} color="var(--color-accent)" style={{ flexShrink: 0 }} />
+                <span style={{ color: 'var(--color-muted)' }}>Location:</span>
+                <strong style={{ color: 'var(--color-text)' }}>
+                  {(() => {
+                    const matched = matchStoreToBlock(detailStall, realBlocks);
+                    const parsed = parseBlockAndFloor(detailStall.floor);
+                    const blockName = formatFriendlyBlockName(matched?.name || parsed.blockName || 'Campus');
+                    const floor = normalizeFloorName(parsed.floorLevel || (matched?.floor ? `Floor ${matched.floor}` : 'Ground Floor'));
+                    return `${blockName} • ${floor}`;
+                  })()}
+                </strong>
+              </div>
+
+              {/* Description */}
+              <div>
+                <h4
+                  style={{
+                    margin: '0 0 0.4rem',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    color: 'var(--color-muted)',
+                  }}
+                >
+                  About This Stall
+                </h4>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: '0.88rem',
+                    lineHeight: 1.6,
+                    color: detailStall.description ? 'var(--color-text)' : 'var(--color-muted)',
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {detailStall.description || 'No detailed description available for this stall.'}
+                </p>
+              </div>
+
+              {/* Operating Hours & Contact Info */}
+              {(detailStall.opening_time || detailStall.phone || detailStall.email || detailStall.website) && (
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.5rem',
+                    paddingTop: '0.5rem',
+                    borderTop: '1px solid rgba(255, 255, 255, 0.07)',
+                  }}
+                >
+                  <h4
+                    style={{
+                      margin: '0 0 0.2rem',
+                      fontSize: '0.78rem',
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      color: 'var(--color-muted)',
+                    }}
+                  >
+                    Contact & Info
+                  </h4>
+
+                  {detailStall.opening_time && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--color-muted)' }}>
+                      <Clock size={14} style={{ flexShrink: 0 }} />
+                      <span>
+                        Hours: <strong style={{ color: 'var(--color-text)' }}>{formatStallTime(detailStall.opening_time)}</strong>
+                        {detailStall.closing_time && (
+                          <> – <strong style={{ color: 'var(--color-text)' }}>{formatStallTime(detailStall.closing_time)}</strong></>
+                        )}
+                      </span>
+                    </div>
+                  )}
+
+                  {detailStall.phone && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--color-muted)' }}>
+                      <Phone size={14} style={{ flexShrink: 0 }} />
+                      <a
+                        href={`tel:${detailStall.phone}`}
+                        style={{ color: 'var(--color-accent)', textDecoration: 'none' }}
+                      >
+                        {detailStall.phone}
+                      </a>
+                    </div>
+                  )}
+
+                  {detailStall.email && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--color-muted)' }}>
+                      <Mail size={14} style={{ flexShrink: 0 }} />
+                      <a
+                        href={`mailto:${detailStall.email}`}
+                        style={{ color: 'var(--color-accent)', textDecoration: 'none' }}
+                      >
+                        {detailStall.email}
+                      </a>
+                    </div>
+                  )}
+
+                  {detailStall.website && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--color-muted)' }}>
+                      <Globe size={14} style={{ flexShrink: 0 }} />
+                      <a
+                        href={detailStall.website.startsWith('http') ? detailStall.website : `https://${detailStall.website}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ color: 'var(--color-accent)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                      >
+                        <span>{detailStall.website.replace(/^https?:\/\//i, '')}</span>
+                        <ExternalLink size={12} />
+                      </a>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer with Select/Deselect action inside details popup */}
+            <div
+              style={{
+                padding: '0.85rem 1.4rem',
+                borderTop: '1px solid var(--color-border)',
+                background: 'rgba(15, 23, 42, 0.85)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '0.75rem',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => handleToggleStall(detailStall.id)}
+                className={`btn ${selectedStallIds.includes(detailStall.id) ? 'btn-ghost' : 'btn-primary'}`}
+                style={{
+                  flex: 1,
+                  padding: '0.65rem 1rem',
+                  fontSize: '0.85rem',
+                  fontWeight: 700,
+                  borderRadius: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.45rem',
+                  border: selectedStallIds.includes(detailStall.id) ? '1px solid rgba(239, 68, 68, 0.4)' : undefined,
+                  color: selectedStallIds.includes(detailStall.id) ? '#f87171' : undefined,
+                }}
+              >
+                {selectedStallIds.includes(detailStall.id) ? (
+                  <>
+                    <X size={15} />
+                    <span>Remove from Tour</span>
+                  </>
+                ) : (
+                  <>
+                    <Check size={15} />
+                    <span>Add to Tour</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDetailStall(null)}
+                className="btn btn-secondary"
+                style={{
+                  padding: '0.65rem 1.25rem',
+                  fontSize: '0.85rem',
+                  borderRadius: '10px',
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
