@@ -21,6 +21,8 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
+const DEFAULT_ZOOM = 18.0;
+
 interface MapViewProps {
   latitude: number;
   longitude: number;
@@ -121,7 +123,8 @@ export function MapView({
       delete (window as any).__onNavigateToStore;
     };
   }, [onSelectStore]);
-  const [currentZoom, setCurrentZoom] = useState(zoom);
+  const [currentZoom, setCurrentZoom] = useState(DEFAULT_ZOOM);
+  const zoomBounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const routeLayerRef = useRef<L.FeatureGroup | null>(null);
   const meshLayerRef = useRef<L.FeatureGroup | null>(null);
@@ -151,7 +154,7 @@ export function MapView({
       requestAnimationFrame(() => {
         map.invalidateSize({ animate: false });
         if (userLat !== null && userLng !== null) {
-          map.setView([userLat, userLng], map.getZoom(), { animate: false });
+          map.setView([userLat, userLng], DEFAULT_ZOOM, { animate: false });
         }
       });
 
@@ -178,9 +181,9 @@ export function MapView({
         currentRotationRef.current = 0;
         map.invalidateSize({ animate: false });
         if (userLat !== null && userLng !== null) {
-          map.setView([userLat, userLng], map.getZoom(), { animate: false });
+          map.setView([userLat, userLng], DEFAULT_ZOOM, { animate: false });
         } else {
-          map.setView([latitude, longitude], map.getZoom(), { animate: false });
+          map.setView([latitude, longitude], DEFAULT_ZOOM, { animate: false });
         }
       }, 360);
 
@@ -210,7 +213,7 @@ export function MapView({
   useEffect(() => {
     if (!map || !headingUpMode || !isRotatedViewActive) return;
     if (userLat !== null && userLng !== null && !isPannedAwayRef.current) {
-      map.setView([userLat, userLng], map.getZoom(), { animate: false });
+      map.setView([userLat, userLng], DEFAULT_ZOOM, { animate: false });
     }
   }, [map, headingUpMode, isRotatedViewActive, userLat, userLng]);
 
@@ -220,7 +223,7 @@ export function MapView({
     isPannedAwayRef.current = false;
     onPannedChangeRef.current?.(false);
     if (userLat !== null && userLng !== null) {
-      map.setView([userLat, userLng], map.getZoom(), { animate: true });
+      map.setView([userLat, userLng], DEFAULT_ZOOM, { animate: true });
     }
   }, [recenterTrigger, map, userLat, userLng]);
 
@@ -231,7 +234,9 @@ export function MapView({
     // Create Map instance with explicit gesture and interaction configurations
     const newMap = L.map(mapContainerRef.current, {
       center: [latitude, longitude],
-      zoom,
+      zoom: DEFAULT_ZOOM,
+      minZoom: 15,
+      maxZoom: 21,
       zoomControl: false, // Positioned at bottomright below to avoid header overlay overlap
       attributionControl: false,
       dragging: true,
@@ -249,6 +254,10 @@ export function MapView({
     // Track user gesture interactions to avoid snapping map during active pan/zoom
     const handleTouchOrDragStart = () => {
       isUserInteractingRef.current = true;
+      if (zoomBounceTimerRef.current) {
+        clearTimeout(zoomBounceTimerRef.current);
+        zoomBounceTimerRef.current = null;
+      }
       if (headingUpModeRef.current) {
         isPannedAwayRef.current = true;
         onPannedChangeRef.current?.(true);
@@ -282,9 +291,34 @@ export function MapView({
       viewportWrapperRef.current.appendChild((newMap as any)._controlContainer);
     }
 
-    // Track zoom end
-    newMap.on('zoomend', () => {
+    // Keep zoom indicator updated in real-time
+    newMap.on('zoom', () => {
       setCurrentZoom(newMap.getZoom());
+    });
+
+    // Auto bounce-back: strictly maintain default zoom ratio 18.0
+    // If someone zooms in (ratio > 18.0), automatically zoom out to 18.0
+    // If someone zooms out (ratio < 18.0), automatically zoom in to 18.0
+    newMap.on('zoomend', () => {
+      const z = newMap.getZoom();
+      setCurrentZoom(z);
+
+      if (zoomBounceTimerRef.current) {
+        clearTimeout(zoomBounceTimerRef.current);
+        zoomBounceTimerRef.current = null;
+      }
+
+      if (Math.abs(z - DEFAULT_ZOOM) > 0.05) {
+        zoomBounceTimerRef.current = setTimeout(() => {
+          try {
+            if (newMap && mapContainerRef.current && Math.abs(newMap.getZoom() - DEFAULT_ZOOM) > 0.05) {
+              newMap.setZoom(DEFAULT_ZOOM, { animate: true });
+            }
+          } catch {
+            // map may have unmounted
+          }
+        }, 500);
+      }
     });
 
     // Create Layer groups
@@ -304,6 +338,10 @@ export function MapView({
 
     // Clean up on unmount
     return () => {
+      if (zoomBounceTimerRef.current) {
+        clearTimeout(zoomBounceTimerRef.current);
+        zoomBounceTimerRef.current = null;
+      }
       resizeObserver.disconnect();
       newMap.off('dragstart zoomstart movestart', handleTouchOrDragStart);
       newMap.off('dragend zoomend moveend', handleTouchOrDragEnd);
@@ -390,7 +428,7 @@ export function MapView({
     prevCenterRef.current = { lat: latitude, lng: longitude };
 
     if (!headingUpMode && (latChanged || lngChanged) && route.length === 0 && !isUserInteractingRef.current) {
-      map.setView([latitude, longitude], zoom, { animate: true });
+      map.setView([latitude, longitude], DEFAULT_ZOOM, { animate: true });
     }
   }, [map, latitude, longitude, zoom, route.length, headingUpMode]);
 
@@ -726,7 +764,8 @@ export function MapView({
     const destId = route[route.length - 1].id;
     if (destId !== lastFittedDestRef.current) {
       lastFittedDestRef.current = destId;
-      map.fitBounds(fullLine.getBounds(), { padding: [60, 60] });
+      const center = fullLine.getBounds().getCenter();
+      map.setView(center, DEFAULT_ZOOM, { animate: true });
     }
   }, [map, route, outdoorSegmentCount]);
 
