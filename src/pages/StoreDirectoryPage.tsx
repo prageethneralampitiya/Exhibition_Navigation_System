@@ -9,6 +9,7 @@ import {
 import { supabase, type Store as StoreType, type Category, type NavigationNode } from '../lib/supabase';
 import { extractBlocksFromNodes, matchStoreToBlock, type BlockEntity } from '../utils/blocks';
 import { isFacilityStore } from '../utils/facilities';
+import { formatStoreHours, isStoreCurrentlyOpen } from '../utils/storeHours';
 
 type ViewMode = 'blocks' | 'list' | 'grid';
 
@@ -232,12 +233,7 @@ export function StoreDirectoryPage() {
   };
 
   const isOpen = (openingTime?: string | null, closingTime?: string | null) => {
-    if (!openingTime || !closingTime) return null;
-    const now = new Date();
-    const [oh, om] = openingTime.split(':').map(Number);
-    const [ch, cm] = closingTime.split(':').map(Number);
-    const mins = now.getHours() * 60 + now.getMinutes();
-    return mins >= oh * 60 + om && mins < ch * 60 + cm;
+    return isStoreCurrentlyOpen(openingTime, closingTime);
   };
 
   return (
@@ -765,8 +761,7 @@ export function StoreDirectoryPage() {
                                   )}
                                   <span className="store-meta-chip" style={{ fontSize: '0.72rem' }}>
                                     <Clock size={11} />
-                                    {store.opening_time ? store.opening_time.substring(0, 5) : '09:00'} –{' '}
-                                    {store.closing_time ? store.closing_time.substring(0, 5) : '18:00'}
+                                    {formatStoreHours(store.opening_time, store.closing_time)}
                                   </span>
                                   {openStatus !== null && (
                                     <span className={`store-open-badge ${openStatus ? 'open' : 'closed'}`} style={{ fontSize: '0.68rem' }}>
@@ -906,8 +901,7 @@ export function StoreDirectoryPage() {
                         )}
                         <span className="store-meta-chip" style={{ fontSize: '0.72rem' }}>
                           <Clock size={11} />
-                          {store.opening_time ? store.opening_time.substring(0, 5) : '09:00'} –{' '}
-                          {store.closing_time ? store.closing_time.substring(0, 5) : '18:00'}
+                          {formatStoreHours(store.opening_time, store.closing_time)}
                         </span>
                         {openStatus !== null && (
                           <span className={`store-open-badge ${openStatus ? 'open' : 'closed'}`} style={{ fontSize: '0.68rem' }}>

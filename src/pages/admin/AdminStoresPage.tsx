@@ -28,6 +28,7 @@ import { AdminModal } from '../../components/admin/AdminModal';
 import { useAuth } from '../../contexts/AuthContext';
 import { FormMapPicker } from '../../components/admin/FormMapPicker';
 import { QrCodeModal } from '../../components/admin/QrCodeModal';
+import { formatStoreHours } from '../../utils/storeHours';
 import { KmlImportModal } from '../../components/admin/KmlImportModal';
 import { type QrCalibrateTarget } from '../../utils/qrCodeGenerator';
 import { extractBlocksFromNodes, matchStoreToBlock, parseBlockAndFloor, formatBlockAndFloor, getBlockFloorOptions, type BlockEntity } from '../../utils/blocks';
@@ -53,6 +54,7 @@ export function AdminStoresPage() {
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
   const [isKmlModalOpen, setIsKmlModalOpen] = useState(false);
+  const [isSettingHours, setIsSettingHours] = useState(false);
 
   // Modal states
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
@@ -121,6 +123,22 @@ export function AdminStoresPage() {
       setExhibitions(exhibitionsRes.data || []);
       setStoreAdmins(storeAdminsRes.data || []);
       setExistingNodes(nodesRes.data || []);
+
+      // Auto-upgrade any legacy 18:00 or missing stall hours to 09:00 - 21:00 (9:00 PM)
+      if (profile?.role === 'admin') {
+        try {
+          await supabase
+            .from('stores')
+            .update({
+              opening_time: '09:00:00',
+              closing_time: '21:00:00',
+              updated_at: new Date().toISOString(),
+            })
+            .or('closing_time.eq.18:00:00,closing_time.is.null');
+        } catch (syncErr) {
+          console.warn('Auto-upgrading store hours notice:', syncErr);
+        }
+      }
 
       await fetchStores();
     } catch (err) {
@@ -210,7 +228,7 @@ export function AdminStoresPage() {
       floor: defaultBlock ? formatBlockAndFloor(defaultBlock.name, defaultFloor) : 'Ground Floor',
       block_node_id: defaultBlock?.id || null,
       opening_time: '09:00:00',
-      closing_time: '18:00:00',
+      closing_time: '21:00:00',
       latitude: defaultBlock?.latitude ?? 6.535472,
       longitude: defaultBlock?.longitude ?? 80.401000,
       phone: '',
@@ -354,6 +372,63 @@ export function AdminStoresPage() {
       alert('Failed to delete stores: ' + (err?.message || 'Unknown error'));
     } finally {
       setIsBulkDeleting(false);
+    }
+  };
+
+  const handleSetAllStoresDefaultHours = async () => {
+    if (!window.confirm('Set all stalls/stores to default operating hours: 9:00 AM – 9:00 PM (21:00)?')) {
+      return;
+    }
+    try {
+      setIsSettingHours(true);
+      const { data, error } = await supabase
+        .from('stores')
+        .update({
+          opening_time: '09:00:00',
+          closing_time: '21:00:00',
+          updated_at: new Date().toISOString(),
+        })
+        .neq('id', '00000000-0000-0000-0000-000000000000')
+        .select('id');
+
+      if (error) throw error;
+      alert(`Success! Updated ${data?.length ?? 0} stalls to 9:00 AM – 9:00 PM (21:00).`);
+      await fetchStores();
+    } catch (err: any) {
+      console.error('Failed to set store hours:', err);
+      alert('Failed to set store hours: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsSettingHours(false);
+    }
+  };
+
+  const handleSetSelectedStoresDefaultHours = async () => {
+    if (selectedStoreIds.size === 0) return;
+    if (!window.confirm(`Set selected ${selectedStoreIds.size} stalls to 9:00 AM – 9:00 PM (21:00)?`)) {
+      return;
+    }
+    try {
+      setIsSettingHours(true);
+      const ids = Array.from(selectedStoreIds);
+      const { data, error } = await supabase
+        .from('stores')
+        .update({
+          opening_time: '09:00:00',
+          closing_time: '21:00:00',
+          updated_at: new Date().toISOString(),
+        })
+        .in('id', ids)
+        .select('id');
+
+      if (error) throw error;
+      alert(`Success! Updated ${data?.length ?? 0} selected stalls to 9:00 AM – 9:00 PM (21:00).`);
+      setSelectedStoreIds(new Set());
+      await fetchStores();
+    } catch (err: any) {
+      console.error('Failed to set store hours:', err);
+      alert('Failed to set store hours: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setIsSettingHours(false);
     }
   };
 
@@ -630,8 +705,7 @@ export function AdminStoresPage() {
       render: (row: Store) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem' }}>
           <Clock size={12} className="text-muted" />
-          {row.opening_time ? row.opening_time.substring(0, 5) : '09:00'} -{' '}
-          {row.closing_time ? row.closing_time.substring(0, 5) : '18:00'}
+          {formatStoreHours(row.opening_time, row.closing_time)}
         </span>
       ),
     },
@@ -688,7 +762,24 @@ export function AdminStoresPage() {
           <p>{profile?.role === 'store_admin' ? 'Manage your store details, photos, and promotions' : 'Organize exhibitors, floor maps, and contact info'}</p>
         </div>
         {profile?.role !== 'store_admin' && (
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button
+              className="btn btn-ghost"
+              onClick={handleSetAllStoresDefaultHours}
+              disabled={isSettingHours}
+              title="Set all stalls to default operating hours: 9:00 AM – 9:00 PM (21:00)"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                border: '1px solid rgba(16, 185, 129, 0.4)',
+                background: 'rgba(16, 185, 129, 0.08)',
+                color: '#10b981',
+              }}
+            >
+              {isSettingHours ? <span className="spinner" /> : <Clock size={16} />}
+              <span>Set All to 9 AM – 9 PM</span>
+            </button>
             <button
               className="btn btn-ghost"
               onClick={() => setIsKmlModalOpen(true)}
@@ -773,6 +864,23 @@ export function AdminStoresPage() {
                 }}>
                   {selectedStoreIds.size} selected
                 </span>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={handleSetSelectedStoresDefaultHours}
+                  disabled={isSettingHours}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    color: '#10b981',
+                    border: '1px solid rgba(16, 185, 129, 0.4)',
+                    background: 'rgba(16, 185, 129, 0.08)',
+                  }}
+                >
+                  <Clock size={14} />
+                  <span>Set Hours (9 AM – 9 PM)</span>
+                </button>
                 <button
                   type="button"
                   className="btn btn-danger btn-sm"

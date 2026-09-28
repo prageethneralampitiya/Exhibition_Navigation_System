@@ -47,7 +47,11 @@ export function AdminAnnouncementsPage() {
         setIsLive(false);
       }
 
-      setAnnouncements(data || []);
+      // Only display actual user announcements in the management table
+      const userAnnouncements = (data || []).filter(
+        (a) => a.type === 'info' || a.type === 'warning' || a.type === 'emergency'
+      );
+      setAnnouncements(userAnnouncements);
     } catch (err) {
       console.error('Error fetching announcements:', err);
     } finally {

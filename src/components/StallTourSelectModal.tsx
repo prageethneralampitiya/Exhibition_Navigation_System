@@ -24,6 +24,7 @@ import {
   parseBlockAndFloor,
   type BlockEntity,
 } from '../utils/blocks';
+import { getEffectiveStoreHours } from '../utils/storeHours';
 import { isFacilityStore } from '../utils/facilities';
 
 export interface StallTourSelectModalProps {
@@ -1385,17 +1386,19 @@ export function StallTourSelectModal({
                     Contact & Info
                   </h4>
 
-                  {detailStall.opening_time && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--color-muted)' }}>
-                      <Clock size={14} style={{ flexShrink: 0 }} />
-                      <span>
-                        Hours: <strong style={{ color: 'var(--color-text)' }}>{formatStallTime(detailStall.opening_time)}</strong>
-                        {detailStall.closing_time && (
-                          <> – <strong style={{ color: 'var(--color-text)' }}>{formatStallTime(detailStall.closing_time)}</strong></>
-                        )}
-                      </span>
-                    </div>
-                  )}
+                  {(() => {
+                    const { opening, closing } = getEffectiveStoreHours(detailStall.opening_time, detailStall.closing_time);
+                    return (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--color-muted)' }}>
+                        <Clock size={14} style={{ flexShrink: 0 }} />
+                        <span>
+                          Hours: <strong style={{ color: 'var(--color-text)' }}>{formatStallTime(opening)}</strong>
+                          {' '}–{' '}
+                          <strong style={{ color: 'var(--color-text)' }}>{formatStallTime(closing)}</strong>
+                        </span>
+                      </div>
+                    );
+                  })()}
 
                   {detailStall.phone && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--color-muted)' }}>

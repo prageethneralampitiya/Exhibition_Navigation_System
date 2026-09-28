@@ -28,6 +28,7 @@ import { StallTourSelectModal } from '../components/StallTourSelectModal';
 import { useAuth } from '../contexts/AuthContext';
 import { GPSPermissionBanner } from '../components/GPSPermissionBanner';
 import { QuickPitstopModal } from '../components/QuickPitstopModal';
+import { PremisesBypassScreen } from '../components/PremisesBypassScreen';
 import {
   supabase,
   type Store as StoreType,
@@ -319,8 +320,9 @@ export function MapPage() {
     entrance_threshold_meters: number;
     premises_center_latitude: number;
     premises_center_longitude: number;
-    premises_radius_meters: number;
     school_boundary_enabled: boolean;
+    allow_boundary_bypass?: boolean;
+    google_maps_url?: string;
     exit_gate_node_id?: string | null;
     exit_latitude?: number | null;
     exit_longitude?: number | null;
@@ -333,6 +335,8 @@ export function MapPage() {
     premises_center_longitude: 80.401000,
     premises_radius_meters: 150.0,
     school_boundary_enabled: true,
+    allow_boundary_bypass: true,
+    google_maps_url: '',
     exit_gate_node_id: null,
     exit_latitude: null,
     exit_longitude: null,
@@ -659,6 +663,8 @@ export function MapPage() {
             school_boundary_enabled: parsed.show_school_boundary !== undefined
               ? parsed.show_school_boundary !== false
               : parsed.school_boundary_enabled !== false,
+            allow_boundary_bypass: parsed.allow_boundary_bypass !== false,
+            google_maps_url: parsed.google_maps_url || '',
             exit_gate_node_id: parsed.exit_gate_node_id ?? null,
             exit_latitude: parsed.exit_latitude ?? null,
             exit_longitude: parsed.exit_longitude ?? null,
@@ -3686,54 +3692,31 @@ export function MapPage() {
             onSelectFacility={handleSelectPitstopFacility}
           />
 
-          {/* New Modals for Boundary & Tour check */}
-          {isFarAway && exhibitionSettings.school_boundary_enabled !== false && (
-            <div style={{
-              position: 'fixed',
-              inset: 0,
-              background: 'rgba(11, 15, 26, 0.92)',
-              zIndex: 10000,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '2rem',
-              textAlign: 'center',
-              backdropFilter: 'blur(8px)'
-            }}>
-              <div style={{
-                width: '64px',
-                height: '64px',
-                borderRadius: '50%',
-                background: 'rgba(239, 68, 68, 0.15)',
-                color: '#f87171',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: '1.5rem'
-              }}>
-                <AlertTriangle size={32} />
-              </div>
-              <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '1rem', color: '#fff' }}>Reach to the exhibition premises first</h2>
-              <p style={{ color: 'var(--color-muted)', maxWidth: '400px', fontSize: '0.925rem', lineHeight: 1.6, marginBottom: '2rem' }}>
-                You are currently outside the exhibition boundaries. Please proceed to the exhibition center to start the map navigation system.
-              </p>
-              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1rem' }}>
-                {profile?.role === 'admin' && !mockMode && (
-                  <button className="btn btn-primary" onClick={() => setMockMode(true)}>
-                    Switch to Mock Location
-                  </button>
-                )}
-                <button className="btn btn-ghost" onClick={() => { setBypassBoundaryCheck(true); setIsFarAway(false); hasPromptedRef.current = true; }}>
-                  Bypass (View Map)
-                </button>
-              </div>
-              {profile?.role === 'admin' && mockMode && (
-                <p style={{ color: 'var(--color-accent)', fontSize: '0.85rem', marginTop: '0.75rem' }}>
-                  Tip: Select a mock start node inside the premises or tap the map to test.
-                </p>
-              )}
-            </div>
+          {/* Geofence Boundary Notice & Splash-style Bypass Screen */}
+          {isFarAway && exhibitionSettings.school_boundary_enabled !== false && !bypassBoundaryCheck && (
+            <PremisesBypassScreen
+              onBypass={() => {
+                setBypassBoundaryCheck(true);
+                setIsFarAway(false);
+                hasPromptedRef.current = true;
+              }}
+              allowBypass={exhibitionSettings.allow_boundary_bypass !== false}
+              isAdmin={profile?.role === 'admin'}
+              onMockMode={() => setMockMode(true)}
+              googleMapsUrl={exhibitionSettings.google_maps_url}
+              premisesLat={exhibitionSettings.premises_center_latitude}
+              premisesLng={exhibitionSettings.premises_center_longitude}
+              distanceKm={
+                userLat && userLng
+                  ? getDistance(
+                      userLat,
+                      userLng,
+                      exhibitionSettings.premises_center_latitude,
+                      exhibitionSettings.premises_center_longitude
+                    ) / 1000
+                  : null
+              }
+            />
           )}
 
 

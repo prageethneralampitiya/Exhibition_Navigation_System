@@ -561,12 +561,17 @@ const LiveVisitorBadge = memo(function LiveVisitorBadge() {
     let cleanedUp = false;
 
     function getActiveSlot(slots: import('../services/appSettingsService').TimeSlot[]) {
+      if (!slots || slots.length === 0) return null;
       const now = new Date();
       const cur = now.getHours() * 60 + now.getMinutes();
       return slots.find((s) => {
         const start = s.start_hour * 60 + s.start_minute;
         const end = s.end_hour * 60 + s.end_minute;
-        return cur >= start && cur < end;
+        if (start < end) {
+          return cur >= start && cur < end;
+        } else {
+          return cur >= start || cur < end;
+        }
       }) ?? null;
     }
 
@@ -607,14 +612,16 @@ const LiveVisitorBadge = memo(function LiveVisitorBadge() {
       if (newSlotId === currentSlotId && !forceAnimate) return;
       currentSlotId = newSlotId;
 
-      const baseCount = slot ? slot.initial_visitor_count : config.outside_hours_count;
+      const baseCount = slot ? slot.initial_visitor_count : (config.outside_hours_count ?? 50);
       const target = baseCount + realVisitors;
       const intervalMs = Math.max(5000, (slot ? slot.fluctuation_interval_sec : 60) * 1000);
-      const minVal = config.outside_hours_count + realVisitors;
+      const minVal = Math.max(1, (config.outside_hours_count ?? 50) + realVisitors);
 
       clearInterval(fluctuationTimer);
       animateTo(target, () => startFluctuation(intervalMs, minVal));
     }
+
+    let broadcastChannel: any = null;
 
     async function initCounter() {
       const { fetchLiveCounterConfig } = await import('../services/appSettingsService');
@@ -636,6 +643,20 @@ const LiveVisitorBadge = memo(function LiveVisitorBadge() {
       slotCheckTimer = setInterval(() => {
         if (!cleanedUp) applyCurrentSlot(config, realVisitors);
       }, 60_000);
+
+      // Realtime cross-tab & cross-device broadcast synchronization
+      try {
+        broadcastChannel = supabase.channel('live-counter-sync-broadcast');
+        broadcastChannel
+          .on('broadcast', { event: 'live_counter_changed' }, (payload: any) => {
+            if (payload?.payload && !cleanedUp) {
+              onConfigUpdate({ detail: payload.payload } as any);
+            }
+          })
+          .subscribe();
+      } catch {
+        // ignore
+      }
     }
 
     initCounter();
@@ -666,6 +687,9 @@ const LiveVisitorBadge = memo(function LiveVisitorBadge() {
       clearInterval(fluctuationTimer);
       clearInterval(slotCheckTimer);
       window.removeEventListener('live-counter-updated', onConfigUpdate);
+      if (broadcastChannel) {
+        supabase.removeChannel(broadcastChannel);
+      }
     };
   }, []);
 

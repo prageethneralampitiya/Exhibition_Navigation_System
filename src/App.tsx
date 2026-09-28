@@ -72,12 +72,20 @@ function PageLoader() {
 }
 
 
+import { useTrackVisitorPresence } from './services/presenceService';
+
+function PresenceTracker() {
+  useTrackVisitorPresence();
+  return null;
+}
+
 function App() {
   return (
     <BrowserRouter>
       <ScrollToTop />
       <AuthProvider>
         <LiveBroadcastProvider>
+          <PresenceTracker />
           {/* ── Opening Intro Splash Screen (duration in seconds: change 4.5 here if you want a shorter/longer intro) ── */}
           <SplashScreen durationSeconds={3.5} />
           <div className="site-upper-background" aria-hidden="true" />

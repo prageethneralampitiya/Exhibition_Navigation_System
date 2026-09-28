@@ -3,6 +3,42 @@ import { Megaphone, X, Bell, AlertTriangle, AlertCircle, Check, Radio, Info } fr
 import { supabase, type Announcement } from '../lib/supabase';
 import mainDarkBg from '../pics/main dark.png';
 
+// Strict filter: only real admin announcements ('info', 'warning', 'emergency') are displayed to users.
+// Internal system settings, live counter configs, and live voice broadcast controls are completely ignored.
+const USER_FACING_TYPES = new Set(['info', 'warning', 'emergency']);
+
+const IGNORED_ANNOUNCEMENT_KEYWORDS = [
+  'settings',
+  'system exhibition settings',
+  'live_counter',
+  'live_counter_config',
+  'live voice broadcast',
+  'broadcast',
+  'live started',
+  'live stream',
+  'live voice',
+];
+
+export function isUserFacingAnnouncement(ann: Partial<Announcement> | null | undefined): boolean {
+  if (!ann || !ann.is_active) return false;
+  if (!ann.type || !USER_FACING_TYPES.has(ann.type)) return false;
+
+  const titleLower = (ann.title || '').trim().toLowerCase();
+  const messageLower = (ann.message || '').trim().toLowerCase();
+
+  // Exclude internal system keywords
+  if (IGNORED_ANNOUNCEMENT_KEYWORDS.some(kw => titleLower.includes(kw))) {
+    return false;
+  }
+
+  // Exclude raw JSON strings (like system exhibition settings / live counter payloads)
+  if (messageLower.startsWith('{') && messageLower.endsWith('}')) {
+    return false;
+  }
+
+  return true;
+}
+
 export function RealtimeAnnouncements() {
   const [activeToast, setActiveToast] = useState<Announcement | null>(null);
   const [emergencyAlert, setEmergencyAlert] = useState<Announcement | null>(null);
@@ -52,11 +88,12 @@ export function RealtimeAnnouncements() {
         .from('announcements')
         .select('*')
         .eq('is_active', true)
+        .in('type', ['info', 'warning', 'emergency'])
         .order('created_at', { ascending: false })
         .limit(10);
 
       if (error) throw error;
-      const list = data || [];
+      const list = (data || []).filter(isUserFacingAnnouncement);
       setHistory(list);
       setUnreadCount(list.length);
     } catch (err) {
@@ -81,20 +118,24 @@ export function RealtimeAnnouncements() {
           
           if (eventType === 'INSERT') {
             const newAnn = payload.new as Announcement;
-            if (newAnn.is_active) {
+            if (isUserFacingAnnouncement(newAnn)) {
               handleNewIncomingAnnouncement(newAnn);
             }
           } else if (eventType === 'UPDATE') {
             const updatedAnn = payload.new as Announcement;
-            if (updatedAnn.is_active) {
+            if (isUserFacingAnnouncement(updatedAnn)) {
               handleNewIncomingAnnouncement(updatedAnn);
             } else {
-              // Remove deactivated ones from history list
+              // Remove deactivated or non-user ones from history list
               setHistory(prev => prev.filter(a => a.id !== updatedAnn.id));
+              setActiveToast(prev => prev?.id === updatedAnn.id ? null : prev);
+              setEmergencyAlert(prev => prev?.id === updatedAnn.id ? null : prev);
             }
           } else if (eventType === 'DELETE') {
             const oldId = payload.old.id;
             setHistory(prev => prev.filter(a => a.id !== oldId));
+            setActiveToast(prev => prev?.id === oldId ? null : prev);
+            setEmergencyAlert(prev => prev?.id === oldId ? null : prev);
           }
         }
       )
@@ -118,6 +159,8 @@ export function RealtimeAnnouncements() {
   }
 
   function handleNewIncomingAnnouncement(ann: Announcement) {
+    if (!isUserFacingAnnouncement(ann)) return;
+
     // 1. Prepend to history lists
     setHistory((prev) => {
       // Avoid duplication if it was an update

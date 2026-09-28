@@ -3,6 +3,7 @@ import { CalendarDays, Store, Megaphone, Users, Activity, Settings, ShieldCheck,
 import { supabase } from '../../lib/supabase';
 import { StatCard } from '../../components/admin/StatCard';
 import { fetchLiveCounterConfig, saveLiveCounterConfig } from '../../services/appSettingsService';
+import { useRealtimeOnlineCount } from '../../services/presenceService';
 
 interface DashboardStats {
   registeredCount: number;
@@ -47,6 +48,11 @@ export function AdminDashboardPage() {
   const [premisesLng, setPremisesLng] = useState('80.401000');
   const [premisesRadius, setPremisesRadius] = useState('150');
   const [schoolBoundaryEnabled, setSchoolBoundaryEnabled] = useState(true);
+  const [allowBoundaryBypass, setAllowBoundaryBypass] = useState(true);
+  const [googleMapsUrl, setGoogleMapsUrl] = useState('');
+  
+  // Real-time online users on website (via Supabase Realtime Presence)
+  const { realtimeCount, isConnected: isPresenceConnected } = useRealtimeOnlineCount();
   
   const [settingsId, setSettingsId] = useState<string | null>(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
@@ -82,7 +88,7 @@ export function AdminDashboardPage() {
           supabase.from('visitor_locations').select('id', { count: 'exact', head: true }).is('user_id', null),
           supabase.from('exhibitions').select('id', { count: 'exact', head: true }),
           supabase.from('stores').select('id', { count: 'exact', head: true }),
-          supabase.from('announcements').select('id', { count: 'exact', head: true }),
+          supabase.from('announcements').select('id', { count: 'exact', head: true }).in('type', ['info', 'warning', 'emergency']),
         ]);
 
         const registeredCount = registeredRes.count ?? 0;
@@ -135,6 +141,8 @@ export function AdminDashboardPage() {
             setPremisesLng(String(parsed.premises_center_longitude ?? '80.401000'));
             setPremisesRadius(String(parsed.premises_radius_meters ?? '150'));
             setSchoolBoundaryEnabled(parsed.school_boundary_enabled !== false);
+            setAllowBoundaryBypass(parsed.allow_boundary_bypass !== false);
+            setGoogleMapsUrl(parsed.google_maps_url || '');
           } catch (e) {
             console.error('Error parsing settings:', e);
           }
@@ -154,10 +162,25 @@ export function AdminDashboardPage() {
           })));
         }
 
+        // Auto-upgrade any legacy 18:00 or missing stall hours to 09:00 - 21:00 (9:00 PM) in database
+        try {
+          await supabase
+            .from('stores')
+            .update({
+              opening_time: '09:00:00',
+              closing_time: '21:00:00',
+              updated_at: new Date().toISOString(),
+            })
+            .or('closing_time.eq.18:00:00,closing_time.is.null');
+        } catch {
+          // ignore
+        }
+
         const [recentAnnouncements, recentProfiles, recentVisitorLocations] = await Promise.all([
           supabase
             .from('announcements')
             .select('id, title, created_at')
+            .in('type', ['info', 'warning', 'emergency'])
             .order('created_at', { ascending: false })
             .limit(5),
           supabase
@@ -273,6 +296,8 @@ export function AdminDashboardPage() {
         premises_radius_meters: parseFloat(premisesRadius) || 150,
         school_boundary_enabled: enabled,
         show_school_boundary: enabled,
+        allow_boundary_bypass: allowBoundaryBypass,
+        google_maps_url: googleMapsUrl.trim(),
       };
 
       const announcementPayload = {
@@ -325,6 +350,8 @@ export function AdminDashboardPage() {
         premises_radius_meters: parseFloat(premisesRadius),
         school_boundary_enabled: schoolBoundaryEnabled,
         show_school_boundary: schoolBoundaryEnabled,
+        allow_boundary_bypass: allowBoundaryBypass,
+        google_maps_url: googleMapsUrl.trim(),
       };
 
       if (isNaN(payload.entrance_latitude) || isNaN(payload.entrance_longitude) || isNaN(payload.premises_radius_meters)) {
@@ -332,9 +359,28 @@ export function AdminDashboardPage() {
         return;
       }
 
+      // Preserve any existing extra payload fields (e.g. live_counter)
+      let existingPayload: any = {};
+      if (settingsId) {
+        try {
+          const { data: curr } = await supabase
+            .from('announcements')
+            .select('message')
+            .eq('id', settingsId)
+            .single();
+          if (curr?.message) {
+            existingPayload = JSON.parse(curr.message);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const mergedPayload = { ...existingPayload, ...payload };
+
       const announcementPayload = {
         title: 'System Exhibition Settings',
-        message: JSON.stringify(payload),
+        message: JSON.stringify(mergedPayload),
         type: 'settings',
         is_active: true
       };
@@ -381,11 +427,35 @@ export function AdminDashboardPage() {
     });
     setLiveCounterSaving(true);
     try {
-      await saveLiveCounterConfig({
+      const newConfig = {
         time_slots: parsedSlots,
         outside_hours_count: Math.max(0, parseInt(liveOutsideCount, 10) || 0),
-      });
-      setToastMessage('Live counter settings saved! Visitor counter will update on next home page load.');
+      };
+      await saveLiveCounterConfig(newConfig);
+
+      // Dual-sync into announcements settings record so it is 100% saved in Supabase
+      if (settingsId) {
+        try {
+          const { data: currAnn } = await supabase
+            .from('announcements')
+            .select('message')
+            .eq('id', settingsId)
+            .single();
+          let payload: any = {};
+          if (currAnn?.message) {
+            try { payload = JSON.parse(currAnn.message); } catch {}
+          }
+          payload.live_counter = newConfig;
+          await supabase
+            .from('announcements')
+            .update({ message: JSON.stringify(payload), updated_at: new Date().toISOString() })
+            .eq('id', settingsId);
+        } catch (syncErr) {
+          console.warn('Could not sync live counter into settings announcement:', syncErr);
+        }
+      }
+
+      setToastMessage('Live counter settings saved successfully! Main screen counter updated.');
       setTimeout(() => setToastMessage(null), 4000);
     } catch (err) {
       console.error('Error saving live counter config:', err);
@@ -412,8 +482,58 @@ export function AdminDashboardPage() {
         </div>
       </header>
 
+      {/* Real-time Presence Banner */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.65rem',
+          background: 'rgba(34, 197, 94, 0.08)',
+          border: '1px solid rgba(34, 197, 94, 0.28)',
+          borderRadius: '12px',
+          padding: '0.55rem 1rem',
+          fontSize: '0.82rem',
+          color: '#4ade80',
+          marginBottom: '1rem',
+        }}
+      >
+        <span
+          style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            backgroundColor: '#22c55e',
+            boxShadow: '0 0 10px #22c55e',
+            display: 'inline-block',
+          }}
+        />
+        <span>
+          <strong>Live Website Presence:</strong> Showing <strong>{realtimeCount}</strong> active {realtimeCount === 1 ? 'user' : 'users'} browsing the website right now. Real-time updates automatically.
+        </span>
+      </div>
+
       {/* Stats Grid */}
       <section className="stat-cards-grid">
+        <StatCard
+          label="Real Users Online Now"
+          value={realtimeCount}
+          loading={false}
+          icon={
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span
+                style={{
+                  position: 'absolute',
+                  width: '26px',
+                  height: '26px',
+                  borderRadius: '50%',
+                  background: 'rgba(34, 197, 94, 0.25)',
+                  animation: 'pulse 2s infinite',
+                }}
+              />
+              <Activity size={20} color="#22c55e" style={{ position: 'relative' }} />
+            </div>
+          }
+        />
         <StatCard
           label="Registered Accounts"
           value={stats.registeredCount}
@@ -797,6 +917,98 @@ export function AdminDashboardPage() {
                   onChange={(e) => setPremisesRadius(e.target.value)}
                   placeholder="e.g. 150"
                 />
+              </div>
+
+              {/* Bypass Toggle Card */}
+              <div
+                style={{
+                  background: allowBoundaryBypass ? 'rgba(99, 102, 241, 0.05)' : 'rgba(239, 68, 68, 0.05)',
+                  border: `1px solid ${allowBoundaryBypass ? 'rgba(99, 102, 241, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`,
+                  borderRadius: '10px',
+                  padding: '0.85rem 1rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '1rem',
+                  marginTop: '0.5rem',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#f8fafc' }}>
+                    Allow Visitor Boundary Bypass
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--color-muted)', lineHeight: 1.3 }}>
+                    {allowBoundaryBypass
+                      ? 'Enabled: Visitors outside the venue can choose to bypass the notice and view the map.'
+                      : 'Disabled: Outsiders are restricted to the splash screen with Google Maps directions (saves server resources during high traffic).'}
+                  </div>
+                </div>
+
+                <label
+                  style={{
+                    position: 'relative',
+                    display: 'inline-block',
+                    width: '46px',
+                    height: '24px',
+                    flexShrink: 0,
+                    cursor: 'pointer',
+                  }}
+                  title={allowBoundaryBypass ? 'Click to disable bypass' : 'Click to enable bypass'}
+                >
+                  <input
+                    type="checkbox"
+                    checked={allowBoundaryBypass}
+                    onChange={(e) => setAllowBoundaryBypass(e.target.checked)}
+                    style={{ opacity: 0, width: 0, height: 0 }}
+                  />
+                  <span
+                    style={{
+                      position: 'absolute',
+                      cursor: 'pointer',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      backgroundColor: allowBoundaryBypass ? '#6366f1' : '#334155',
+                      transition: '0.3s',
+                      borderRadius: '24px',
+                      boxShadow: allowBoundaryBypass ? '0 0 10px rgba(99, 102, 241, 0.4)' : 'none',
+                    }}
+                  >
+                    <span
+                      style={{
+                        position: 'absolute',
+                        content: '""',
+                        height: '18px',
+                        width: '18px',
+                        left: allowBoundaryBypass ? '24px' : '3px',
+                        bottom: '3px',
+                        backgroundColor: '#ffffff',
+                        transition: '0.3s',
+                        borderRadius: '50%',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                      }}
+                    />
+                  </span>
+                </label>
+              </div>
+
+              {/* Google Maps Link Input */}
+              <div className="form-group" style={{ marginTop: '0.5rem' }}>
+                <label className="form-label" htmlFor="google-maps-url" style={{ fontSize: '0.75rem' }}>
+                  Exhibition Google Maps Location URL (Bypass Screen Directions)
+                </label>
+                <input
+                  id="google-maps-url"
+                  type="url"
+                  className="form-input"
+                  value={googleMapsUrl}
+                  onChange={(e) => setGoogleMapsUrl(e.target.value)}
+                  placeholder="e.g. https://maps.app.goo.gl/YourVenueLink or leave empty for auto GPS link"
+                />
+                <span style={{ fontSize: '0.72rem', color: 'var(--color-muted)' }}>
+                  This link opens when visitors click &quot;Open in Google Maps&quot; on the geofence bypass screen.
+                </span>
               </div>
             </div>
           </div>

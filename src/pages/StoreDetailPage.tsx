@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { supabase, type Store as StoreType, type StoreImage, type Promotion } from '../lib/supabase';
 import { getStoreBlock, type ExhibitionBlock } from '../utils/blocks';
+import { formatStoreHours } from '../utils/storeHours';
 
 const LOCAL_STORAGE_SELECTED_STALLS = 'exhibition_selected_stalls_v1';
 
@@ -358,8 +359,7 @@ export function StoreDetailPage() {
             <Clock size={16} color="var(--color-accent)" />
             <div>
               <span style={{ fontWeight: 600 }}>Hours:</span>{' '}
-              {store.opening_time ? store.opening_time.substring(0, 5) : '09:00'} -{' '}
-              {store.closing_time ? store.closing_time.substring(0, 5) : '18:00'}
+              {formatStoreHours(store.opening_time, store.closing_time)}
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
