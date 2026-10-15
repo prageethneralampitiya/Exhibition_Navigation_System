@@ -982,6 +982,19 @@ export function HomePage() {
       <div className="profile-page home-enhanced" style={{ maxWidth: 880, paddingBottom: '4rem', paddingTop: '2.5rem' }}>
         <GPSPermissionBanner inFlow />
 
+        {/* ── Top Announcement Banner: Exhibition Concluded ── */}
+        <div className="exhibition-ended-top-banner scroll-reveal" role="alert" aria-live="polite">
+          <div className="exhibition-ended-glow" />
+          <div className="exhibition-ended-inner">
+            <div className="exhibition-ended-badge-pill">
+              <span className="exhibition-ended-pulse-dot" />
+              <span>Event Concluded</span>
+            </div>
+            <h2 className="exhibition-ended-title">This Exhibition Has Ended</h2>
+            <p className="exhibition-ended-desc">Thank you for visiting!</p>
+          </div>
+        </div>
+
         {/* ── Centered Logo in Middle of Front Page ─────────── */}
         <div className="home-hero-center scroll-reveal">
           <img
